@@ -1,0 +1,2 @@
+# 统一用 LF, 避免跨平台 CRLF 警告
+* text=auto eol=lf
