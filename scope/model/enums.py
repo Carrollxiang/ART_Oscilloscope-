@@ -32,8 +32,9 @@ class SlotStatus(Enum):
 
 class SlotProtocol(Enum):
     """支持的反馈协议类型"""
-    UDP = "udp"
-    SERIAL = "serial"
+    RPYC = "rpyc"        # 主要: 实验室仪器标准
+    UDP = "udp"          # 备选
+    SERIAL = "serial"    # 备选
     MODBUS_TCP = "modbus_tcp"
     MODBUS_RTU = "modbus_rtu"
     MQTT = "mqtt"
