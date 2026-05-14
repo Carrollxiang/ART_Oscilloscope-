@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>FeedbackDialog</class>
+ <widget class="QDialog" name="FeedbackDialog">
+  <property name="windowTitle"><string>反馈目标配置</string></property>
+  <property name="minimumSize">
+   <size><width>420</width><height>320</height></size>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <!-- 目标地址 -->
+   <layout class="QFormLayout" name="form">
+    <item row="0" column="0">
+     <widget class="QLabel" name="labelId"><string>标识</string></widget>
+    </item>
+    <item row="0" column="1">
+     <widget class="QLineEdit" name="editId"/>
+    </item>
+    <item row="1" column="0">
+     <widget class="QLabel" name="labelHost"><string>主机</string></widget>
+    </item>
+    <item row="1" column="1">
+     <widget class="QLineEdit" name="editHost">
+      <property name="text"><string>127.0.0.1</string></property>
+     </widget>
+    </item>
+    <item row="2" column="0">
+     <widget class="QLabel" name="labelPort"><string>端口</string></widget>
+    </item>
+    <item row="2" column="1">
+     <widget class="QSpinBox" name="editPort">
+      <property name="minimum"><number>1</number></property>
+      <property name="maximum"><number>65535</number></property>
+      <property name="value"><string>18861</string></property>
+     </widget>
+    </item>
+    <item row="3" column="0">
+     <widget class="QLabel" name="labelMethod"><string>远程方法</string></widget>
+    </item>
+    <item row="3" column="1">
+     <widget class="QLineEdit" name="editMethod">
+      <property name="text"><string>exposed_update</string></property>
+     </widget>
+    </item>
+    <item row="4" column="0">
+     <widget class="QLabel" name="labelPool"><string>连接池大小</string></widget>
+    </item>
+    <item row="4" column="1">
+     <layout class="QHBoxLayout">
+      <item><widget class="QLabel" name="labelPoolMin"><string>最小</string></widget></item>
+      <item><widget class="QSpinBox" name="editPoolMin">
+        <property name="minimum"><string>0</string></property>
+        <property name="maximum"><string>10</string></property>
+        <property name="value"><string>1</string></property>
+      </widget></item>
+      <item><widget class="QLabel" name="labelPoolMax"><string>最大</string></widget></item>
+      <item><widget class="QSpinBox" name="editPoolMax">
+        <property name="minimum"><string>1</string></property>
+        <property name="maximum"><string>20</string></property>
+        <property name="value"><string>4</string></property>
+      </widget></item>
+     </layout>
+    </item>
+   </layout>
+
+   <!-- 订阅列表 -->
+   <widget class="QLabel" name="labelSubscriptions">
+    <property name="text"><string>订阅测量项</string></property>
+   </widget>
+   <widget class="QListWidget" name="subscriptionList">
+    <property name="selectionMode"><enum>QAbstractItemView::MultiSelection</enum></property>
+   </widget>
+
+   <!-- 确定/取消 -->
+   <layout class="QHBoxLayout" name="buttons">
+    <item>
+     <spacer>
+      <property name="orientation"><enum>Qt::Horizontal</enum></property>
+     </spacer>
+    </item>
+    <item>
+     <widget class="QPushButton" name="btnOk">
+      <property name="text"><string>确定</string></property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="btnCancel">
+      <property name="text"><string>取消</string></property>
+     </widget>
+    </item>
+   </layout>
+  </layout>
+ </widget>
+ <connections/>
+</ui>

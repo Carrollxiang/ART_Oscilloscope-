@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>1280</width><height>800</height></rect>
+  </property>
+  <property name="windowTitle">
+   <string>数字示波器 v0.1</string>
+  </property>
+
+  <!-- ─── Menu Bar ─── -->
+  <widget class="QMenuBar" name="menubar">
+   <widget class="QMenu" name="menuFile">
+    <property name="title"><string>文件(&amp;F)</string></property>
+    <addaction name="actionSaveConfig"/>
+    <addaction name="actionLoadConfig"/>
+    <addaction name="separator"/>
+    <addaction name="actionExportData"/>
+    <addaction name="separator"/>
+    <addaction name="actionQuit"/>
+   </widget>
+   <widget class="QMenu" name="menuView">
+    <property name="title"><string>视图(&amp;V)</string></property>
+    <addaction name="actionResetLayout"/>
+   </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title"><string>帮助(&amp;H)</string></property>
+    <addaction name="actionAbout"/>
+   </widget>
+   <addaction name="menuFile"/>
+   <addaction name="menuView"/>
+   <addaction name="menuHelp"/>
+  </widget>
+
+  <!-- ─── Actions ─── -->
+  <action name="actionSaveConfig">
+   <property name="text"><string>保存配置</string></property>
+   <property name="shortcut"><string>Ctrl+S</string></property>
+  </action>
+  <action name="actionLoadConfig">
+   <property name="text"><string>加载配置</string></property>
+   <property name="shortcut"><string>Ctrl+O</string></property>
+  </action>
+  <action name="actionExportData">
+   <property name="text"><string>导出数据…</string></property>
+   <property name="shortcut"><string>Ctrl+E</string></property>
+  </action>
+  <action name="actionQuit">
+   <property name="text"><string>退出</string></property>
+   <property name="shortcut"><string>Ctrl+Q</string></property>
+  </action>
+  <action name="actionResetLayout">
+   <property name="text"><string>重置布局</string></property>
+  </action>
+  <action name="actionAbout">
+   <property name="text"><string>关于</string></property>
+  </action>
+
+  <!-- ─── Central Widget ─── -->
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="centralLayout">
+    <item>
+     <layout class="QHBoxLayout" name="mainArea">
+      <!-- 波形视图占位 (运行时替换为 pyqtgraph PlotWidget) -->
+      <item>
+       <widget class="QWidget" name="waveformContainer" native="true"/>
+
+      </item>
+
+      <!-- 右侧面板: QTabWidget -->
+      <item>
+       <widget class="QTabWidget" name="sideTabs">
+        <property name="minimumSize">
+         <size><width>280</width><height>0</height></size>
+        </property>
+        <property name="maximumSize">
+         <size><width>350</width><height>16777215</height></size>
+        </property>
+
+        <!-- Tab 0: 通道 -->
+        <widget class="QWidget" name="tabChannels">
+         <attribute name="title"><string>通道</string></attribute>
+         <layout class="QVBoxLayout" name="channelsLayout"/>
+        </widget>
+
+        <!-- Tab 1: 触发 -->
+        <widget class="QWidget" name="tabTrigger">
+         <attribute name="title"><string>触发</string></attribute>
+         <layout class="QFormLayout" name="triggerLayout">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelTriggerSource">
+            <property name="text"><string>触发源</string></property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="triggerSource">
+            <item><property name="text"><string>CH1</string></property></item>
+            <item><property name="text"><string>CH2</string></property></item>
+            <item><property name="text"><string>CH3</string></property></item>
+            <item><property name="text"><string>CH4</string></property></item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelTriggerSlope">
+            <property name="text"><string>斜率</string></property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="triggerSlope">
+            <item><property name="text"><string>上升沿</string></property></item>
+            <item><property name="text"><string>下降沿</string></property></item>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelTriggerLevel">
+            <property name="text"><string>触发电平</string></property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QDoubleSpinBox" name="triggerLevel">
+            <property name="suffix"><string> V</string></property>
+            <property name="decimals"><number>2</number></property>
+            <property name="minimum"><double>-10.0</double></property>
+            <property name="maximum"><double>10.0</double></property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelTriggerMode">
+            <property name="text"><string>模式</string></property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QComboBox" name="triggerMode">
+            <item><property name="text"><string>自动</string></property></item>
+            <item><property name="text"><string>正常</string></property></item>
+            <item><property name="text"><string>单次</string></property></item>
+           </widget>
+          </item>
+          <item row="4" column="0" colspan="2">
+           <widget class="QCheckBox" name="triggerHwMode">
+            <property name="text"><string>硬件触发 (由 ART 卡控制)</string></property>
+            <property name="checked"><bool>true</bool></property>
+            <property name="enabled"><bool>false</bool></property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+
+        <!-- Tab 2: 测量 -->
+        <widget class="QWidget" name="tabMeasurements">
+         <attribute name="title"><string>测量</string></attribute>
+         <layout class="QVBoxLayout" name="measurementsLayout">
+          <item>
+           <widget class="QTableWidget" name="measurementTable">
+            <column>
+             <property name="text"><string>测量项</string></property>
+            </column>
+            <column>
+             <property name="text"><string>值</string></property>
+            </column>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+
+        <!-- Tab 3: 反馈 -->
+        <widget class="QWidget" name="tabFeedback">
+         <attribute name="title"><string>反馈</string></attribute>
+         <layout class="QVBoxLayout" name="feedbackLayout">
+          <item>
+           <widget class="QTableWidget" name="feedbackTable">
+            <column>
+             <property name="text"><string>标识</string></property>
+            </column>
+            <column>
+             <property name="text"><string>目标</string></property>
+            </column>
+            <column>
+             <property name="text"><string>状态</string></property>
+            </column>
+            <column>
+             <property name="text"><string>已发送</string></property>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="feedbackButtons">
+            <item>
+             <widget class="QPushButton" name="btnAddFeedback">
+              <property name="text"><string>+ 添加</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnEditFeedback">
+              <property name="text"><string>编辑</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnRemoveFeedback">
+              <property name="text"><string>删除</string></property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </item>
+     </layout>
+    </item>
+
+    <!-- 底部测量条 -->
+    <item>
+     <widget class="QFrame" name="measurementBar">
+      <property name="maximumSize">
+       <size><width>16777215</width><height>32</height></size>
+      </property>
+      <layout class="QHBoxLayout" name="measurementBarLayout">
+       <item>
+        <widget class="QLabel" name="statusSampling">
+         <property name="text"><string>采样率: —</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="statusFrames">
+         <property name="text"><string>帧 #: 0</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="statusTrigger">
+         <property name="text"><string>触发: —</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="statusDevice">
+         <property name="text"><string>设备: —</string></property>
+        </widget>
+       </item>
+       <item>
+        <spacer>
+         <property name="orientation"><enum>Qt::Horizontal</enum></property>
+         <property name="sizeHint">
+          <size><width>0</width><height>0</height></size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="statusFeedback">
+         <property name="text"><string>反馈: 0/0 活跃</string></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+
+  <!-- ─── Status Bar ─── -->
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <connections/>
+</ui>

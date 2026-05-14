@@ -2,7 +2,7 @@
 name = "digital-scope"
 version = "0.1.0"
 description = "基于 ART USB 采集卡的多通道数字示波器"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
 ]
@@ -14,6 +14,7 @@ ui = [
     "qasync>=0.27",
 ]
 feedback = [
+    "rpyc>=5.3",
     "pyserial>=3.5",
     "pymodbus>=3.6",
     "httpx>=0.25",
@@ -31,6 +32,7 @@ all = [
     "PyQt6>=6.5",
     "pyqtgraph>=0.13",
     "qasync>=0.27",
+    "rpyc>=5.3",
     "pyserial>=3.5",
     "pymodbus>=3.6",
     "httpx>=0.25",
