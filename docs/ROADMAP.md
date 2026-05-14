@@ -47,54 +47,60 @@ $ python -m scope.main
 
 ---
 
-## Phase 1 — 反馈系统核心 (Day 2~3)
+## Phase 1 — 反馈系统核心 (已完成 ✅)
 
 ### 目标
 
-在 Phase 0 之上实现 `FeedbackManager` + `FeedbackSlot` 框架和至少两种协议（UDP + 串口）。这是 LabVIEW 版最痛的环节，优先验证新架构能解决"运行时无法增删改"的问题。
+实现 FeedbackManager + FeedbackSlot 框架，以 **rpyc** 为主协议（实验室仪器标准），配合连接池复用解决"运行时无法增删改"的老问题。
 
-### 产出物
+### 实际产出
 
 ```
 scope/io/
-├── feedback_manager.py          # FeedbackManager (asyncio)
+├── feedback_manager.py          # FeedbackManager (asyncio 调度器)
 ├── feedback_slots/
-│   ├── base.py                  # FeedbackSlot (ABC)
-│   ├── udp_slot.py              # UDP 实现
-│   ├── serial_slot.py           # 串口实现
-│   └── null_slot.py             # 日志输出, 调试用
+│   ├── base.py                  # FeedbackSlot ABC + 数据订阅模型
+│   ├── rpyc_slot.py             # ✅ rpyc 协议实现 (主协议)
+│   ├── rpyc_pool.py             # ✅ 线程安全连接池
+│   └── null_slot.py             # ✅ 调试用 (只打日志)
+
+tests/test_feedback_slots.py     # 19 tests, all pass
 ```
 
-### 需要测试的用例
+### 已通过的测试
 
-| 用例 | 场景 |
+| 测试 | 说明 |
 |------|------|
-| 基本发送 | 模拟产生 100 帧, 验证每帧都触发 UDP Slot 发送 |
-| 动态添加 | 运行中 `add_slot(UdpSlot)` → 后续帧立即发送到新目标 |
-| 动态删除 | 运行中 `remove_slot(slot_id)` → 后续帧不再发送到该目标 |
-| 多目标并行 | 同时向 UDP + 串口 + Null 发送, 互不干扰 |
-| 错误隔离 | 某个 slot 网络断开, 不影响其他 slot, 不影响采集流程 |
-| 零过反馈 | 无触发时, 没有任何数据包被发送出去 |
+| 基本分发 | 5 帧数据全部送达 NullSlot ✅ |
+| 订阅过滤 | 只发送订阅的 key, 未订阅的不发 ✅ |
+| key 映射 + 缩放 | local_key → remote_key, scale 正确 ✅ |
+| sequence_num 订阅 | 元信息字段可订阅 ✅ |
+| **动态添加** | 运行中添加 slot → 下一帧开始接收 ✅ |
+| **动态删除** | 运行中删除 slot → 后续帧不再接收 ✅ |
+| 多 slot 并发 | 5 个 slot 同时运行, 各收 10 帧 ✅ |
+| 错误隔离 | 异常 slot 不干扰其他 slot ✅ |
+| **连接池超时** | 连不存在的服务器 → TimeoutError ✅ |
+| **全流程集成** | Simulator → Pipeline → FeedbackManager → NullSlot ✅ |
 
-### 验证方式
+### 关键架构决定
 
-```
-$ python -m tests.test_feedback_integration
-[PASS] 基本发送: 100/100 帧送达
-[PASS] 动态添加: 添加后 50 帧全部命中新 slot
-[PASS] 动态删除: 删除后 0 帧命中
-[PASS] 多目标并行: 3 个 slot 同时接收, 帧数一致
-[PASS] 错误隔离: slot B 断开, slot A/C 正常
-[PASS] 零过反馈: Simulator 暂停 2s, 抓包确认 0 包
-```
+- **rpyc 替代 raw socket**: 实验室仪器均通过 rpyc 暴露接口，纯 socket 不友好
+- **连接池池化**: 每个 slot 一个 `RpycConnectionPool`（min=1, max=4），避免反复握手
+- **事件驱动**: `on_data` 由 dispatch 调用，无独立 Timer → 零过反馈
+- **异步桥接**: rpyc 同步调用通过 `run_in_executor` 桥接到 asyncio，不阻塞主循环
 
 ---
 
-## Phase 2 — 处理管道 (Day 4~6)
+## Phase 2 — 处理管道 (下一阶段)
+
+### 前置条件
+
+Phase 0 (数据模型 + 模拟器) 和 Phase 1 (反馈系统) 已完成。
+本阶段与 UI 界面 (Phase 3) **可并行开发**, 无代码依赖。
 
 ### 目标
 
-实现信号分析 Pipeline 框架和核心测量功能。
+实现信号分析 Pipeline 框架和核心测量功能。输出结果将经由 Phase 1 的订阅模型反馈给远程仪器。
 
 ### 产出物
 

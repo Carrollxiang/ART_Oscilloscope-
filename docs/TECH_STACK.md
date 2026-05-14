@@ -21,15 +21,27 @@
 
 ## 3. 反馈系统
 
-| 协议 | 库 | 说明 |
-|------|----|------|
-| UDP | **标准库 socket** | 零依赖, 最简实现 |
-| 串口 RS-232/485 | **pyserial** | 标准库, 跨平台 |
-| Modbus TCP | **pymodbus** 或 **minimalmodbus** | 工业自动化场景常用 |
-| MQTT | **paho-mqtt** | 按需引入 |
-| HTTP POST | **httpx** (async) | 按需引入 |
+| 协议 | 库 | 说明 | 状态 |
+|------|----|------|------|
+| **rpyc** | **rpyc** | 实验室仪器标准 RPC 协议，带连接池复用 | ✅ 已实现 |
+| UDP | 标准库 socket | 零依赖, 最简实现 | 🔲 后续 |
+| 串口 RS-232/485 | **pyserial** | 标准库, 跨平台 | 🔲 后续 |
+| Modbus TCP | **pymodbus** | 工业自动化场景 | 🔲 后续 |
+| HTTP / MQTT | **httpx** / **paho-mqtt** | 按需引入 | 🔲 按需 |
 
-所有反馈 slot 基于 asyncio 实现, I/O 非阻塞。
+### rpyc 连接池
+
+`RpycConnectionPool` 是反馈系统的核心基础设施：
+
+| 特性 | 说明 |
+|------|------|
+| 线程安全 | `threading.Condition` + `Lock` 保护借还操作 |
+| 温备 | `start()` 时预建 `min_size` 条连接 |
+| 健康检查 | `acquire()` 时自动 ping，死连接从池中移除 |
+| 超时保护 | `acquire_timeout` 防死等，`idle_timeout` 自动回收空闲连接 |
+| 伸缩上限 | `max_size` 限制并发连接数，超限时 acquire 等待 |
+
+所有反馈 slot 基于 asyncio 实现，rpyc 同步调用通过 `run_in_executor` 桥接。
 
 ## 4. 存储与记录
 
@@ -84,13 +96,16 @@ scope/
 │   │
 │   ├── io/                        # 网络与存储
 │   │   ├── __init__.py
-│   │   ├── feedback_manager.py    # FeedbackManager
+│   │   ├── feedback_manager.py    # FeedbackManager (调度器)
 │   │   ├── feedback_slots/        # 反馈插槽实现
 │   │   │   ├── __init__.py
 │   │   │   ├── base.py            # FeedbackSlot (ABC)
-│   │   │   ├── udp_slot.py
-│   │   │   ├── serial_slot.py
-│   │   │   └── modbus_slot.py
+│   │   │   ├── rpyc_slot.py       # ✅ rpyc 协议 (主)
+│   │   │   ├── rpyc_pool.py       # ✅ rpyc 连接池
+│   │   │   ├── null_slot.py       # ✅ 调试用
+│   │   │   ├── udp_slot.py        # 🔲
+│   │   │   ├── serial_slot.py     # 🔲
+│   │   │   └── modbus_slot.py     # 🔲
 │   │   ├── rest_api.py            # FastAPI (可选)
 │   │   ├── recorder.py            # HDF5 记录
 │   │   └── playback.py            # 数据回放 (可选)
@@ -109,11 +124,10 @@ scope/
 │       └── settings.py            # 应用配置管理
 │
 └── tests/                         # 测试
-    ├── test_ring_buffer.py
-    ├── test_watchdog.py
-    ├── test_measurements.py
-    ├── test_feedback_manager.py
-    └── test_feedback_slots.py
+    ├── test_phase0.py              # ✅ 数据模型 + 模拟器 (8 tests)
+    ├── test_feedback_slots.py      # ✅ 反馈系统 (19 tests)
+    ├── test_ring_buffer.py         # 🔲
+    └── test_watchdog.py            # 🔲
 ```
 
 ## 6. 关键第三方依赖速查
@@ -124,19 +138,20 @@ scope/
 | `pyqtgraph` | ≥0.13 | 波形渲染 (OpenGL) |
 | `qasync` | ≥0.27 | Qt + asyncio 桥接 |
 | `numpy` | ≥1.24 | 数值计算基础库 |
+| **`rpyc`** | **≥5.3** | **实验室仪器 RPC 协议 (主要反馈通道)** |
 | `pyusb` | ≥1.3 | USB 通信 |
-| `pyserial` | ≥3.5 | 串口通信 |
-| `scipy` | ≥1.10 (可选) | 滤波器设计, 仅在启用滤波时必需 |
-| `h5py` | ≥3.8 (可选) | HDF5 记录, 仅在启用记录时必需 |
-| `pymodbus` | ≥3.6 (可选) | Modbus 协议, 仅在启用 Modbus 反馈时必需 |
-| `httpx` | ≥0.25 (可选) | HTTP 异步客户端, 仅在启用 HTTP 反馈时必需 |
+| `pyserial` | ≥3.5 (可选) | 串口通信 |
+| `scipy` | ≥1.10 (可选) | 滤波器设计 |
+| `h5py` | ≥3.8 (可选) | HDF5 记录 |
+| `pymodbus` | ≥3.6 (可选) | Modbus 协议 |
+| `httpx` | ≥0.25 (可选) | HTTP 异步客户端 |
 
 ## 7. 开发工具
 
 | 工具 | 用途 |
 |------|------|
 | **pytest** | 测试框架 |
-| **pytest-asyncio** | asyncio 测试支持 |
+| **pytest-asyncio** | asyncio 测试支持 (已配置 `asyncio_mode = auto`) |
 | **ruff** | 代码检查 + 格式化 |
 | **mypy** | 类型检查 |
 | **Wireshark** | 反馈网络抓包验证 |

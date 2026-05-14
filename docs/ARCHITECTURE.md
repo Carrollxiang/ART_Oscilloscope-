@@ -197,13 +197,15 @@ math_pipeline = [
 │  │   时间轴/触发标记/光标             │ │  CH3 ☐       │  │
 │  │                                  │ │  MATH1 ☐     │  │
 │  │                                  │ └──────────────┘  │
-│  ├──────────────────────────────────┤ ┌──────────────┐  │
-│  │  触发设置面板                     │ │  反馈管理面板   │  │
-│  │  类型: 边沿│源: CH1│电平: 0V     │ │  ┌─UDP:1.2.3.4┐│  │
-│  │  斜率: 上升                       │ │  │● Modbus... ││  │
-│  └──────────────────────────────────┘ │  │○ 串口...   ││  │
-│  ┌──────────────────────────────────┐ │  └────────────┘│  │
-│  │  测量读数面板                     │ │  [+ 添加反馈]  │  │
+│  ├──────────────────────────────────┤ ┌────────────────┐  │
+│  │  触发设置面板                     │ │  反馈管理面板     │  │
+│  │  类型: 边沿│源: CH1│电平: 0V     │ │  ┌─rpyc:scope1 ─┐│  │
+│  │  斜率: 上升                       │ │  │  ● 运行 192.. ││  │
+│  └──────────────────────────────────┘ │  │  rpyc:oscillo2 ││  │
+│  ┌──────────────────────────────────┐ │  │  ○ 停止 10.0.. ││  │
+│  │  测量读数面板                     │ │  ├──────────────┤│  │
+│  │  CH1 Vpp: 3.30V  Freq: 1.000kHz  │ │  │  [+ 添加目标] ││  │
+│  │  CH2 Vpp: 1.65V  Freq: 1.000kHz  │ │  └──────────────┘│  │
 │  │  CH1 Vpp: 3.30V  Freq: 1.000kHz  │ └──────────────┘  │
 │  │  CH2 Vpp: 1.65V  Freq: 1.000kHz  │                   │
 │  └──────────────────────────────────┘                   │
@@ -216,8 +218,9 @@ math_pipeline = [
 
 | 子系统 | 技术 | 用途 |
 |--------|------|------|
-| FeedbackManager | asyncio | 管理所有反馈插槽的生命周期 |
-| FeedbackSlot (N个) | asyncio | 每个协议独立实现，运行时动态增删 |
+| FeedbackManager | asyncio | 管理所有反馈插槽的生命周期，事件驱动分发 |
+| FeedbackSlot (N个) | asyncio + rpyc | 每个插槽对应一个远程仪器，运行时动态增删改 |
+| RpycConnectionPool | threading + rpyc | 每个插槽维护一个连接池，复用 TCP 连接避免反复握手 |
 | REST API (可选) | FastAPI | 远程查询状态/配置 |
 | 数据记录 | HDF5 | 原始数据存档与回放 |
 
@@ -293,10 +296,22 @@ class AnalysisResult:
     │   └─ pyqtgraph.update() → 屏幕绘制
     │
     ├→ FeedbackManager.dispatch(result)
-    │   ├─ Slot A (UDP):     on_data(result) → 立即发送
-    │   ├─ Slot B (Modbus):  on_data(result) → 立即发送
-    │   └─ Slot C (串口):    on_data(result) → 立即发送
-    │   ※ 每次触发 = 每个 active slot 发送一次, 无节流/无缓存
+    │   │ 根据每个 slot 的订阅从 result.measurements 提取 payload
+    │   │
+    │   ├─ Slot A (rpyc→192.168.1.10:18861)
+    │   │   └─ on_data({"CH1_Vpp": 3.3})
+    │   │      └─ pool.acquire() → rpyc.call("exposed_update", data) → pool.release()
+    │   │
+    │   ├─ Slot B (rpyc→10.0.0.5:18861)
+    │   │   └─ on_data({"CH1_Freq": 1000.0})
+    │   │      └─ pool.acquire() → rpyc.call("exposed_update", data) → pool.release()
+    │   │
+    │   └─ Slot C (Null, 调试用)
+    │       └─ on_data(payload) → 写日志
+    │
+    │   ※ 全部 slot 并发 dispatch, 互不阻塞
+    │   ※ 每次触发 = 每个 active slot 发一次, 无独立 Timer
+    │   ※ rpyc 同步调用通过 run_in_executor 桥接到 asyncio
     │
     └→ Recorder.record(result) (可选)
         └─ HDF5 文件存储
@@ -308,75 +323,178 @@ class AnalysisResult:
 
 ## 5. Feedback 系统设计 (核心)
 
-### 架构
+### 设计原则
+
+| 原则 | 说明 |
+|------|------|
+| **触发事件驱动** | 反馈由硬件触发直接驱动，无独立 Timer → 零过反馈 |
+| **动态插拔** | slot 在运行时随时添加/移除/修改，不阻塞采集流程 |
+| **rpyc 为主协议** | 实验室仪器均通过 rpyc 暴露接口，纯 socket 不友好 |
+| **连接池复用** | 每个 slot 维护一个 rpyc 连接池，避免反复 TCP 握手 |
+| **并发隔离** | 所有 slot 并发 dispatch，单个 slot 失败不影响其他 |
+
+### 核心抽象
 
 ```python
 class FeedbackSlot(ABC):
     """一个独立的数据反馈通道, 运行时动态插拔"""
-    
+
     slot_id: str
     status: SlotStatus  # idle | running | error
-    
+
     @abstractmethod
     async def start(self):
-        """启动"""
+        """创建连接、初始化连接池"""
+
     @abstractmethod
     async def stop(self):
-        """停止——可随时安全调用"""
+        """关闭连接池、释放资源"""
+
     @abstractmethod
-    async def on_data(self, result: AnalysisResult):
-        """由 FeedbackManager 每次采集完成后调用, 事件驱动"""
+    async def on_data(self, payload: dict[str, Any]):
+        """
+        推送一帧数据。
+        payload 已由 FeedbackManager 根据 subscriptions 预组装好,
+        slot 只管发送, 不涉及数据提取逻辑。
+        """
+
     @abstractmethod
-    async def reconfigure(self, config: FeedbackConfig):
-        """运行时修改目标地址、协议参数、订阅项等"""
+    async def reconfigure(self, config: SlotConfig):
+        """运行时修改目标地址、订阅项、连接池参数"""
 
 class FeedbackManager:
-    """管理所有 slot 的生命周期"""
-    
-    def add_slot(self, slot: FeedbackSlot) -> str    # 返回 slot_id
-    def remove_slot(self, slot_id: str)               # 运行中移除
-    def get_slot(self, slot_id: str) -> FeedbackSlot
+    """管理所有 slot 的生命周期 + 数据分发"""
+
+    def add_slot(self, slot: FeedbackSlot, auto_start=True) -> str
+    def remove_slot(self, slot_id: str) -> Optional[FeedbackSlot]
+    def get_slot(self, slot_id: str) -> Optional[FeedbackSlot]
     def list_slots(self) -> list[SlotInfo]
-    
-    def dispatch(self, result: AnalysisResult):       # 由采集完成事件调用
-        """遍历所有 running slot, 调用 on_data"""
-        
-    async def start_slot(self, slot_id: str)
-    async def stop_slot(self, slot_id: str)
-    async def reconfigure_slot(self, slot_id: str, config: FeedbackConfig)
+
+    async def dispatch(self, result: AnalysisResult):
+        """并发执行所有 active slot 的 on_data()"""
 ```
 
-### 协议实现优先级
+### 数据订阅模型
 
-| 阶段 | 协议 | 复杂度 |
-|------|------|--------|
-| Phase 1 | UDP (最简, 纯 socket) | ★☆☆☆☆ |
-| Phase 1 | 串口 (serial) | ★★☆☆☆ |
-| Phase 2 | Modbus TCP | ★★★☆☆ |
-| Phase 3 | MQTT / HTTP / 自定义协议 | 按需 |
+每个 slot **只接收它订阅的测量项**，由 FeedbackManager 在 dispatch 时过滤：
+
+```python
+@dataclass
+class DataSubscription:
+    local_key: str     # 本系统 key, 如 "CH1_Vpp"
+    remote_key: str    # 远程仪器参数名 (为空则同 local_key)
+    scale: float = 1.0 # 缩放
+    offset: float = 0.0
+
+# 一个 slot 的典型配置
+RpycSlotConfig(
+    slot_id="scope-to-oscillo",
+    host="192.168.1.100",
+    port=18861,
+    remote_method="exposed_update",
+    subscriptions=[
+        DataSubscription(local_key="CH1_Vpp"),          # 原样发
+        DataSubscription(local_key="CH1_Freq"),         # 原样发
+        DataSubscription(local_key="CH1_Vpp",
+                         remote_key="voltage_mv",
+                         scale=1000.0),                 # V → mV
+    ],
+)
+```
+
+### RpycConnectionPool 连接池
+
+**为什么需要连接池**:
+- rpyc 握手涉及 TCP + 对象序列化协商，每次新建开销大
+- 触发频率可达 KHz 级，不可能每个触发都建新连接
+- 多 slot 各自独立池，避免端口耗尽
+
+```
+     ┌─────────────────────┐
+     │  RpycConnectionPool │  ← 每个 slot 一个
+     │                     │
+     │  ┌─ conn #1 ─────┐  │  acquire() → 借一条
+     │  │ in_use: false  │  │  release()  → 归还
+     │  └────────────────┘  │
+     │  ┌─ conn #2 ─────┐  │  健康检查: ping() 失败自动移除
+     │  │ in_use: false  │  │  温备: start() 时预建 min_size 条
+     │  └────────────────┘  │  超时: acquire 等待 > timeout → 抛异常
+     │  ┌─ conn #3 ...   │  │
+     └─────────────────────┘
+```
+
+```python
+pool = RpycConnectionPool(
+    host="192.168.1.100", port=18861,
+    min_size=1,          # 启动时预建 1 条
+    max_size=4,          # 最多 4 条并发
+    acquire_timeout=10,  # 池满时等 10s
+    idle_timeout=60,     # 60s 无使用自动关闭空闲连接
+)
+
+# 在同步线程中使用
+conn = pool.acquire()
+try:
+    conn.root.exposed_update(data)
+finally:
+    pool.release(conn)
+```
+
+### 异步 ↔ 同步桥接
+
+```
+FeedbackManager.dispatch()        ← asyncio context
+  └─ slot.on_data(payload)        ← async
+       └─ run_in_executor(...)    ← 创建线程, 执行同步 rpyc 调用
+            └─ _do_rpyc_call()
+                 ├─ pool.acquire()    ← 阻塞直到拿到连接
+                 ├─ conn.root.method(data)
+                 └─ pool.release()
+```
+
+关键点: rpyc 是同步库，每个 `acquire` 可能阻塞等待。通过 `asyncio.get_event_loop().run_in_executor()` 将阻塞操作扔到线程池，不阻塞主事件循环。
+
+### 协议支持现状
+
+| 协议 | 状态 | 说明 |
+|------|------|------|
+| **rpyc** | ✅ 已实现 (Phase 1) | 主要协议，带连接池 |
+| null (调试) | ✅ 已实现 (Phase 1) | 只打日志，不产生网络 I/O |
+| UDP | 🔲 后续 | 标准库 socket，零依赖 |
+| 串口 | 🔲 后续 | pyserial |
+| Modbus | 🔲 后续 | pymodbus |
+| MQTT / HTTP | 🔲 按需 | 暂未规划 |
 
 ### 事件循环集成
 
-使用 **qasync** 桥接 PyQt 事件循环和 asyncio:
+使用 **qasync** 桥接 PyQt 事件循环和 asyncio：
 
 ```python
 import qasync
 
 async def main():
     app = QApplication(sys.argv)
-    
+
     device = SimulatorDevice()
     pipeline = ProcessingPipeline()
     feedback_mgr = FeedbackManager()
     main_win = MainWindow()
-    
+
+    # 添加一个 rpyc 反馈目标
+    slot = RpycFeedbackSlot(RpycSlotConfig(
+        slot_id="to-scope2",
+        host="192.168.1.100", port=18861,
+        subscriptions=[DataSubscription("CH1_Vpp")],
+    ))
+    await feedback_mgr.add_slot(slot)
+
     # 采集完成 → 分析 → 反馈 的事件链
     device.on_acquisition_complete.connect(
         lambda result: pipeline.process(result, callback=lambda processed:
             feedback_mgr.dispatch(processed)
         )
     )
-    
+
     with qasync.QApplicationExecutor(app):
         await asyncio.gather(
             device.start(),
