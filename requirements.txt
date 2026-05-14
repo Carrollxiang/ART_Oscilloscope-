@@ -1,0 +1,5 @@
+# 最小依赖 (Phase 0 直接需要)
+numpy>=1.24
+
+# 按需安装: pip install ".[all]"
+# 或分组: pip install ".[ui]" ".[feedback]"
