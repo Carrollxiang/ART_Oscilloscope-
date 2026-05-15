@@ -1,8 +1,8 @@
 """
 迷你实时曲线 — 仅显示反馈订阅的物理量趋势
 
-左下角持久化显示 (不随 Tab 切换隐藏)。
-样式与主波形一致: 暗色底 + 网格 + 可勾选图例。
+左下角持久化显示, 不随 Tab 切换隐藏。
+与主波形一致的交互: 鼠标滚轮缩放 / 拖拽平移 / 图例点击切换。
 """
 
 from __future__ import annotations
@@ -20,9 +20,8 @@ from PyQt6.QtGui import QColor
 logger = logging.getLogger(__name__)
 
 MAX_POINTS = 3600
-UPDATE_INTERVAL_MS = 100
+REFRESH_MS = 50  # 20fps 上限
 
-# 曲线颜色 (与主波形区分)
 TRACE_COLORS = [
     QColor("#FF6B6B"), QColor("#4ECDC4"), QColor("#45B7D1"),
     QColor("#96CEB4"), QColor("#FFEAA7"), QColor("#DDA0DD"),
@@ -38,7 +37,6 @@ class MiniChartData:
         self._maxlen = maxlen
         self._buf: dict[str, deque] = {}
         self._colors: dict[str, QColor] = {}
-        self._timeline: deque = deque(maxlen=maxlen)
         self._count = 0
         self._ci = 0
 
@@ -48,7 +46,6 @@ class MiniChartData:
             self._colors[key] = TRACE_COLORS[self._ci % len(TRACE_COLORS)]
             self._ci += 1
         self._buf[key].append(value)
-        self._timeline.append(self._count)
         self._count += 1
 
     def add_batch(self, data: dict[str, float]):
@@ -75,40 +72,35 @@ class MiniChartData:
 
 
 class MiniChartWidget(QWidget):
-    """迷你趋势图 (暗色 + 可勾选图例)。"""
+    """迷你趋势图 (可交互 + 可勾选图例)。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = MiniChartData()
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._visible: dict[str, bool] = {}
-        self._legend: Optional[pg.LegendItem] = None
+        self._dirty = False
 
         self.setMinimumWidth(180)
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
-        )
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setStyleSheet("background: #111;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
 
-        # ── 绘图区 ──
+        # ── 绘图区 (与主波形相同交互能力) ──
         self.plot = pg.PlotWidget()
         self.plot.setLabel("left", "", units="")
         self.plot.setLabel("bottom", "", units="")
         self.plot.showGrid(x=True, y=True, alpha=0.15)
-        self.plot.setMouseEnabled(False, False)
-        self.plot.hideButtons()
-        self.plot.setMenuEnabled(False)
+        self.plot.setMouseEnabled(x=True, y=True)  # 允许滚轮缩放 + 拖拽
         self.plot.setBackground("#0D0D0D")
         try:
             self.plot.useOpenGL(True)
         except Exception:
             pass
 
-        # 图例 (右下角)
+        # 图例 (右下角, 点击切换显隐)
         self._legend = pg.LegendItem(
             size=(60, 60), offset=(0, 0),
             brush=(20, 20, 20, 200), pen=(80, 80, 80),
@@ -117,41 +109,59 @@ class MiniChartWidget(QWidget):
         self._legend.setParentItem(self.plot.plotItem.vb)
         self._legend.anchor((1, 1), (1, 1), (-5, -5))
         self._legend.setZValue(100)
+        # 图例点击 —— 仿 WaveformView
+        self._legend.mousePressEvent = self._on_legend_click
 
         layout.addWidget(self.plot, stretch=1)
 
-        # ── 定时刷新 ──
+        # ── 定时刷新 (仅在脏数据时重绘) ──
         self._timer = QTimer()
-        self._timer.setInterval(UPDATE_INTERVAL_MS)
+        self._timer.setInterval(REFRESH_MS)
         self._timer.timeout.connect(self._refresh)
         self._timer.start()
 
     # ── 数据接口 ───────────────────────────────────────────────
 
     def add_data(self, filtered: dict[str, float]):
-        """仅添加被反馈订阅选中的数据。"""
         if filtered:
             self._data.add_batch(filtered)
+            self._dirty = True
 
     # ── 图例点击切换 ───────────────────────────────────────────
 
-    def _toggle_trace(self, key: str):
-        self._visible[key] = not self._visible.get(key, True)
-        self._update_legend_style(key)
+    def _on_legend_click(self, ev):
+        """点击图例条目切换对应曲线显隐。"""
+        pos = ev.pos()
+        item_height = 20
+        y_offset = 5
 
-    def _update_legend_style(self, key: str):
+        keys = self._data.keys()
+        for idx, key in enumerate(keys):
+            y_start = y_offset + idx * item_height
+            y_end = y_start + item_height
+            if y_start <= pos.y() <= y_end:
+                self._visible[key] = not self._visible.get(key, True)
+                self._update_legend_color(key)
+                self._dirty = True
+                ev.accept()
+                return
+        pg.LegendItem.mousePressEvent(self._legend, ev)
+
+    def _update_legend_color(self, key: str):
+        """更新图例文字颜色: 可见→亮, 隐藏→灰。"""
         vis = self._visible.get(key, True)
         for sample, label in self._legend.items:
             if hasattr(label, 'text') and label.text == key:
-                if vis:
-                    label.setAttr("color", (180, 180, 180))
-                else:
-                    label.setAttr("color", (80, 80, 80))
+                label.setAttr("color", (180, 180, 180) if vis else (80, 80, 80))
                 break
 
     # ── 刷新曲线 ───────────────────────────────────────────────
 
     def _refresh(self):
+        if not self._dirty:
+            return
+        self._dirty = False
+
         keys = self._data.keys()
         if not keys:
             return
@@ -167,36 +177,29 @@ class MiniChartWidget(QWidget):
                 curve = self.plot.plot(x, y, pen=pen, name=key)
                 curve.hide()
                 self._curves[key] = curve
-                self._visible[key] = True
-                # 加入图例
+                self._visible.setdefault(key, True)
                 self._legend.addItem(curve, key)
-                # 图例点击
-                idx = len(self._legend.items) - 1
-                sample, label = self._legend.items[idx]
-                if hasattr(label, 'mousePressEvent'):
-                    old = label.mousePressEvent
-                    def handler(ev, k=key):
-                        self._toggle_trace(k)
-                    label.mousePressEvent = handler
+                self._update_legend_color(key)
 
-            # 可见性
             if self._visible.get(key, True):
                 self._curves[key].setData(x, y)
                 self._curves[key].show()
             else:
                 self._curves[key].hide()
 
-        # 自动 X 轴滚动
+        # 自动 X 轴 (仅在用户未手动缩放时)
         n = self._data.count
         if n > 0:
-            win = min(MAX_POINTS, n)
-            self.plot.setXRange(n - win, n)
-
-        # 自动 Y 轴 (只考虑可见曲线)
-        self.plot.enableAutoRange(axis="y")
+            vb = self.plot.plotItem.vb
+            # 检查用户是否手动拖拽过 (viewRange 变化了就不自动调)
+            xr = vb.viewRange()[0]
+            if abs(xr[1] - xr[0] - MAX_POINTS) < 1:
+                win = min(MAX_POINTS, n)
+                self.plot.setXRange(n - win, n)
 
     def clear_all(self):
         self._data = MiniChartData()
         self._curves.clear()
         self._visible.clear()
         self.plot.clear()
+        self._dirty = False
