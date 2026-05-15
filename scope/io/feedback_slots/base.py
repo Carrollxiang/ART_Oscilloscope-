@@ -62,9 +62,16 @@ class SlotInfo:
     # PID 反馈信息
     feedback_mode: str = "standard"
     setpoint: float = 0.0
-    pid_kp: list[float] = field(default_factory=lambda: [1.0] * 10)
-    pid_ki: list[float] = field(default_factory=lambda: [0.0] * 10)
-    pid_kd: list[float] = field(default_factory=lambda: [0.0] * 10)
+    pid_kp: float = 1.0
+    pid_ki: float = 0.1
+    pid_kd: float = 0.01
+    feedback_threshold: float = 0.0
+    feedback_limit: float = 0.0
+
+    # 测量状态 (用于状态灯)
+    latest_value: float = 0.0
+    measurement_status: str = "unknown"
+    """ "stable" | "unstable" | "out_of_limit" | "unknown" """
 
 
 class FeedbackSlot(ABC):
@@ -167,12 +174,25 @@ class FeedbackSlot(ABC):
 
     def get_info(self) -> SlotInfo:
         """获取运行快照"""
-        # 尝试读取 PID/模式/设定值 (RpycSlotConfig 特有, 基类 SlotConfig 没有)
         fm = getattr(self._config, 'feedback_mode', 'standard')
         sp = getattr(self._config, 'setpoint', 0.0)
-        kp = getattr(self._config, 'pid_kp', [1.0]*10)
-        ki = getattr(self._config, 'pid_ki', [0.0]*10)
-        kd = getattr(self._config, 'pid_kd', [0.0]*10)
+        kp = getattr(self._config, 'pid_kp', 1.0)
+        ki = getattr(self._config, 'pid_ki', 0.1)
+        kd = getattr(self._config, 'pid_kd', 0.01)
+        thr = getattr(self._config, 'feedback_threshold', 0.0)
+        lim = getattr(self._config, 'feedback_limit', 0.0)
+
+        # 计算测量状态
+        lv = getattr(self, '_latest_value', 0.0)
+        diff = abs(lv - sp)
+        if thr > 0 and diff < thr:
+            mstatus = "stable"
+        elif lim > 0 and diff > lim:
+            mstatus = "out_of_limit"
+        elif thr > 0 or lim > 0:
+            mstatus = "unstable"
+        else:
+            mstatus = "unknown"
 
         return SlotInfo(
             slot_id=self._config.slot_id,
@@ -192,6 +212,10 @@ class FeedbackSlot(ABC):
             pid_kp=kp,
             pid_ki=ki,
             pid_kd=kd,
+            feedback_threshold=thr,
+            feedback_limit=lim,
+            latest_value=lv,
+            measurement_status=mstatus,
         )
 
     @property
