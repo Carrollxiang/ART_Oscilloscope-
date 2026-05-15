@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QApplication
 
 from scope.hardware import DeviceConfig
 from scope.hardware.simulator import SimulatorDevice
+from scope.hardware.art_device import ArtDevice
 from scope.io import FeedbackManager
 from scope.processing import ProcessingPipeline, AutoMeasure, MathOp, FFTAnalyze
 from scope.ui import MainWindow
@@ -64,6 +65,19 @@ class ScopeApp:
             FFTAnalyze(channels=["CH1", "CH2"])
         )
 
+        # ART 设备参数 (用于配置对话框 → 设备重建)
+        self._art_params = {
+            "device_name": "Dev42",
+            "ai_channels": "ai0:3",
+            "terminal_config": "NRSE",
+            "min_val": -10.0,
+            "max_val": 10.0,
+            "read_timeout": 5.0,
+            "trigger_source": "",
+            "trigger_slope": "rising",
+            "trigger_level": 0.0,
+        }
+
         # asyncio loop 用于 feedback dispatch
         self._async_loop = asyncio.new_event_loop()
 
@@ -81,6 +95,7 @@ class ScopeApp:
 
         # 2. 创建主窗口
         self.main_win = MainWindow(feedback_manager=self.feedback_mgr)
+        self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()
 
         # 3. 用 QTimer 驱动采集循环 (在主线程中运行)
@@ -102,6 +117,60 @@ class ScopeApp:
         self.device.stop_acquisition()
         self.device.close()
         logger.info("ScopeApp 已停止")
+
+    def _on_art_config(self, params: dict, config: DeviceConfig):
+        """
+        收到 ART 配置变更 → 重建设备。
+
+        停止当前设备, 用新参数创建 ArtDevice, 启动采集。
+        """
+        self._art_params = params
+
+        # 停止当前采集
+        self._timer.stop()
+        self.device.stop_acquisition()
+        self.device.close()
+
+        # 尝试创建 ArtDevice
+        try:
+            new_device = ArtDevice(
+                device_name=params["device_name"],
+                ai_channels=params["ai_channels"],
+                terminal_config=params["terminal_config"],
+                min_val=params["min_val"],
+                max_val=params["max_val"],
+                trigger_source=params["trigger_source"],
+                trigger_slope=params["trigger_slope"],
+                trigger_level=params["trigger_level"],
+            )
+            # 设置读取超时
+            new_device._read_timeout = params["read_timeout"]
+
+            if new_device.open():
+                new_device.configure(config)
+                new_device.start_acquisition()
+                self.device = new_device
+                self._config = config
+                logger.info(
+                    f"ART 设备已切换: {params['device_name']}/"
+                    f"{params['ai_channels']}, "
+                    f"{config.sample_rate}Sa/s, "
+                    f"{config.record_length}samples"
+                )
+            else:
+                logger.error("ART 设备打开失败, 保持当前设备")
+                self.device.start_acquisition()
+        except Exception as e:
+            logger.error(f"ART 设备切换失败: {e}, 保持当前设备")
+            try:
+                self.device.start_acquisition()
+            except Exception:
+                pass
+
+        # 重启 QTimer (可能新配置改变帧时长)
+        frame_ms = int(config.record_length / config.sample_rate * 1000)
+        self._timer.setInterval(max(frame_ms, 50))
+        self._timer.start()
 
     def _on_timer_tick(self):
         """QTimer 回调: 采集一帧 → 处理 → 显示 → 反馈"""

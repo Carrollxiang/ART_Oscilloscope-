@@ -41,6 +41,8 @@ class MainWindow(QMainWindow):
 
     # 跨线程信号: 采集线程 → UI 线程
     data_received = pyqtSignal(object)
+    # ART 配置变更信号: 对话框确认 → ScopeApp 重建设备
+    art_config_applied = pyqtSignal(dict, object)  # (params_dict, device_config)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None):
         super().__init__()
@@ -101,22 +103,13 @@ class MainWindow(QMainWindow):
         logger.info("MainWindow 初始化完成")
 
     def _show_art_config(self):
-        """打开 ART 设备配置对话框。"""
+        """打开 ART 设备配置对话框, 确认后发射 art_config_applied 信号。"""
         dlg = ArtConfigDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             params = dlg.get_device_params()
             config = dlg.get_device_config()
             logger.info(f"ART 配置已更新: {params}")
-            # 发出信号, 由 main.py 的 ScopeApp 接收后重建设备
-            # TODO: 连接 ScopeApp 的设备重建逻辑
-            QMessageBox.information(
-                self, "配置已保存",
-                f"设备: {params['device_name']}/{params['ai_channels']}\n"
-                f"采样率: {config.sample_rate} Sa/s\n"
-                f"时长: {config.record_length/config.sample_rate:.3f}s ({config.record_length} 样本)\n"
-                f"接地: {params['terminal_config']}\n"
-                f"触发: {params['trigger_source'] or '无'}"
-            )
+            self.art_config_applied.emit(params, config)
 
     def _on_legend_toggle(self, ch: int, visible: bool):
         """图例点击切换时, 同步通道面板的复选框。"""
