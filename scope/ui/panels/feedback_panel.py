@@ -254,19 +254,11 @@ class FeedbackCard(QFrame):
         self._on_edit = on_edit
         self._on_remove = on_remove
 
-        self.setStyleSheet(f"""
-            FeedbackCard {{
-                background: {CARD_BG};
-                border: 1px solid {CARD_BORDER};
-                border-radius: 4px; margin: 2px;
-            }}
-            QLabel {{ color: {TEXT_COLOR}; background: transparent; }}
-            QPushButton {{
-                color: {TEXT_COLOR}; background: #EEE; border: 1px solid {CARD_BORDER};
-                border-radius: 3px; padding: 2px 6px; font-size: 10px;
-            }}
-            QPushButton:hover {{ background: #DDD; }}
-        """)
+        self.setObjectName("feedbackCard")
+        self.setStyleSheet(
+            f"#feedbackCard {{ background: {CARD_BG}; border: 1px solid {CARD_BORDER}; "
+            f"border-radius: 4px; margin: 2px; }}"
+        )
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(8, 4, 8, 4)
         self._layout.setSpacing(4)
@@ -425,10 +417,11 @@ class FeedbackPanel:
 
     def _build_ui(self):
         layout = self._parent.layout() or QVBoxLayout(self._parent)
-        self._parent.setLayout(layout)
+        # 清空 (.ui 中现为空容器, 只有 FeedbackPanel 自己的控件)
         while layout.count():
             item = layout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+            if item.widget():
+                item.widget().deleteLater()
         top = QHBoxLayout()
         btn_add = QPushButton("+ 添加")
         btn_add.setStyleSheet("color: #228822; font-weight: bold;")

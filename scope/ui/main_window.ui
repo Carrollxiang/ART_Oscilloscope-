@@ -97,51 +97,10 @@
          </layout>
         </widget>
 
-        <!-- Tab 3: 反馈 -->
+        <!-- Tab 3: 反馈 (空容器, 由 FeedbackPanel 填充) -->
         <widget class="QWidget" name="tabFeedback">
          <attribute name="title"><string>反馈</string></attribute>
-         <layout class="QVBoxLayout" name="feedbackLayout">
-          <item>
-           <widget class="QTableWidget" name="feedbackTable">
-            <column>
-             <property name="text"><string>标识</string></property>
-            </column>
-            <column>
-             <property name="text"><string>目标</string></property>
-            </column>
-            <column>
-             <property name="text"><string>状态</string></property>
-            </column>
-            <column>
-             <property name="text"><string>已发送</string></property>
-            </column>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="feedbackButtons">
-            <item>
-             <widget class="QPushButton" name="btnAddFeedback">
-              <property name="text"><string>+ 添加</string></property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnEditFeedback">
-              <property name="text"><string>编辑</string></property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnPauseFeedback">
-              <property name="text"><string>暂停</string></property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnRemoveFeedback">
-              <property name="text"><string>删除</string></property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-         </layout>
+         <layout class="QVBoxLayout" name="feedbackLayout"/>
         </widget>
        </widget>
       </item>
