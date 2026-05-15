@@ -117,10 +117,15 @@ class FeedbackManager:
             logger.warning(f'remove_slot: "{slot_id}" 不存在')
             return None
 
-        # 先停止 (同步方式, 这里不 blocking)
+        # 先停止
         if slot.status != SlotStatus.IDLE:
-            # 在 event loop 中调度停止, 但不等待
-            asyncio.ensure_future(self._safe_stop(slot))
+            try:
+                # 已有运行中 loop (如 pytest-asyncio) → 调度但不等待
+                loop = asyncio.get_running_loop()
+                asyncio.ensure_future(self._safe_stop(slot))
+            except RuntimeError:
+                # UI 线程无 loop → 创建临时 loop 同步执行
+                asyncio.run(self._safe_stop(slot))
 
         # 从字典移除 (新 dispatch 不会再包含此 slot)
         del self._slots[slot_id]
