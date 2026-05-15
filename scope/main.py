@@ -93,7 +93,15 @@ class ScopeApp:
             f"{self._config.sample_rate/1e6:.1f}MSa/s"
         )
 
-        # 2. 创建主窗口
+        # 2. 启动 asyncio 工作线程 (在 UI 创建之前, 避免 asyncio.run 闪窗)
+        async_thread = threading.Thread(
+            target=self._async_worker,
+            daemon=True,
+            name="async-worker",
+        )
+        async_thread.start()
+
+        # 3. 创建主窗口
         self.main_win = MainWindow(feedback_manager=self.feedback_mgr,
                                     async_loop=self._async_loop)
         self.main_win.art_config_applied.connect(self._on_art_config)
@@ -220,14 +228,6 @@ def main():
 
     scope_app = ScopeApp()
     scope_app.start()
-
-    # 启动 asyncio 线程 (用于 feedback dispatch)
-    async_thread = threading.Thread(
-        target=scope_app._async_worker,
-        daemon=True,
-        name="async-worker",
-    )
-    async_thread.start()
 
     # 进入 Qt 事件循环
     try:

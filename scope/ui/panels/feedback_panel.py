@@ -328,12 +328,6 @@ class FeedbackCard(QFrame):
         btnEdit.clicked.connect(lambda: self._on_edit(self._slot_id) if self._on_edit else None)
         row.addWidget(btnEdit)
 
-        btnDel = QPushButton("删除"); btnDel.setFixedSize(36, 22)
-        btnDel.setStyleSheet("color: #CC4444; font-size: 10px;")
-        btnDel.setToolTip("删除此反馈目标")
-        btnDel.clicked.connect(lambda: self._on_remove(self._slot_id) if self._on_remove else None)
-        row.addWidget(btnDel)
-
         # 点击头部切换折叠
         for w in [hdr, self._arrow, self._led, name, mode, st, s]:
             w.mousePressEvent = lambda ev: self._toggle()
@@ -368,6 +362,12 @@ class FeedbackCard(QFrame):
         if info.last_error:
             e = lbl(f"⚠ {info.last_error}", "color: #CC2222;")
             v.addWidget(e)
+
+        # 删除按钮 (只在详情中, 防误操作)
+        del_btn = QPushButton("删除此反馈目标")
+        del_btn.setStyleSheet("color: #CC4444; font-size: 10px; padding: 2px; background: transparent; border: 1px solid #DDD; border-radius: 2px;")
+        del_btn.clicked.connect(lambda: self._on_remove(self._slot_id) if self._on_remove else None)
+        v.addWidget(del_btn)
 
         return det
 
