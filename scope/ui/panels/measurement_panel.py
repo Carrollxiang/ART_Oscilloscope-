@@ -244,7 +244,14 @@ class MeasurementPanel:
         self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=0.5)
 
     def _setup_ui(self):
-        layout = self._parent.layout() or QVBoxLayout(self._parent)
+        # 清除旧布局 (避免 .ui 中 measurementTable 残留)
+        old_layout = self._parent.layout()
+        if old_layout:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+        layout = QVBoxLayout(self._parent)
         self._parent.setLayout(layout)
 
         # 标题

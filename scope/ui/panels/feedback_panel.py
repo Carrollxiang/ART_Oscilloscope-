@@ -363,9 +363,13 @@ class FeedbackCard(QFrame):
             e = lbl(f"⚠ {info.last_error}", "color: #CC2222;")
             v.addWidget(e)
 
-        # 删除按钮 (只在详情中, 防误操作)
-        del_btn = QPushButton("删除此反馈目标")
-        del_btn.setStyleSheet("color: #CC4444; font-size: 10px; padding: 2px; background: transparent; border: 1px solid #DDD; border-radius: 2px;")
+        # 危险操作: 删除此反馈 (展开详情可见)
+        del_btn = QPushButton("删除此反馈")
+        del_btn.setStyleSheet(
+            "color: #CC4444; font-size: 10px; padding: 2px; "
+            "background: transparent; border: 1px solid #EEDDDD; border-radius: 2px;"
+            "QPushButton:hover { background: #FFEEEE; }"
+        )
         del_btn.clicked.connect(lambda: self._on_remove(self._slot_id) if self._on_remove else None)
         v.addWidget(del_btn)
 
