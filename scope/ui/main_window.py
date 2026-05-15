@@ -19,8 +19,11 @@ from scope.io import FeedbackManager
 from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
 from .panels.measurement_panel import MeasurementPanel
+from PyQt6.QtWidgets import QFileDialog
+
 from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
 from .panels.device_panel import DevicePanel
+from scope.config.settings import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,24 @@ class MainWindow(QMainWindow):
         self._connect_actions()
 
         logger.info("MainWindow 初始化完成")
+
+    def _save_config(self):
+        """保存当前配置到 JSON 文件。"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "保存配置", ConfigManager.default_filepath(),
+            "JSON 配置 (*.json)")
+        if path:
+            ConfigManager.save_to_file(self, path)
+
+    def _load_config(self):
+        """从 JSON 文件加载配置。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "加载配置", ConfigManager.default_filepath(),
+            "JSON 配置 (*.json)")
+        if path:
+            ok = ConfigManager.load_from_file(self, path)
+            if ok:
+                self._update_status_bar()
 
     def _on_device_config(self, params: dict, config: DeviceConfig):
         """设备面板 → 转发配置到 ScopeApp。"""
@@ -176,6 +197,8 @@ class MainWindow(QMainWindow):
 
     def _connect_actions(self):
         """连接菜单动作"""
+        self.actionSaveConfig.triggered.connect(self._save_config)
+        self.actionLoadConfig.triggered.connect(self._load_config)
         self.actionQuit.triggered.connect(self.close)
         self.actionAbout.triggered.connect(self._show_about)
         self.actionResetLayout.triggered.connect(
