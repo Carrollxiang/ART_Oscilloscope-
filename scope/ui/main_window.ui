@@ -64,14 +64,14 @@
      <widget class="QWidget" name="waveformContainer" native="true"/>
     </item>
 
-    <!-- 下: 迷你图(左) + 配置面板(右) -->
+    <!-- 下: 迷你图(左) + 配置面板(右) — QSplitter 可拖拽 -->
     <item stretch="1">
-     <layout class="QHBoxLayout" name="bottomArea">
-      <item stretch="1">
-       <widget class="QWidget" name="miniChartContainer"/>
-      </item>
-      <item stretch="3">
-       <widget class="QTabWidget" name="bottomTabs">
+     <widget class="QSplitter" name="bottomSplitter">
+      <property name="orientation">
+       <enum>Qt::Horizontal</enum>
+      </property>
+      <widget class="QWidget" name="miniChartContainer"/>
+      <widget class="QTabWidget" name="bottomTabs">
 
         <!-- Tab 0: 通道 -->
         <widget class="QWidget" name="tabChannels">
@@ -108,8 +108,7 @@
          <layout class="QVBoxLayout" name="feedbackLayout"/>
         </widget>
        </widget>
-      </item>
-     </layout>
+      </widget>
     </item>
 
     <!-- 底部测量条 -->

@@ -72,6 +72,16 @@ class MainWindow(QMainWindow):
         # 图例点击 → 同步通道面板复选框
         self.waveform._on_visible_changed = self._on_legend_toggle
 
+        # 强制垂直分割: 波形区 2/3, 底部 1/3
+        cl = self.centralWidget().layout()
+        if cl:
+            cl.setStretch(0, 2)  # waveformContainer
+            cl.setStretch(1, 1)  # bottomSplitter
+        # 水平分割: 迷你图 1/4, 配置Tab 3/4
+        bs = getattr(self, 'bottomSplitter', None)
+        if bs:
+            bs.setSizes([150, 450])
+
         # ── 迷你图 (左下角持久化) ──
         self.mini_chart = MiniChartWidget()
         # 填入 miniChartContainer 的布局
