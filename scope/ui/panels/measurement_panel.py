@@ -244,19 +244,17 @@ class MeasurementPanel:
         self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=0.5)
 
     def _setup_ui(self):
-        # 清除父布局中所有旧控件 (递归删除子布局中的 widget)
-        def clear_layout(lay):
-            if lay is None:
-                return
-            while lay.count():
-                item = lay.takeAt(0)
+        # 获取或创建布局, 清空子控件
+        layout = self._parent.layout()
+        if layout is None:
+            layout = QVBoxLayout(self._parent)
+            self._parent.setLayout(layout)
+        else:
+            # 只清除子控件, 保留布局本身
+            while layout.count():
+                item = layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
-                elif item.layout():
-                    clear_layout(item.layout())
-        clear_layout(self._parent.layout())
-
-        layout = self._parent.layout() or QVBoxLayout(self._parent)
 
         # 标题
         title = QLabel("测量项 (名称 / 通道 / 测量项 / 起始时间 / 结束时间)")

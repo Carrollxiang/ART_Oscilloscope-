@@ -416,12 +416,16 @@ class FeedbackPanel:
         self._timer.start()
 
     def _build_ui(self):
-        layout = self._parent.layout() or QVBoxLayout(self._parent)
-        # 清空 (.ui 中现为空容器, 只有 FeedbackPanel 自己的控件)
-        while layout.count():
-            item = layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        layout = self._parent.layout()
+        if layout is None:
+            layout = QVBoxLayout(self._parent)
+            self._parent.setLayout(layout)
+        else:
+            # 只清除子控件
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
         top = QHBoxLayout()
         btn_add = QPushButton("+ 添加")
         btn_add.setStyleSheet("color: #228822; font-weight: bold;")
