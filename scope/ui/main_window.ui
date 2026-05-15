@@ -15,8 +15,6 @@
     <property name="title"><string>文件(&amp;F)</string></property>
     <addaction name="actionSaveConfig"/>
     <addaction name="actionLoadConfig"/>
-    <addaction name="actionArtConfig"/>
-    <addaction name="separator"/>
     <addaction name="actionExportData"/>
     <addaction name="separator"/>
     <addaction name="actionQuit"/>
@@ -42,9 +40,6 @@
   <action name="actionLoadConfig">
    <property name="text"><string>加载配置</string></property>
    <property name="shortcut"><string>Ctrl+O</string></property>
-  </action>
-  <action name="actionArtConfig">
-   <property name="text"><string>ART 设备配置…</string></property>
   </action>
   <action name="actionExportData">
    <property name="text"><string>导出数据…</string></property>
@@ -79,67 +74,10 @@
          <layout class="QVBoxLayout" name="channelsLayout"/>
         </widget>
 
-        <!-- Tab 1: 触发 -->
-        <widget class="QWidget" name="tabTrigger">
-         <attribute name="title"><string>触发</string></attribute>
-         <layout class="QFormLayout" name="triggerLayout">
-          <item row="0" column="0">
-           <widget class="QLabel" name="labelTriggerSource">
-            <property name="text"><string>触发源</string></property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QComboBox" name="triggerSource">
-            <item><property name="text"><string>CH1</string></property></item>
-            <item><property name="text"><string>CH2</string></property></item>
-            <item><property name="text"><string>CH3</string></property></item>
-            <item><property name="text"><string>CH4</string></property></item>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="labelTriggerSlope">
-            <property name="text"><string>斜率</string></property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QComboBox" name="triggerSlope">
-            <item><property name="text"><string>上升沿</string></property></item>
-            <item><property name="text"><string>下降沿</string></property></item>
-           </widget>
-          </item>
-          <item row="2" column="0">
-           <widget class="QLabel" name="labelTriggerLevel">
-            <property name="text"><string>触发电平</string></property>
-           </widget>
-          </item>
-          <item row="2" column="1">
-           <widget class="QDoubleSpinBox" name="triggerLevel">
-            <property name="suffix"><string> V</string></property>
-            <property name="decimals"><number>2</number></property>
-            <property name="minimum"><double>-10.0</double></property>
-            <property name="maximum"><double>10.0</double></property>
-           </widget>
-          </item>
-          <item row="3" column="0">
-           <widget class="QLabel" name="labelTriggerMode">
-            <property name="text"><string>模式</string></property>
-           </widget>
-          </item>
-          <item row="3" column="1">
-           <widget class="QComboBox" name="triggerMode">
-            <item><property name="text"><string>自动</string></property></item>
-            <item><property name="text"><string>正常</string></property></item>
-            <item><property name="text"><string>单次</string></property></item>
-           </widget>
-          </item>
-          <item row="4" column="0" colspan="2">
-           <widget class="QCheckBox" name="triggerHwMode">
-            <property name="text"><string>硬件触发 (由 ART 卡控制)</string></property>
-            <property name="checked"><bool>true</bool></property>
-            <property name="enabled"><bool>false</bool></property>
-           </widget>
-          </item>
-         </layout>
+        <!-- Tab 1: 设备设置 (替代原触发) -->
+        <widget class="QWidget" name="tabDevice">
+         <attribute name="title"><string>设备设置</string></attribute>
+         <layout class="QVBoxLayout" name="deviceLayout"/>
         </widget>
 
         <!-- Tab 2: 测量 -->

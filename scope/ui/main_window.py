@@ -12,16 +12,15 @@ from typing import Optional
 import numpy as np
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QMainWindow, QDialog, QMessageBox, QTableWidgetItem
+from PyQt6.QtWidgets import QMainWindow, QMessageBox, QTableWidgetItem
 
 from scope.model import AnalysisResult
 from scope.io import FeedbackManager
 from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
 from .panels.measurement_panel import MeasurementPanel
-from .panels.trigger_panel import TriggerPanel
 from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
-from .panels.art_config_dialog import ArtConfigDialog
+from .panels.device_panel import DevicePanel
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,8 @@ class MainWindow(QMainWindow):
     # 跨线程信号: 采集线程 → UI 线程
     data_received = pyqtSignal(object)
     # ART 配置变更信号: 对话框确认 → ScopeApp 重建设备
-    art_config_applied = pyqtSignal(dict, object)  # (params_dict, device_config)
+    # ART 配置变更信号: 设备面板确认 → ScopeApp 重建设备
+    art_config_applied = pyqtSignal(dict, object)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None):
         super().__init__()
@@ -66,14 +66,10 @@ class MainWindow(QMainWindow):
         # 图例点击 → 同步通道面板复选框
         self.waveform._on_visible_changed = self._on_legend_toggle
 
-        # ── 触发面板 ──
-        self.trigger_panel = TriggerPanel(
-            source_combo=self.triggerSource,
-            slope_combo=self.triggerSlope,
-            level_spin=self.triggerLevel,
-            mode_combo=self.triggerMode,
-            hw_check=self.triggerHwMode,
-        )
+        # ── 设备面板 (替换触发) ──
+        self.device_panel = DevicePanel()
+        self._embed_widget(self.tabDevice.layout(), self.device_panel)
+        self.device_panel.config_applied.connect(self._on_device_config)
 
         # ── 测量面板 (动态行) ──
         self.measure_panel = MeasurementPanel(self.tabMeasurements)
@@ -102,14 +98,10 @@ class MainWindow(QMainWindow):
 
         logger.info("MainWindow 初始化完成")
 
-    def _show_art_config(self):
-        """打开 ART 设备配置对话框, 确认后发射 art_config_applied 信号。"""
-        dlg = ArtConfigDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            params = dlg.get_device_params()
-            config = dlg.get_device_config()
-            logger.info(f"ART 配置已更新: {params}")
-            self.art_config_applied.emit(params, config)
+    def _on_device_config(self, params: dict, config: DeviceConfig):
+        """设备面板 → 转发配置到 ScopeApp。"""
+        logger.info(f"设备配置已应用: {params}")
+        self.art_config_applied.emit(params, config)
 
     def _on_legend_toggle(self, ch: int, visible: bool):
         """图例点击切换时, 同步通道面板的复选框。"""
@@ -189,7 +181,6 @@ class MainWindow(QMainWindow):
         self.actionResetLayout.triggered.connect(
             lambda: logger.info("重置布局 (待实现)")
         )
-        self.actionArtConfig.triggered.connect(self._show_art_config)
 
     def _show_about(self):
         QMessageBox.about(
