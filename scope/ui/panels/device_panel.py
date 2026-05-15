@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Callable
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
