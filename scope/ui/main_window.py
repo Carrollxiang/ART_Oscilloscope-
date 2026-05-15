@@ -47,8 +47,10 @@ class MainWindow(QMainWindow):
     # ART 配置变更信号: 设备面板确认 → ScopeApp 重建设备
     art_config_applied = pyqtSignal(dict, object)
 
-    def __init__(self, feedback_manager: Optional[FeedbackManager] = None):
+    def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
+                 async_loop=None):
         super().__init__()
+        self._async_loop = async_loop
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
@@ -84,6 +86,7 @@ class MainWindow(QMainWindow):
             feedback_manager=self._feedback_mgr,
             measurement_panel=self.measure_panel,
             status_callback=self._update_status_bar,
+            async_loop=getattr(self, '_async_loop', None),
         )
 
         # ── 初始化 MeasurementBar / StatusBar ──

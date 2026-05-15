@@ -328,8 +328,9 @@ class FeedbackCard(QFrame):
         btnEdit.clicked.connect(lambda: self._on_edit(self._slot_id) if self._on_edit else None)
         row.addWidget(btnEdit)
 
-        btnDel = QPushButton("✕"); btnDel.setFixedSize(24, 22)
+        btnDel = QPushButton("删除"); btnDel.setFixedSize(36, 22)
         btnDel.setStyleSheet("color: #CC4444; font-size: 10px;")
+        btnDel.setToolTip("删除此反馈目标")
         btnDel.clicked.connect(lambda: self._on_remove(self._slot_id) if self._on_remove else None)
         row.addWidget(btnDel)
 
@@ -400,13 +401,18 @@ class FeedbackPanel:
     def __init__(self, parent_widget: QWidget,
                  feedback_manager: FeedbackManager,
                  measurement_panel=None,
-                 status_callback: Optional[Callable[[], None]] = None):
+                 status_callback: Optional[Callable[[], None]] = None,
+                 async_loop=None):
+        """
+        async_loop: asyncio 事件循环 (用于避免 asyncio.run 闪窗)。
+        """
         self._parent = parent_widget
         self._mgr = feedback_manager
         self._meas_panel = measurement_panel
         self._status_cb = status_callback
         self._cards: dict[str, FeedbackCard] = {}
         self._notified_auto_pause: set[str] = set()
+        self._async_loop = async_loop
         self._build_ui()
         self._timer = QTimer()
         self._timer.setInterval(2000)
@@ -420,8 +426,6 @@ class FeedbackPanel:
             item = layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         top = QHBoxLayout()
-        top.addWidget(QLabel("反馈目标"))
-        top.addStretch()
         btn_add = QPushButton("+ 添加")
         btn_add.setStyleSheet("color: #228822; font-weight: bold;")
         btn_add.clicked.connect(self._on_add)
@@ -468,13 +472,20 @@ class FeedbackPanel:
     def _get_meas_items(self):
         return self._meas_panel.get_subscriptions() if self._meas_panel else []
 
+    def _run_async(self, coro):
+        """在 async loop 上执行协程, 避免 asyncio.run 闪窗。"""
+        if self._async_loop and self._async_loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, self._async_loop)
+        else:
+            asyncio.run(coro)
+
     def _on_add(self):
         dlg = FeedbackDialog(self._parent, measurement_items=self._get_meas_items())
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 async def do():
                     await self._mgr.add_slot(RpycFeedbackSlot(dlg.get_config()))
-                asyncio.run(do())
+                self._run_async(do())
                 self._refresh()
             except KeyError:
                 QMessageBox.warning(self._parent, "重复", f'"{dlg.get_config().slot_id}" 已存在')
@@ -491,13 +502,13 @@ class FeedbackPanel:
             try:
                 async def do():
                     await slot.reconfigure(dlg.get_config())
-                asyncio.run(do())
+                self._run_async(do())
                 self._refresh()
             except Exception as e:
                 QMessageBox.critical(self._parent, "错误", f"更新失败: {e}")
 
     def _on_remove(self, slot_id: str):
-        if QMessageBox.question(self._parent, "确认", f'删除 "{slot_id}"?',
+        if QMessageBox.question(self._parent, "确认", f'删除反馈目标 "{slot_id}"?',
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             self._mgr.remove_slot(slot_id)
             self._refresh()
@@ -506,9 +517,12 @@ class FeedbackPanel:
         slot = self._mgr.get_slot(slot_id)
         if not slot: return
         if slot.status.value == "running":
-            asyncio.run(slot.pause())
+            async def do_pause(): await slot.pause()
         elif slot.status.value == "paused":
-            asyncio.run(slot.resume())
+            async def do_pause(): await slot.resume()
+        else:
+            return
+        self._run_async(do_pause())
         self._refresh()
 
     def get_active_count(self) -> tuple:

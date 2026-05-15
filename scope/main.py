@@ -94,7 +94,8 @@ class ScopeApp:
         )
 
         # 2. 创建主窗口
-        self.main_win = MainWindow(feedback_manager=self.feedback_mgr)
+        self.main_win = MainWindow(feedback_manager=self.feedback_mgr,
+                                    async_loop=self._async_loop)
         self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()
 
