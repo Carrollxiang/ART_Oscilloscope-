@@ -113,21 +113,27 @@ scope/
 │   │
 │   ├── ui/                        # PyQt6 界面
 │   │   ├── __init__.py
-│   │   ├── main_window.py         # 主窗口
-│   │   ├── waveform_view.py       # 波形显示 (pyqtgraph)
-│   │   ├── channel_panel.py       # 通道控制面板
-│   │   ├── trigger_panel.py       # 触发设置面板
-│   │   ├── measurement_panel.py   # 测量读数面板
-│   │   └── feedback_panel.py      # 反馈管理面板
+│   │   ├── main_window.py         # 主窗口控制器
+│   │   ├── main_window.ui         # Qt Designer 布局
+│   │   ├── waveform_view.py       # pyqtgraph 波形 + 图例
+│   │   ├── panels/
+│   │   │   ├── channel_panel.py   # 通道开关/档位/耦合/探头
+│   │   │   ├── device_panel.py    # 设备设置 (替代触发)
+│   │   │   ├── measurement_panel.py   # 动态测量行
+│   │   │   ├── feedback_panel.py  # 反馈 slot 管理
+│   │   │   ├── feedback_dialog.ui # 添加对话框布局
+│   │   │   └── art_config_dialog.py # (旧, 可删除)
+│   │   └── resources/
 │   │
-│   └── config/                    # 配置
+│   └── config/                    # 配置 (预留)
 │       ├── __init__.py
-│       └── settings.py            # 应用配置管理
+│       └── settings.py
 │
 └── tests/                         # 测试
     ├── test_phase0.py              # ✅ 数据模型 + 模拟器 (8 tests)
     ├── test_feedback_slots.py      # ✅ 反馈系统 (19 tests)
-    ├── test_ring_buffer.py         # 🔲
+    ├── test_art_device.py          # ✅ ART 硬件适配 (18 tests)
+    └── test_processing.py          # ✅ 信号处理管道 (27 tests)
     └── test_watchdog.py            # 🔲
 ```
 
