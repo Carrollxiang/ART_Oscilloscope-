@@ -76,11 +76,21 @@ class WaveformView:
             curve.hide()
             self._curves[ch] = curve
 
-        # 图例 (右上角, 帧外边框)
-        self._legend = self.plot_widget.plotItem.addLegend(
-            offset=(10, 10),
-            labelTextColor=(200, 200, 200),
+        # 图例 (右上角)
+        self._legend = pg.LegendItem(
+            size=(80, 100),
+            offset=(70, 10),
+            brush=(30, 30, 30, 200),
+            pen=(100, 100, 100),
+            labelTextColor=(220, 220, 220),
         )
+        self._legend.setParentItem(self.plot_widget.plotItem.vb)
+        self._legend.anchor((1, 0), (1, 0), (10, 10))  # 右上角
+        self._legend.setZValue(100)
+        for ch in range(channel_count):
+            curve = self._curves[ch]
+            name = CHANNEL_NAMES[ch] if ch < len(CHANNEL_NAMES) else f"CH{ch+1}"
+            self._legend.addItem(curve, name)
 
         # 触发线
         self._trigger_line = pg.InfiniteLine(
