@@ -68,7 +68,7 @@
     <item stretch="1">
      <layout class="QHBoxLayout" name="bottomArea">
       <item stretch="1">
-       <widget class="QWidget" name="miniChartContainer" native="true"/>
+       <widget class="QWidget" name="miniChartContainer"/>
       </item>
       <item stretch="3">
        <widget class="QTabWidget" name="bottomTabs">

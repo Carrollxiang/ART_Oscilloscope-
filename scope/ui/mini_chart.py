@@ -14,8 +14,8 @@ from typing import Optional
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,10 @@ class MiniChartWidget(QWidget):
         self._legend: Optional[pg.LegendItem] = None
 
         self.setMinimumWidth(180)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.setStyleSheet("background: #111;")
 
         layout = QVBoxLayout(self)
