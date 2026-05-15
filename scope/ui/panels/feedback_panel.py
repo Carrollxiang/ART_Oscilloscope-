@@ -10,15 +10,24 @@ from __future__ import annotations
 import logging
 from typing import Optional, Callable
 
-from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget,
     QTableWidgetItem,
     QHeaderView,
     QDialog,
-    QDialogButtonBox,
+    QVBoxLayout,
+    QHBoxLayout,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QSpinBox,
+    QListWidget,
+    QPushButton,
+    QSpacerItem,
+    QSizePolicy,
     QMessageBox,
+    QAbstractItemView,
 )
 from PyQt6.QtGui import QColor, QBrush
 
@@ -27,17 +36,54 @@ from scope.io.feedback_slots.base import SlotConfig
 
 logger = logging.getLogger(__name__)
 
-DIALOG_UI_PATH = "scope/ui/panels/feedback_dialog.ui"
-
 
 class FeedbackDialog(QDialog):
-    """添加/编辑反馈目标的对话框"""
+    """添加/编辑反馈目标的对话框 (纯代码, 无 .ui 依赖)"""
 
     def __init__(self, parent=None, slot_id: str = ""):
         super().__init__(parent)
-        uic.loadUi(DIALOG_UI_PATH, self)
+        self.setWindowTitle("反馈目标配置")
+        self.setMinimumSize(420, 360)
 
-        # 填充可用测量项
+        # 创建 UI
+        layout = QVBoxLayout(self)
+
+        # 表单
+        form = QFormLayout()
+        self.editId = QLineEdit()
+        self.editHost = QLineEdit("127.0.0.1")
+        self.editPort = QSpinBox()
+        self.editPort.setRange(1, 65535)
+        self.editPort.setValue(18861)
+        self.editMethod = QLineEdit("exposed_update")
+
+        form.addRow("标识", self.editId)
+        form.addRow("主机", self.editHost)
+        form.addRow("端口", self.editPort)
+        form.addRow("远程方法", self.editMethod)
+
+        # 连接池
+        pool_layout = QHBoxLayout()
+        self.editPoolMin = QSpinBox()
+        self.editPoolMin.setRange(0, 10)
+        self.editPoolMin.setValue(1)
+        self.editPoolMax = QSpinBox()
+        self.editPoolMax.setRange(1, 20)
+        self.editPoolMax.setValue(4)
+        pool_layout.addWidget(QLabel("最小"))
+        pool_layout.addWidget(self.editPoolMin)
+        pool_layout.addWidget(QLabel("最大"))
+        pool_layout.addWidget(self.editPoolMax)
+        form.addRow("连接池", pool_layout)
+
+        layout.addLayout(form)
+
+        # 订阅列表
+        layout.addWidget(QLabel("订阅测量项"))
+        self.subscriptionList = QListWidget()
+        self.subscriptionList.setSelectionMode(
+            QAbstractItemView.SelectionMode.MultiSelection
+        )
         self._all_measurements = [
             "CH1_Vpp", "CH1_Vmax", "CH1_Vmin", "CH1_Vrms", "CH1_Freq",
             "CH2_Vpp", "CH2_Vmax", "CH2_Vmin", "CH2_Vrms", "CH2_Freq",
@@ -46,7 +92,18 @@ class FeedbackDialog(QDialog):
         ]
         for item in self._all_measurements:
             self.subscriptionList.addItem(item)
+        layout.addWidget(self.subscriptionList)
 
+        # 按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.btnOk = QPushButton("确定")
+        self.btnCancel = QPushButton("取消")
+        btn_layout.addWidget(self.btnOk)
+        btn_layout.addWidget(self.btnCancel)
+        layout.addLayout(btn_layout)
+
+        # 如果编辑已有 slot
         if slot_id:
             self.editId.setText(slot_id)
             self.editId.setEnabled(False)
