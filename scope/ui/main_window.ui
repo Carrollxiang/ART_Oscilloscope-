@@ -60,7 +60,7 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="centralLayout">
     <!-- 上: 波形区 (占大部分空间) -->
-    <item stretch="3">
+    <item stretch="2">
      <widget class="QWidget" name="waveformContainer" native="true"/>
     </item>
 

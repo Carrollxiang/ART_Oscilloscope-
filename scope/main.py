@@ -203,8 +203,15 @@ class ScopeApp:
             # Pipeline: 自动测量 + 数学运算 + FFT
             result = self._pipeline.process(result)
 
-            # 迷你图数据
-            self.main_win.mini_chart.add_from_result(result)
+            # 迷你图数据 (仅筛选反馈订阅的物理量)
+            active_subs: set[str] = set()
+            for slot_info in self.feedback_mgr.list_slots():
+                for sub in slot_info.subscriptions:
+                    active_subs.add(sub)
+            filtered = {k: v for k, v in result.measurements.items()
+                        if k in active_subs}
+            if filtered:
+                self.main_win.mini_chart.add_data(filtered)
 
             # 更新 UI
             self.main_win.data_received.emit(result)
