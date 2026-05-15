@@ -17,7 +17,7 @@ from typing import Optional
 
 from PyQt6 import uic
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QCheckBox, QDoubleSpinBox, QComboBox
+from PyQt6.QtWidgets import QWidget, QLabel, QCheckBox, QDoubleSpinBox, QComboBox
 from PyQt6.QtGui import QColor
 
 from scope.model.enums import ChannelCoupling, MeasurementId
@@ -56,29 +56,46 @@ class ChannelPanel(QWidget):
         self._build_channel_rows()
 
     def _build_channel_rows(self):
-        """为每个通道创建控制行"""
-        # 访问 QWidget 的 layout (避免 .ui 中 layout 名称冲突)
+        """为每个通道创建控制行 (放入 QScrollArea)"""
         from PyQt6.QtWidgets import QVBoxLayout as VBoxLayout
+        from PyQt6.QtWidgets import QScrollArea, QFrame
+
+        # 清除
         lay = self.findChild(VBoxLayout)
         if not lay:
             lay = VBoxLayout(self)
             self.setLayout(lay)
-
-        # 清除原有示例行
         while lay.count():
             item = lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
+        # 标题
+        title = QLabel("通道开关 / 垂直档位 / 耦合 / 探头比")
+        title.setStyleSheet("color: #888; font-size: 11px; padding: 2px;")
+        lay.addWidget(title)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+
+        container = QWidget()
+        container_layout = VBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(4)
+
         for ch in range(self._channel_count):
             row = self._create_channel_row(ch)
             self._controls.append(row)
-            # 加入布局
             w = QWidget()
             w.setLayout(row["layout"])
-            lay.addWidget(w)
+            container_layout.addWidget(w)
 
-        lay.addStretch()
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        lay.addWidget(scroll, stretch=1)
 
     def _create_channel_row(self, ch: int) -> dict:
         """创建单个通道的控制行"""

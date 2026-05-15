@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QCheckBox,
+    QPushButton,
+    QFrame,
 )
 
 from scope.hardware import DeviceConfig
@@ -72,6 +74,84 @@ class ArtConfigDialog(QDialog):
 
         self.btn_box.accepted.connect(self.accept)
         self.btn_box.rejected.connect(self.reject)
+
+    def _run_test(self):
+        """测试硬件通讯: 创建 ArtDevice → open → read → 显示结果。"""
+        self.btn_test.setEnabled(False)
+        self.test_status.setText("⏳ 正在测试...")
+        self.test_status.setStyleSheet(
+            "padding: 6px; background: #1a1a2e; border: 1px solid #666; "
+            "font-family: Consolas, monospace; font-size: 11px; color: yellow;"
+        )
+        # 处理 UI 事件
+        from PyQt6.QtCore import QCoreApplication
+        QCoreApplication.processEvents()
+
+        try:
+            params = self.get_device_params()
+            cfg = self.get_device_config()
+
+            from scope.hardware.art_device import ArtDevice
+            dev = ArtDevice(
+                device_name=params["device_name"],
+                ai_channels=params["ai_channels"],
+                terminal_config=params["terminal_config"],
+                min_val=params["min_val"],
+                max_val=params["max_val"],
+                trigger_source=params["trigger_source"],
+                trigger_slope=params["trigger_slope"],
+                trigger_level=params["trigger_level"],
+            )
+            dev._read_timeout = params["read_timeout"]
+
+            lines = []
+            lines.append(f"🟡 设备: {params['device_name']}/{params['ai_channels']}")
+
+            # 1. 打开
+            ok = dev.open()
+            if not ok:
+                raise RuntimeError("open() 返回 False — 请检查 Art_DAQ.dll 是否安装")
+            lines.append("✅ 1. open()          成功 — 模块加载正常")
+
+            # 2. 配置
+            dev.configure(cfg)
+            lines.append(f"✅ 2. configure()     成功 — {cfg.sample_rate} Sa/s, {cfg.record_length} samples")
+
+            # 3. 启动
+            dev.start_acquisition()
+            lines.append("✅ 3. start_acquisition()  成功 — 开始采集")
+
+            # 4. 读取
+            chunk = dev.read_chunk()
+            ch, samples = chunk.shape
+            lines.append(f"✅ 4. read_chunk()     成功 — {ch}ch × {samples}samples, {chunk.dtype}")
+
+            # 5. 停止
+            dev.stop_acquisition()
+            dev.close()
+            lines.append("✅ 5. stop/close       成功 — 资源已释放")
+
+            self.test_status.setText("\n".join(lines))
+            self.test_status.setStyleSheet(
+                "padding: 6px; background: #0a1a0a; border: 1px solid #0a0; "
+                "font-family: Consolas, monospace; font-size: 11px; color: #0f0;"
+            )
+
+        except Exception as e:
+            err_lines = [
+                "❌ 通讯测试失败",
+                f"   {type(e).__name__}: {e}",
+            ]
+            import traceback
+            err_lines.append(f"   {traceback.format_exc()}")
+            self.test_status.setText("\n".join(err_lines))
+            self.test_status.setStyleSheet(
+                "padding: 6px; background: #1a0a0a; border: 1px solid #a00; "
+                "font-family: Consolas, monospace; font-size: 11px; color: #f44;"
+            )
+
+        finally:
+            self.btn_test.setEnabled(True)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -173,6 +253,28 @@ class ArtConfigDialog(QDialog):
         trig_layout.addRow("触发电平", self.spinTriggerLevel)
 
         layout.addWidget(grp_trig)
+
+        # ── 硬件通讯测试 ──
+        test_group = QGroupBox("通讯测试")
+        test_layout = QVBoxLayout(test_group)
+
+        self.btn_test = QPushButton("🧪 测试硬件通讯")
+        self.btn_test.setStyleSheet(
+            "QPushButton { padding: 6px; font-weight: bold; }"
+            "QPushButton:hover { background: #224466; }"
+        )
+        self.btn_test.clicked.connect(self._run_test)
+        test_layout.addWidget(self.btn_test)
+
+        self.test_status = QLabel("就绪 — 点击测试硬件连接")
+        self.test_status.setWordWrap(True)
+        self.test_status.setStyleSheet(
+            "padding: 6px; background: #1a1a2e; border: 1px solid #333; "
+            "font-family: Consolas, monospace; font-size: 11px;"
+        )
+        test_layout.addWidget(self.test_status)
+
+        layout.addWidget(test_group)
 
         # ── 确定/取消 ──
         self.btn_box = QDialogButtonBox(
