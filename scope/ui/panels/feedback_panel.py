@@ -258,6 +258,7 @@ class FeedbackCard(QFrame):
         self.setStyleSheet(
             f"#feedbackCard {{ background: {CARD_BG}; border: 1px solid {CARD_BORDER}; "
             f"border-radius: 4px; margin: 2px; }}"
+            f"#feedbackCard QPushButton {{ font-size: 10px; padding: 2px 4px; }}"
         )
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(8, 4, 8, 4)
@@ -313,10 +314,12 @@ class FeedbackCard(QFrame):
         # 暂停/继续
         self._btnPause = QPushButton("继续" if info.status == "paused" else "暂停")
         self._btnPause.setFixedSize(44, 22)
+        self._btnPause.setStyleSheet("font-size: 10px; padding: 2px 4px;")
         self._btnPause.clicked.connect(lambda: self._on_pause(self._slot_id) if self._on_pause else None)
         row.addWidget(self._btnPause)
 
         btnEdit = QPushButton("编辑"); btnEdit.setFixedSize(36, 22)
+        btnEdit.setStyleSheet("font-size: 10px; padding: 2px 4px;")
         btnEdit.clicked.connect(lambda: self._on_edit(self._slot_id) if self._on_edit else None)
         row.addWidget(btnEdit)
 
@@ -360,7 +363,6 @@ class FeedbackCard(QFrame):
         del_btn.setStyleSheet(
             "color: #CC4444; font-size: 10px; padding: 2px; "
             "background: transparent; border: 1px solid #EEDDDD; border-radius: 2px;"
-            "QPushButton:hover { background: #FFEEEE; }"
         )
         del_btn.clicked.connect(lambda: self._on_remove(self._slot_id) if self._on_remove else None)
         v.addWidget(del_btn)
