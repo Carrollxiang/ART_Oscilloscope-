@@ -90,9 +90,12 @@ class RpycFeedbackSlot(FeedbackSlot):
             idle_timeout=cfg.idle_timeout,
             acquire_timeout=cfg.acquire_timeout,
         )
-        self._status = SlotStatus.RUNNING
+        # 默认 PAUSED — 用户需手动点"继续"才开始发送
+        self._status = SlotStatus.PAUSED
         self._sent_count = 0
         self._error_count = 0
+        self._consecutive_errors = 0
+        self._auto_paused = False
         self._last_error = ""
         logger.info(
             f"[{cfg.slot_id}] RpycSlot started → "

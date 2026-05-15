@@ -44,7 +44,7 @@ class ScopeApp:
 
         # 设备配置
         self._config = DeviceConfig(
-            sample_rate=1_000_000,
+            sample_rate=10_000,      # 10kHz → 5000 samples = 0.5s/帧
             record_length=5000,
             channels_enabled=[0, 1, 2, 3],
         )

@@ -56,6 +56,8 @@ class SlotInfo:
     error_count: int
     last_error: str = ""
     last_sent_at: float = 0.0
+    consecutive_errors: int = 0
+    auto_paused: bool = False
 
 
 class FeedbackSlot(ABC):
@@ -75,8 +77,11 @@ class FeedbackSlot(ABC):
         self._status = SlotStatus.IDLE
         self._sent_count = 0
         self._error_count = 0
+        self._consecutive_errors = 0
+        self._auto_paused = False
         self._last_error = ""
         self._last_sent_at = 0.0
+        self._on_auto_pause = None  # callable(slot_id) 通知 UI 弹窗
 
     # ── 生命周期 ────────────────────────────────────────────────
 
@@ -98,16 +103,26 @@ class FeedbackSlot(ABC):
 
     # ── 暂停/恢复 ──────────────────────────────────────────────
 
-    async def pause(self):
+    async def pause(self, auto: bool = False):
         """
         暂停推送。
 
         连接池保持打开, 但不再发送数据。
         dispatch() 会跳过 PAUSED 状态的 slot。
+
+        auto=True 表示因连续错误自动暂停。
         """
-        if self._status == SlotStatus.RUNNING:
+        if self._status in (SlotStatus.RUNNING, SlotStatus.PAUSED):
+            was_paused = self._status == SlotStatus.PAUSED
             self._status = SlotStatus.PAUSED
-            logger.info(f"[{self._config.slot_id}] 已暂停")
+            if auto:
+                self._auto_paused = True
+                msg = f"[{self._config.slot_id}] 连续 {self._consecutive_errors} 次错误, 自动暂停"
+                logger.warning(msg)
+                if self._on_auto_pause:
+                    self._on_auto_pause(self._config.slot_id)
+            if not was_paused:
+                logger.info(f"[{self._config.slot_id}] 已暂停{' (自动)' if auto else ''}")
 
     async def resume(self):
         """
@@ -115,6 +130,8 @@ class FeedbackSlot(ABC):
         """
         if self._status == SlotStatus.PAUSED:
             self._status = SlotStatus.RUNNING
+            self._consecutive_errors = 0
+            self._auto_paused = False
             logger.info(f"[{self._config.slot_id}] 已恢复")
 
     # ── 数据推送 ───────────────────────────────────────────────
@@ -152,8 +169,10 @@ class FeedbackSlot(ABC):
             subscriptions=[s.local_key for s in self._config.subscriptions],
             sent_count=self._sent_count,
             error_count=self._error_count,
+            consecutive_errors=self._consecutive_errors,
             last_error=self._last_error,
             last_sent_at=self._last_sent_at,
+            auto_paused=self._auto_paused,
         )
 
     @property
@@ -180,8 +199,19 @@ class FeedbackSlot(ABC):
     def _count_sent(self):
         self._sent_count += 1
         self._last_sent_at = __import__("time").monotonic()
+        self._consecutive_errors = 0  # 成功发送则清零
+        self._auto_paused = False
 
     def _count_error(self, msg: str):
         self._error_count += 1
+        self._consecutive_errors += 1
         self._last_error = msg
         logger.error(f"[{self._config.slot_id}] {msg}")
+        # 连续 3 次错误 → 自动暂停
+        if self._consecutive_errors >= 3:
+            # 用 asyncio.run 调度 pause (因为可能不在 async context)
+            try:
+                import asyncio
+                asyncio.run(self.pause(auto=True))
+            except RuntimeError:
+                pass

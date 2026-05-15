@@ -238,10 +238,10 @@ class MeasurementPanel:
         self._last_result: Optional[AnalysisResult] = None
         self._setup_ui()
 
-        # 默认行
-        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=0.01)
-        self.add_row(name="CH1 频率", meas_key="Freq", end_time=0.01)
-        self.add_row(name="CH2 幅值", meas_key="Vpp", end_time=0.01)
+        # 默认行 (0.5s 帧)
+        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=0.5)
+        self.add_row(name="CH1 频率", meas_key="Freq", end_time=0.5)
+        self.add_row(name="CH2 幅值", meas_key="Vpp", end_time=0.5)
 
     def _setup_ui(self):
         layout = self._parent.layout() or QVBoxLayout(self._parent)
@@ -278,7 +278,7 @@ class MeasurementPanel:
 
     def add_row(self, name: str = "", channel: str = "CH1",
                 meas_key: str = "Vpp",
-                start_time: float = 0.0, end_time: float = 0.01):
+                start_time: float = 0.0, end_time: float = 0.5):
         frame_dur = 0.01
         if self._last_result:
             ch = self._last_result.channels.get(channel)

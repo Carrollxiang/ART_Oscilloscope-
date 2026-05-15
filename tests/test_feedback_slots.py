@@ -46,6 +46,8 @@ class TestNullSlot:
         assert slot.status == SlotStatus.IDLE
 
         await slot.start()
+        assert slot.status == SlotStatus.PAUSED  # 默认暂停
+        await slot.resume()
         assert slot.status == SlotStatus.RUNNING
 
         await slot.stop()
@@ -85,6 +87,7 @@ class TestSubscription:
             subscriptions=[DataSubscription(local_key="CH1_Vpp")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         result = make_sample_result(CH1_Vpp=3.3, CH1_Freq=1000.0)
         await mgr.dispatch(result)
@@ -104,6 +107,7 @@ class TestSubscription:
             subscriptions=[DataSubscription(local_key="NONEXISTENT")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         result = make_sample_result(CH1_Vpp=3.3)
         await mgr.dispatch(result)
@@ -126,6 +130,7 @@ class TestSubscription:
             ],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         result = make_sample_result(CH1_Vpp=3.3)
         await mgr.dispatch(result)
@@ -145,6 +150,7 @@ class TestSubscription:
             subscriptions=[DataSubscription(local_key="sequence_num")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         result = make_sample_result(CH1_Vpp=1.0)
         await mgr.dispatch(result)
@@ -166,6 +172,7 @@ class TestFeedbackManager:
             subscriptions=[DataSubscription(local_key="CH1_Vpp")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         for i in range(5):
             result = make_sample_result(CH1_Vpp=float(i))
@@ -184,6 +191,7 @@ class TestFeedbackManager:
             subscriptions=[DataSubscription(local_key="CH1_Vpp")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         result = make_sample_result()  # 无测量值
         await mgr.dispatch(result)
@@ -203,6 +211,7 @@ class TestFeedbackManager:
             subscriptions=[DataSubscription(local_key="val")],
         ))
         await mgr.add_slot(slot_a)
+        await slot_a.resume()
 
         # 前 3 帧只有 slot_a
         for i in range(3):
@@ -215,6 +224,7 @@ class TestFeedbackManager:
             subscriptions=[DataSubscription(local_key="val")],
         ))
         await mgr.add_slot(slot_b)
+        await slot_b.resume()
 
         # 后 3 帧两个 slot 都收
         for i in range(3, 6):
@@ -244,6 +254,8 @@ class TestFeedbackManager:
         ))
         await mgr.add_slot(slot_a)
         await mgr.add_slot(slot_b)
+        await slot_a.resume()
+        await slot_b.resume()
 
         # 前 3 帧: 两个都收
         for i in range(3):
@@ -298,6 +310,8 @@ class TestFeedbackManager:
         ))
         await mgr.add_slot(good)
         await mgr.add_slot(bad)
+        await good.resume()
+        await bad.resume()
 
         # 即使 bad 崩溃, good 应该正常收
         for i in range(5):
@@ -317,6 +331,8 @@ class TestFeedbackManager:
             ))
             slots.append(s)
             await mgr.add_slot(s)
+        for s in slots:
+            await s.resume()
 
         for i in range(10):
             await mgr.dispatch(make_sample_result(val=float(i)))
@@ -335,6 +351,7 @@ class TestFeedbackManager:
             subscriptions=[DataSubscription(local_key="CH1_Vpp")],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
         await mgr.dispatch(make_sample_result(CH1_Vpp=1.0))
 
         infos = mgr.list_slots()
@@ -408,6 +425,7 @@ class TestSimulatorToFeedbackIntegration:
             ],
         ))
         await mgr.add_slot(slot)
+        await slot.resume()
 
         # 模拟 5 帧采集 → 分析 → 反馈 全流程
         for _ in range(5):

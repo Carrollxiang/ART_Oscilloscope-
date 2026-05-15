@@ -154,6 +154,7 @@ class FeedbackPanel:
         self._btn_pause = btn_pause
         self._mgr = feedback_manager
         self._status_cb = status_callback
+        self._notified_auto_pause: set[str] = set()
 
         self._setup_table()
         self._connect_buttons()
@@ -182,9 +183,42 @@ class FeedbackPanel:
         self._btn_remove.clicked.connect(self._on_remove)
         self._btn_pause.clicked.connect(self._on_pause)
 
+        # 表格选中行变化时更新暂停按钮文本
+        self._table.itemSelectionChanged.connect(self._update_pause_btn_text)
+
+    def _update_pause_btn_text(self):
+        """根据选中的 slot 状态更新暂停按钮文字"""
+        row = self._table.currentRow()
+        if row < 0:
+            self._btn_pause.setText("暂停")
+            return
+        slot_id = self._table.item(row, 0).text()
+        slot = self._mgr.get_slot(slot_id)
+        if not slot:
+            self._btn_pause.setText("暂停")
+        elif slot.status.value == "paused":
+            self._btn_pause.setText("继续")
+        else:
+            self._btn_pause.setText("暂停")
+
+    def _check_auto_paused(self, infos: list):
+        """检测自动暂停的 slot, 弹窗提示 (每 slot 只弹一次)"""
+        for info in infos:
+            if info.auto_paused and info.slot_id not in self._notified_auto_pause:
+                self._notified_auto_pause.add(info.slot_id)
+                QMessageBox.warning(
+                    self._table,
+                    "反馈自动暂停",
+                    f"反馈目标 '{info.slot_id}' 连续 {info.consecutive_errors} 次"
+                    f"发送失败，已自动暂停。\n"
+                    f"最后错误: {info.last_error}\n\n"
+                    f"请检查网络连接后点击 [继续] 恢复。",
+                )
+
     def refresh_table(self):
         """刷新表格显示所有 slot 的最新状态"""
         infos = self._mgr.list_slots()
+        self._check_auto_paused(infos)
         self._table.setRowCount(len(infos))
 
         for row, info in enumerate(infos):

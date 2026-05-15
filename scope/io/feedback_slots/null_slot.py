@@ -31,9 +31,9 @@ class NullFeedbackSlot(FeedbackSlot):
         return "logger"
 
     async def start(self):
-        self._status = SlotStatus.RUNNING
+        self._status = SlotStatus.PAUSED
         self._written.clear()
-        logger.info(f"[{self._config.slot_id}] NullSlot started")
+        logger.info(f"[{self._config.slot_id}] NullSlot started (paused by default)")
 
     async def stop(self):
         self._status = SlotStatus.IDLE
