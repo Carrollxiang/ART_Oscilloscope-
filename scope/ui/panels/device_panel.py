@@ -66,27 +66,57 @@ class DevicePanel(QWidget):
         scroll.setStyleSheet("QScrollArea { border: none; }")
 
         container = QWidget()
-        form = QVBoxLayout(container)
-        form.setSpacing(6)
+        grid = QHBoxLayout(container)
+        grid.setSpacing(6)
 
-        # ── 设备标识 ──
+        # 左列 + 右列
+        left_col = QVBoxLayout()
+        right_col = QVBoxLayout()
+
+        # ── 左: 设备 ──
         g1 = QGroupBox("设备")
         f1 = QFormLayout(g1)
         self.editDeviceName = QLineEdit("Dev42")
         self.editAiChannels = QLineEdit("ai0:3")
         f1.addRow("设备名", self.editDeviceName)
         f1.addRow("AI 通道", self.editAiChannels)
-        form.addWidget(g1)
+        left_col.addWidget(g1)
 
-        # ── 采集参数 ──
+        # ── 左: 硬件触发 ──
+        g3 = QGroupBox("硬件触发")
+        f3 = QFormLayout(g3)
+        self.chkTrig = QCheckBox("启用")
+        f3.addRow("", self.chkTrig)
+        self.editTrigSrc = QLineEdit()
+        self.editTrigSrc.setPlaceholderText("如 ai1")
+        f3.addRow("触发源", self.editTrigSrc)
+        self.cmbTrigSlope = QComboBox()
+        for code, label in self.SLOPES:
+            self.cmbTrigSlope.addItem(label, code)
+        f3.addRow("斜率", self.cmbTrigSlope)
+        self.spinTrigLevel = QDoubleSpinBox()
+        self.spinTrigLevel.setRange(-10, 10)
+        self.spinTrigLevel.setValue(0.0)
+        self.spinTrigLevel.setSuffix(" V")
+        f3.addRow("电平", self.spinTrigLevel)
+        self.chkTrig.toggled.connect(
+            lambda on: (self.editTrigSrc.setEnabled(on),
+                        self.cmbTrigSlope.setEnabled(on),
+                        self.spinTrigLevel.setEnabled(on))
+        )
+        self.chkTrig.setChecked(False)
+        self.editTrigSrc.setEnabled(False)
+        self.cmbTrigSlope.setEnabled(False)
+        self.spinTrigLevel.setEnabled(False)
+        left_col.addWidget(g3)
+
+        # ── 右: 采集参数 ──
         g2 = QGroupBox("采集参数")
         f2 = QFormLayout(g2)
-
         self.cmbTerminal = QComboBox()
         for code, label in self.TERMINAL_MODES:
             self.cmbTerminal.addItem(label, code)
         f2.addRow("接地方式", self.cmbTerminal)
-
         vr = QHBoxLayout()
         self.spinMinVal = QDoubleSpinBox()
         self.spinMinVal.setRange(-100, 0)
@@ -100,19 +130,16 @@ class DevicePanel(QWidget):
         vr.addWidget(QLabel("~"))
         vr.addWidget(self.spinMaxVal)
         f2.addRow("电压量程", vr)
-
         self.spinTimeout = QDoubleSpinBox()
         self.spinTimeout.setRange(0.1, 60.0)
         self.spinTimeout.setValue(5.0)
         self.spinTimeout.setSuffix(" s")
         f2.addRow("读取超时", self.spinTimeout)
-
         self.spinSampleRate = QSpinBox()
         self.spinSampleRate.setRange(100, 250_000)
         self.spinSampleRate.setValue(10_000)
         self.spinSampleRate.setSuffix(" Sa/s")
         f2.addRow("采样率", self.spinSampleRate)
-
         dur = QHBoxLayout()
         self.spinDuration = QDoubleSpinBox()
         self.spinDuration.setRange(0.001, 60.0)
@@ -125,64 +152,34 @@ class DevicePanel(QWidget):
         dur.addWidget(self.spinDuration)
         dur.addWidget(self.lblSamples)
         f2.addRow("采样时长", dur)
-
         self.cmbSampleMode = QComboBox()
         for code, label in self.SAMPLE_MODES:
             self.cmbSampleMode.addItem(label, code)
         f2.addRow("采样模式", self.cmbSampleMode)
+        right_col.addWidget(g2)
 
-        form.addWidget(g2)
-
-        # ── 硬件触发 ──
-        g3 = QGroupBox("硬件触发")
-        f3 = QFormLayout(g3)
-
-        self.chkTrig = QCheckBox("启用")
-        f3.addRow("", self.chkTrig)
-
-        self.editTrigSrc = QLineEdit()
-        self.editTrigSrc.setPlaceholderText("如 ai1")
-        f3.addRow("触发源", self.editTrigSrc)
-
-        self.cmbTrigSlope = QComboBox()
-        for code, label in self.SLOPES:
-            self.cmbTrigSlope.addItem(label, code)
-        f3.addRow("斜率", self.cmbTrigSlope)
-
-        self.spinTrigLevel = QDoubleSpinBox()
-        self.spinTrigLevel.setRange(-10, 10)
-        self.spinTrigLevel.setValue(0.0)
-        self.spinTrigLevel.setSuffix(" V")
-        f3.addRow("电平", self.spinTrigLevel)
-
-        self.chkTrig.toggled.connect(
-            lambda on: (self.editTrigSrc.setEnabled(on),
-                        self.cmbTrigSlope.setEnabled(on),
-                        self.spinTrigLevel.setEnabled(on))
-        )
-        self.chkTrig.setChecked(False)
-        self.editTrigSrc.setEnabled(False)
-        self.cmbTrigSlope.setEnabled(False)
-        self.spinTrigLevel.setEnabled(False)
-
-        form.addWidget(g3)
-
-        # ── 通讯测试 ──
+        # ── 右: 通讯测试 ──
         g4 = QGroupBox("通讯测试")
         t4 = QVBoxLayout(g4)
         self.btnTest = QPushButton("🧪 测试硬件通讯")
         self.btnTest.clicked.connect(self._run_test)
         t4.addWidget(self.btnTest)
-
         self.testStatus = QLabel("就绪")
         self.testStatus.setWordWrap(True)
         self.testStatus.setStyleSheet(
             "padding: 4px; background: #1a1a2e; border: 1px solid #333; "
             "font-family: Consolas; font-size: 11px;")
         t4.addWidget(self.testStatus)
-        form.addWidget(g4)
+        right_col.addWidget(g4)
 
-        # ── 应用按钮 ──
+        # 左右列加入 grid
+        grid.addLayout(left_col)
+        grid.addLayout(right_col)
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # ── 应用按钮 (在 scroll 外, 固定底部) ──
         self.btnApply = QPushButton("✅ 应用配置到设备")
         self.btnApply.setStyleSheet(
             "QPushButton { padding: 6px; font-weight: bold; "
@@ -190,10 +187,7 @@ class DevicePanel(QWidget):
             "QPushButton:hover { background: #336633; }"
         )
         self.btnApply.clicked.connect(self._apply)
-        form.addWidget(self.btnApply)
-
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
+        layout.addWidget(self.btnApply)
 
         self._update_samples()
 
