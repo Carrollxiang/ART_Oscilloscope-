@@ -59,6 +59,13 @@ class SlotInfo:
     consecutive_errors: int = 0
     auto_paused: bool = False
 
+    # PID 反馈信息
+    feedback_mode: str = "standard"
+    setpoint: float = 0.0
+    pid_kp: list[float] = field(default_factory=lambda: [1.0] * 10)
+    pid_ki: list[float] = field(default_factory=lambda: [0.0] * 10)
+    pid_kd: list[float] = field(default_factory=lambda: [0.0] * 10)
+
 
 class FeedbackSlot(ABC):
     """
@@ -160,6 +167,13 @@ class FeedbackSlot(ABC):
 
     def get_info(self) -> SlotInfo:
         """获取运行快照"""
+        # 尝试读取 PID/模式/设定值 (RpycSlotConfig 特有, 基类 SlotConfig 没有)
+        fm = getattr(self._config, 'feedback_mode', 'standard')
+        sp = getattr(self._config, 'setpoint', 0.0)
+        kp = getattr(self._config, 'pid_kp', [1.0]*10)
+        ki = getattr(self._config, 'pid_ki', [0.0]*10)
+        kd = getattr(self._config, 'pid_kd', [0.0]*10)
+
         return SlotInfo(
             slot_id=self._config.slot_id,
             label=self._config.label or self._config.slot_id,
@@ -173,6 +187,11 @@ class FeedbackSlot(ABC):
             last_error=self._last_error,
             last_sent_at=self._last_sent_at,
             auto_paused=self._auto_paused,
+            feedback_mode=fm,
+            setpoint=sp,
+            pid_kp=kp,
+            pid_ki=ki,
+            pid_kd=kd,
         )
 
     @property

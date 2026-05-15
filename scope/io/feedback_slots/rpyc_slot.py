@@ -36,9 +36,34 @@ class RpycSlotConfig(SlotConfig):
     acquire_timeout: float = 10.0
 
     # 数据组装方式
+    payload_format: str = "flat"
     # "flat": {"CH1_Vpp": 3.3, "CH1_Freq": 1000.0}
     # "grouped": {"CH1": {"Vpp": 3.3, "Freq": 1000.0}, ...}
-    payload_format: str = "flat"
+
+    # ── PID 反馈参数 ───────────────────────────────────────────
+
+    feedback_mode: str = "standard"
+    """反馈模式标识, 不同模式对应仪器不同的处理函数。
+       内置: "standard", "fast", "slow"
+       自定义字符串会被原样传递给 remote_method 的参数中。"""
+
+    setpoint: float = 0.0
+    """目标设定值。"""
+
+    pid_kp: list[float] = field(default_factory=lambda: [1.0] * 10)
+    """比例增益数组, 长度 10。"""
+
+    pid_ki: list[float] = field(default_factory=lambda: [0.0] * 10)
+    """积分增益数组。"""
+
+    pid_kd: list[float] = field(default_factory=lambda: [0.0] * 10)
+    """微分增益数组。"""
+
+    pid_output_min: float = -100.0
+    """PID 输出最小值。"""
+
+    pid_output_max: float = 100.0
+    """PID 输出最大值。"""
 
 
 class RpycFeedbackSlot(FeedbackSlot):
@@ -167,19 +192,34 @@ class RpycFeedbackSlot(FeedbackSlot):
         同步 rpyc 调用 (在 executor 线程中执行)。
 
         从连接池借一条连接, 调用远程方法, 然后归还。
+        附加 PID 参数和设定值到调用参数中。
         """
         if not self._pool:
             raise RuntimeError("连接池未初始化")
 
         conn = self._pool.acquire()
         try:
-            # 获取远程 root 对象并调用方法
             root = conn.root
             method = getattr(root, self._rpyc_config.remote_method)
-            method(self._format_payload(payload))
+
+            # 组装完整参数包
+            call_args = {
+                "measurements": self._format_payload(payload),
+                "feedback_mode": self._rpyc_config.feedback_mode,
+                "setpoint": self._rpyc_config.setpoint,
+                "pid": {
+                    "kp": self._rpyc_config.pid_kp[:10],
+                    "ki": self._rpyc_config.pid_ki[:10],
+                    "kd": self._rpyc_config.pid_kd[:10],
+                    "output_min": self._rpyc_config.pid_output_min,
+                    "output_max": self._rpyc_config.pid_output_max,
+                },
+            }
+            method(call_args)
             logger.debug(
-                f"[{self._config.slot_id}] sent {len(payload)} items "
-                f"via {self._rpyc_config.remote_method}"
+                f"[{self._config.slot_id}] sent mode={self._rpyc_config.feedback_mode}, "
+                f"setpoint={self._rpyc_config.setpoint}, "
+                f"{len(payload)} measurements"
             )
         except Exception as e:
             logger.error(
@@ -203,5 +243,4 @@ class RpycFeedbackSlot(FeedbackSlot):
                     grouped[channel] = {}
                 grouped[channel][meas] = value
             return grouped
-        # "flat"
         return payload

@@ -80,11 +80,7 @@ class MainWindow(QMainWindow):
         # ── 反馈面板 ──
         self._feedback_mgr = feedback_manager or FeedbackManager()
         self.feedback_panel = FeedbackPanel(
-            table_widget=self.feedbackTable,
-            btn_add=self.btnAddFeedback,
-            btn_edit=self.btnEditFeedback,
-            btn_remove=self.btnRemoveFeedback,
-            btn_pause=self.btnPauseFeedback,
+            parent_widget=self.tabFeedback,
             feedback_manager=self._feedback_mgr,
             measurement_panel=self.measure_panel,
             status_callback=self._update_status_bar,
