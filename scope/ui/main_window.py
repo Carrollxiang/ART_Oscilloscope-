@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         # 强制垂直分割: 波形区 2/3, 底部 1/3
         cl = self.centralWidget().layout()
         if cl:
-            cl.setStretch(0, 2)  # waveformContainer
+            cl.setStretch(0, 1)  # waveformContainer
             cl.setStretch(1, 1)  # bottomSplitter
         # 水平分割: 迷你图 1/4, 配置Tab 3/4
         bs = getattr(self, 'bottomSplitter', None)
