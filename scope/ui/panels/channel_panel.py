@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6 import uic
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QLabel, QCheckBox, QDoubleSpinBox, QComboBox
 from PyQt6.QtGui import QColor
@@ -32,8 +31,6 @@ CHANNEL_COLORS = [
     QColor("#00FF00"),  # CH4: 绿
 ]
 
-UI_PATH = "scope/ui/panels/channel_panel.ui"
-
 
 class ChannelPanel(QWidget):
     """
@@ -48,7 +45,6 @@ class ChannelPanel(QWidget):
 
     def __init__(self, parent=None, channel_count: int = 4):
         super().__init__(parent)
-        uic.loadUi(UI_PATH, self)
 
         self._channel_count = channel_count
         self._controls: list[dict] = []
@@ -58,17 +54,11 @@ class ChannelPanel(QWidget):
     def _build_channel_rows(self):
         """为每个通道创建控制行 (放入 QScrollArea)"""
         from PyQt6.QtWidgets import QVBoxLayout as VBoxLayout
-        from PyQt6.QtWidgets import QScrollArea, QFrame
+        from PyQt6.QtWidgets import QScrollArea
 
-        # 清除
-        lay = self.findChild(VBoxLayout)
-        if not lay:
-            lay = VBoxLayout(self)
-            self.setLayout(lay)
-        while lay.count():
-            item = lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # 创建主布局
+        self.setLayout(VBoxLayout())
+        lay = self.layout()
 
         # 标题
         title = QLabel("通道开关 / 垂直档位 / 耦合 / 探头比")
