@@ -241,7 +241,7 @@ class MeasurementPanel:
         # 默认行 (0.5s 帧)
         self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=0.5)
         self.add_row(name="CH1 频率", meas_key="Freq", end_time=0.5)
-        self.add_row(name="CH2 幅值", meas_key="Vpp", end_time=0.5)
+        self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=0.5)
 
     def _setup_ui(self):
         layout = self._parent.layout() or QVBoxLayout(self._parent)

@@ -52,9 +52,13 @@ class MainWindow(QMainWindow):
 
         # ── 通道面板 (替换 channelList) ──
         self.channel_panel = ChannelPanel(channel_count=4)
-        # 将通道面板嵌入 channelList 的位置 (用 container 包裹)
         self._embed_widget(self.tabChannels.layout(), self.channel_panel)
         self.channel_panel.channel_changed.connect(self._on_channel_changed)
+
+        # 初始可见性: 默认打开 CH1/CH2
+        for ch in range(4):
+            visible = self.channel_panel.is_channel_enabled(ch)
+            self.waveform.set_channel_visible(ch, visible)
 
         # ── 触发面板 ──
         self.trigger_panel = TriggerPanel(
@@ -77,6 +81,7 @@ class MainWindow(QMainWindow):
             btn_remove=self.btnRemoveFeedback,
             btn_pause=self.btnPauseFeedback,
             feedback_manager=self._feedback_mgr,
+            measurement_panel=self.measure_panel,
             status_callback=self._update_status_bar,
         )
 
@@ -99,17 +104,17 @@ class MainWindow(QMainWindow):
 
         采集线程安全调用 (通过 Signal/Slot 桥接)。
         """
-        # 1. 更新波形
+        # 1. 更新波形 (可见性由 ChannelPanel 复选框控制)
         for ch_name, ch_data in result.channels.items():
             ch_idx = int(ch_name.replace("CH", "")) - 1
-            enabled = ch_data.enabled
+            visible = self.waveform.is_channel_visible(ch_idx)
             color = self.channel_panel.get_channel_color(ch_idx)
 
             self.waveform.update_waveform(
                 ch=ch_idx,
                 time_axis=ch_data.time_axis,
                 data=ch_data.raw,
-                enabled=enabled,
+                enabled=visible,
                 color=color,
             )
 
@@ -174,7 +179,11 @@ class MainWindow(QMainWindow):
     def _on_channel_changed(self, ch: int, key: str, value):
         """通道参数变化回调"""
         logger.debug(f"通道 CH{ch+1} {key} → {value}")
-        # TODO: 更新设备配置
+
+        if key == "enabled":
+            # 切换波形显示/隐藏
+            self.waveform.set_channel_visible(ch, bool(value))
+        # TODO: scale/coupling/probe 更新设备配置
 
     def _embed_widget(self, layout, widget):
         """将 widget 填入指定 layout"""

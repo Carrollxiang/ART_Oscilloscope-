@@ -39,14 +39,25 @@ logger = logging.getLogger(__name__)
 
 
 class FeedbackDialog(QDialog):
-    """添加/编辑反馈目标的对话框 (纯代码, 无 .ui 依赖)"""
+    """
+    添加/编辑反馈目标的对话框。
 
-    def __init__(self, parent=None, slot_id: str = ""):
+    订阅列表从 MeasurementPanel 的测量项动态读取。
+    """
+
+    def __init__(self, parent=None, slot_id: str = "",
+                 measurement_items: list[dict] = None):
+        """
+        measurement_items: 来自 MeasurementPanel.get_subscriptions() 的列表。
+        每项包含 {name, channel, meas_key, start, end}。
+        """
         super().__init__(parent)
         self.setWindowTitle("反馈目标配置")
         self.setMinimumSize(420, 360)
 
-        # 创建 UI
+        # 保存原始测量项信息, 供 get_config 构建正确的 DataSubscription
+        self._meas_items: list[dict] = measurement_items or []
+
         layout = QVBoxLayout(self)
 
         # 表单
@@ -63,7 +74,6 @@ class FeedbackDialog(QDialog):
         form.addRow("端口", self.editPort)
         form.addRow("远程方法", self.editMethod)
 
-        # 连接池
         pool_layout = QHBoxLayout()
         self.editPoolMin = QSpinBox()
         self.editPoolMin.setRange(0, 10)
@@ -76,23 +86,18 @@ class FeedbackDialog(QDialog):
         pool_layout.addWidget(QLabel("最大"))
         pool_layout.addWidget(self.editPoolMax)
         form.addRow("连接池", pool_layout)
-
         layout.addLayout(form)
 
-        # 订阅列表
-        layout.addWidget(QLabel("订阅测量项"))
+        # 订阅列表 (来自测量面板)
+        layout.addWidget(QLabel("订阅测量项 (来自测量面板)"))
         self.subscriptionList = QListWidget()
         self.subscriptionList.setSelectionMode(
             QAbstractItemView.SelectionMode.MultiSelection
         )
-        self._all_measurements = [
-            "CH1_Vpp", "CH1_Vmax", "CH1_Vmin", "CH1_Vrms", "CH1_Freq",
-            "CH2_Vpp", "CH2_Vmax", "CH2_Vmin", "CH2_Vrms", "CH2_Freq",
-            "CH3_Vpp", "CH3_Freq",
-            "CH4_Vpp", "CH4_Freq",
-        ]
-        for item in self._all_measurements:
-            self.subscriptionList.addItem(item)
+        for item in self._meas_items:
+            # 显示: "名称 (CHx_测量项)"
+            display = f"{item['name']} ({item['channel']}_{item['meas_key']})"
+            self.subscriptionList.addItem(display)
         layout.addWidget(self.subscriptionList)
 
         # 按钮
@@ -116,8 +121,15 @@ class FeedbackDialog(QDialog):
         """读取对话框中的配置"""
         subscriptions = []
         for item in self.subscriptionList.selectedItems():
-            subscriptions.append(DataSubscription(local_key=item.text()))
-
+            # 从显示文本反查测量项
+            idx = self.subscriptionList.row(item)
+            if 0 <= idx < len(self._meas_items):
+                m = self._meas_items[idx]
+                key = f"{m['channel']}_{m['meas_key']}"
+                subscriptions.append(DataSubscription(
+                    local_key=key,
+                    remote_key=m['name'],  # 用自定义名称作为 remote_key
+                ))
         return RpycSlotConfig(
             slot_id=self.editId.text(),
             host=self.editHost.text(),
@@ -140,11 +152,13 @@ class FeedbackPanel:
     def __init__(self, table_widget, btn_add, btn_edit, btn_remove,
                  btn_pause,
                  feedback_manager: FeedbackManager,
+                 measurement_panel=None,
                  status_callback: Optional[Callable[[], None]] = None):
         """
         table_widget: main_window.feedbackTable
         btn_add / btn_edit / btn_remove / btn_pause: 按钮
         feedback_manager: FeedbackManager 实例
+        measurement_panel: MeasurementPanel 实例, 用于获取订阅项
         status_callback: 更新状态栏的回调
         """
         self._table = table_widget
@@ -153,6 +167,7 @@ class FeedbackPanel:
         self._btn_remove = btn_remove
         self._btn_pause = btn_pause
         self._mgr = feedback_manager
+        self._meas_panel = measurement_panel
         self._status_cb = status_callback
         self._notified_auto_pause: set[str] = set()
 
@@ -247,9 +262,16 @@ class FeedbackPanel:
         if self._status_cb:
             self._status_cb()
 
+    def _get_meas_items(self) -> list[dict]:
+        """从测量面板获取可订阅的测量项"""
+        if self._meas_panel:
+            return self._meas_panel.get_subscriptions()
+        return []
+
     def _on_add(self):
         """打开添加对话框 (同步, asyncio.run 执行异步操作)"""
-        dialog = FeedbackDialog(self._table)
+        dialog = FeedbackDialog(self._table,
+                                measurement_items=self._get_meas_items())
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
             if not config.slot_id:
@@ -286,7 +308,8 @@ class FeedbackPanel:
         if not slot:
             return
 
-        dialog = FeedbackDialog(self._table, slot_id=slot_id)
+        dialog = FeedbackDialog(self._table, slot_id=slot_id,
+                                measurement_items=self._get_meas_items())
         if hasattr(slot, '_rpyc_config'):
             cfg = slot._rpyc_config
             dialog.editHost.setText(cfg.host)
