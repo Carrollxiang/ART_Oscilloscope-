@@ -12,11 +12,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import QColor, QPen
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,11 @@ class WaveformView:
 
         # 可见性状态 (与 ChannelPanel 同步)
         self._visible: dict[int, bool] = {ch: False for ch in range(channel_count)}
+        self._on_visible_changed: Optional[Callable[[int, bool], None]] = None
+
+        # 点击图例切换可见性
+        self._legend.mousePressEvent = self._on_legend_click
+        self._update_legend_appearance()
 
         logger.info("WaveformView 已创建 (带图例)")
 
@@ -124,7 +129,47 @@ class WaveformView:
         if color:
             curve.setPen(pg.mkPen(color=color, width=1.5))
 
-    # ── 可见性控制 (由 ChannelPanel 调用) ─────────────────────
+    def _update_legend_appearance(self):
+        """更新图例条目外观: 可见→彩色, 隐藏→灰字灰线"""
+        for ch in range(self._channel_count):
+            if ch >= len(self._legend.items):
+                continue
+            sample, label = self._legend.items[ch]
+            visible = self._visible.get(ch, False)
+            name = CHANNEL_NAMES[ch] if ch < len(CHANNEL_NAMES) else f"CH{ch+1}"
+            if visible:
+                color = CHANNEL_COLORS[ch % len(CHANNEL_COLORS)]
+                sample.setPen(pg.mkPen(color=color, width=1.5))
+                label.setText(name)
+                label.setAttr("color", (220, 220, 220))
+            else:
+                sample.setPen(pg.mkPen(color="#444444", width=1))
+                label.setText(f"{name} (隐藏)")
+                label.setAttr("color", (100, 100, 100))
+
+    # ── 图例点击 ──────────────────────────────────────────────
+
+    def _on_legend_click(self, ev):
+        """图例点击事件: 切换对应通道的显隐。"""
+        pos = ev.pos()
+        item_height = 20
+        y_offset = 5
+
+        for ch in range(self._channel_count):
+            y_start = y_offset + ch * item_height
+            y_end = y_start + item_height
+            if y_start <= pos.y() <= y_end:
+                new_visible = not self._visible.get(ch, False)
+                self.set_channel_visible(ch, new_visible)
+                self._update_legend_appearance()
+                if self._on_visible_changed:
+                    self._on_visible_changed(ch, new_visible)
+                ev.accept()
+                return
+
+        pg.LegendItem.mousePressEvent(self._legend, ev)
+
+    # ── 可见性控制 ────────────────────────────────────────────
 
     def set_channel_visible(self, ch: int, visible: bool):
         """显示/隐藏指定通道的波形。"""
@@ -136,6 +181,7 @@ class WaveformView:
             curve.show()
         else:
             curve.hide()
+        self._update_legend_appearance()
 
     def is_channel_visible(self, ch: int) -> bool:
         return self._visible.get(ch, False)

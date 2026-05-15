@@ -60,6 +60,9 @@ class MainWindow(QMainWindow):
             visible = self.channel_panel.is_channel_enabled(ch)
             self.waveform.set_channel_visible(ch, visible)
 
+        # 图例点击 → 同步通道面板复选框
+        self.waveform._on_visible_changed = self._on_legend_toggle
+
         # ── 触发面板 ──
         self.trigger_panel = TriggerPanel(
             source_combo=self.triggerSource,
@@ -95,6 +98,14 @@ class MainWindow(QMainWindow):
         self._connect_actions()
 
         logger.info("MainWindow 初始化完成")
+
+    def _on_legend_toggle(self, ch: int, visible: bool):
+        """图例点击切换时, 同步通道面板的复选框。"""
+        # ChannelPanel 的复选框切换会触发 channel_changed 信号
+        # 我们直接设置复选框状态, 但不额外 emit 事件
+        block = self.channel_panel._controls[ch]["enable"].blockSignals(True)
+        self.channel_panel._controls[ch]["enable"].setChecked(visible)
+        self.channel_panel._controls[ch]["enable"].blockSignals(block)
 
     # ── 数据更新接口 (由采集循环调用) ─────────────────────────
 
