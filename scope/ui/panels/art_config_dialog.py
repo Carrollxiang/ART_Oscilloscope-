@@ -76,20 +76,34 @@ class ArtConfigDialog(QDialog):
         self.btn_box.rejected.connect(self.reject)
 
     def _run_test(self):
-        """测试硬件通讯: 创建 ArtDevice → open → read → 显示结果。"""
+        """测试硬件通讯: 检查 DLL → 创建 ArtDevice → open → read → 显示结果。"""
         self.btn_test.setEnabled(False)
         self.test_status.setText("⏳ 正在测试...")
         self.test_status.setStyleSheet(
             "padding: 6px; background: #1a1a2e; border: 1px solid #666; "
             "font-family: Consolas, monospace; font-size: 11px; color: yellow;"
         )
-        # 处理 UI 事件
         from PyQt6.QtCore import QCoreApplication
         QCoreApplication.processEvents()
+
+        # 预检查 DLL 是否存在
+        import ctypes, os
+        dll_checked = False
+        try:
+            ctypes.windll.LoadLibrary("Art_DAQ")
+            dll_checked = True
+        except Exception:
+            dll_checked = False
 
         try:
             params = self.get_device_params()
             cfg = self.get_device_config()
+
+            if not dll_checked:
+                raise RuntimeError(
+                    "未找到 Art_DAQ.dll — 请确认 ART 硬件驱动已安装。\n"
+                    "如果驱动已安装, 尝试将 Art_DAQ.dll 所在目录加入 PATH。"
+                )
 
             from scope.hardware.art_device import ArtDevice
             dev = ArtDevice(
@@ -104,29 +118,23 @@ class ArtConfigDialog(QDialog):
             )
             dev._read_timeout = params["read_timeout"]
 
-            lines = []
-            lines.append(f"🟡 设备: {params['device_name']}/{params['ai_channels']}")
+            lines = [f"🟡 设备: {params['device_name']}/{params['ai_channels']}"]
 
-            # 1. 打开
             ok = dev.open()
             if not ok:
-                raise RuntimeError("open() 返回 False — 请检查 Art_DAQ.dll 是否安装")
+                raise RuntimeError("open() 返回 False")
             lines.append("✅ 1. open()          成功 — 模块加载正常")
 
-            # 2. 配置
             dev.configure(cfg)
-            lines.append(f"✅ 2. configure()     成功 — {cfg.sample_rate} Sa/s, {cfg.record_length} samples")
+            lines.append(f"✅ 2. configure()     成功 — {cfg.sample_rate} Sa/s, {cfg.record_length}samples")
 
-            # 3. 启动
             dev.start_acquisition()
             lines.append("✅ 3. start_acquisition()  成功 — 开始采集")
 
-            # 4. 读取
             chunk = dev.read_chunk()
             ch, samples = chunk.shape
             lines.append(f"✅ 4. read_chunk()     成功 — {ch}ch × {samples}samples, {chunk.dtype}")
 
-            # 5. 停止
             dev.stop_acquisition()
             dev.close()
             lines.append("✅ 5. stop/close       成功 — 资源已释放")
@@ -138,12 +146,7 @@ class ArtConfigDialog(QDialog):
             )
 
         except Exception as e:
-            err_lines = [
-                "❌ 通讯测试失败",
-                f"   {type(e).__name__}: {e}",
-            ]
-            import traceback
-            err_lines.append(f"   {traceback.format_exc()}")
+            err_lines = [f"❌ {type(e).__name__}: {e}"]
             self.test_status.setText("\n".join(err_lines))
             self.test_status.setStyleSheet(
                 "padding: 6px; background: #1a0a0a; border: 1px solid #a00; "

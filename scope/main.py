@@ -121,17 +121,14 @@ class ScopeApp:
     def _on_art_config(self, params: dict, config: DeviceConfig):
         """
         收到 ART 配置变更 → 重建设备。
-
-        停止当前设备, 用新参数创建 ArtDevice, 启动采集。
         """
         self._art_params = params
 
-        # 停止当前采集
         self._timer.stop()
         self.device.stop_acquisition()
         self.device.close()
 
-        # 尝试创建 ArtDevice
+        new_device = None
         try:
             new_device = ArtDevice(
                 device_name=params["device_name"],
@@ -143,29 +140,44 @@ class ScopeApp:
                 trigger_slope=params["trigger_slope"],
                 trigger_level=params["trigger_level"],
             )
-            # 设置读取超时
             new_device._read_timeout = params["read_timeout"]
 
-            if new_device.open():
-                new_device.configure(config)
-                new_device.start_acquisition()
-                self.device = new_device
-                self._config = config
-                logger.info(
-                    f"ART 设备已切换: {params['device_name']}/"
-                    f"{params['ai_channels']}, "
-                    f"{config.sample_rate}Sa/s, "
-                    f"{config.record_length}samples"
-                )
-            else:
-                logger.error("ART 设备打开失败, 保持当前设备")
-                self.device.start_acquisition()
+            if not new_device.open():
+                raise RuntimeError("open() failed — 请检查 Art_DAQ.dll")
+
+            new_device.configure(config)
+            new_device.start_acquisition()
+            self.device = new_device
+            self._config = config
+            new_device = None  # 成功, 交接所有权
+            logger.info(
+                f"ART 设备已切换: {params['device_name']}/"
+                f"{params['ai_channels']}, "
+                f"{config.sample_rate}Sa/s, "
+                f"{config.record_length}samples"
+            )
+
         except Exception as e:
-            logger.error(f"ART 设备切换失败: {e}, 保持当前设备")
+            logger.error(f"ART 设备切换失败: {e}")
+            # 清理失败的 ArtDevice
+            if new_device is not None:
+                try:
+                    new_device.stop_acquisition()
+                except Exception:
+                    pass
+                try:
+                    new_device.close()
+                except Exception:
+                    pass
+            # 重启原设备
             try:
+                self.device = SimulatorDevice()
+                self.device.open()
+                self.device.configure(self._config)
                 self.device.start_acquisition()
-            except Exception:
-                pass
+                logger.info("已回退到模拟设备")
+            except Exception as restore_err:
+                logger.error(f"回退模拟设备也失败: {restore_err}")
 
         # 重启 QTimer (可能新配置改变帧时长)
         frame_ms = int(config.record_length / config.sample_rate * 1000)
