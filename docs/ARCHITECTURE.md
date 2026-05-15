@@ -49,11 +49,13 @@
 ┌───────────────────────────▼──────────────────────────────────────────┐
 │                      硬件抽象层 (HAL)                                 │
 │  AcquisitionDevice (ABC)                                             │
-│  ├─ ArtUsbDevice      ← ART 多通道 USB 采集卡 (真实硬件)              │
-│  └─ SimulatorDevice   ← 生成测试信号用于软件开发调试                    │
+│  ├─ ArtDevice         ← ART USB 采集卡 (artdaq/NI-DAQmx)             │
+│  ├─ SimulatorDevice   ← 模拟器 (开发调试用)                           │
+│  │                                                                   │
+│  └─ 数据格式: read_chunk() → np.ndarray (channels, samples) float32   │
 │                                                                      │
 │  接口: open/close/start_acquisition/stop_acquisition/read_chunk       │
-│        reset/ping/restore_state/on_health_event                      │
+│        configure/reset/ping/restore_state/on_health_event            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -83,9 +85,24 @@ class AcquisitionDevice(ABC):
     on_health_event: Signal(DeviceHealthEvent)
 ```
 
+**实现**:
+
+| 实现 | 说明 |
+|------|------|
+| `SimulatorDevice` | 纯 Python 模拟, 4 通道正弦/方波/三角/噪声, 故障注入, 无硬件依赖 |
+| `ArtDevice` | ART USB 采集卡, 基于 `artdaq` (NI-DAQmx 兼容) 库, 通过 `Art_DAQ.dll` 通信 |
+
+**ArtDevice 关键细节**:
+- 使用 `artdaq.Task` API 直接操作设备 (绕过 artdaq_main.py 的全局 task)
+- `read_chunk()` 调 `task.read()` → 返回 `list of lists` → 转为 `(ch, samples) float32 ndarray`
+- 硬件触发由 `task.triggers.start_trigger.cfg_anlg_edge_start_trig()` 配置
+- `read_timeout` 超时抛 `TimeoutError` → Watchdog 触发自动重连
+- 未安装 `Art_DAQ.dll` 时 `open()` 返回 `False`, 程序可优雅降级
+
 **关键设计决策**:
 - 硬件未就绪时使用 `SimulatorDevice` 开发上层逻辑
 - `SimulatorDevice` 内置"故障注入"能力（随机断流、丢包），用于测试 Watchdog
+- `ArtDevice` 与 `SimulatorDevice` 互换只需改 `main.py` 一行代码
 
 ### 第 2 层 — 缓存与采集层
 

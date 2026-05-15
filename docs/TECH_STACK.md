@@ -71,7 +71,8 @@ scope/
 │   ├── hardware/                   # 硬件抽象层
 │   │   ├── __init__.py
 │   │   ├── device.py              # AcquisitionDevice (ABC)
-│   │   └── simulator.py           # SimulatorDevice
+│   │   ├── simulator.py           # SimulatorDevice (模拟器)
+│   │   └── art_device.py          # ArtDevice (ART USB 卡)
 │   │
 │   ├── acquisition/               # 缓存与采集层
 │   │   ├── __init__.py
@@ -139,7 +140,8 @@ scope/
 | `qasync` | ≥0.27 | Qt + asyncio 桥接 |
 | `numpy` | ≥1.24 | 数值计算基础库 |
 | **`rpyc`** | **≥5.3** | **实验室仪器 RPC 协议 (主要反馈通道)** |
-| `pyusb` | ≥1.3 | USB 通信 |
+| **`artdaq`** | **内置** | **ART 采集卡驱动 (NI-DAQmx 兼容)** |
+| `pyusb` | ≥1.3 | USB 通信 (备选) |
 | `pyserial` | ≥3.5 (可选) | 串口通信 |
 | `scipy` | ≥1.10 (可选) | 滤波器设计 |
 | `h5py` | ≥3.8 (可选) | HDF5 记录 |

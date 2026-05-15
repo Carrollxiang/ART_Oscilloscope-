@@ -86,7 +86,8 @@ class ScopeApp:
         # 3. 用 QTimer 驱动采集循环 (在主线程中运行)
         self._running = True
         self._timer = QTimer()
-        self._timer.setInterval(33)  # ~30fps
+        # 每帧 = record_length / sample_rate = 5000/10000 = 0.5s
+        self._timer.setInterval(500)
         self._timer.timeout.connect(self._on_timer_tick)
         self._timer.start()
 

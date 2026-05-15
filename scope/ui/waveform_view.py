@@ -130,7 +130,7 @@ class WaveformView:
             curve.setPen(pg.mkPen(color=color, width=1.5))
 
     def _update_legend_appearance(self):
-        """更新图例条目外观: 可见→彩色, 隐藏→灰字灰线"""
+        """更新图例条目外观: 可见→不透明, 隐藏→半透明+标注"""
         for ch in range(self._channel_count):
             if ch >= len(self._legend.items):
                 continue
@@ -138,12 +138,11 @@ class WaveformView:
             visible = self._visible.get(ch, False)
             name = CHANNEL_NAMES[ch] if ch < len(CHANNEL_NAMES) else f"CH{ch+1}"
             if visible:
-                color = CHANNEL_COLORS[ch % len(CHANNEL_COLORS)]
-                sample.setPen(pg.mkPen(color=color, width=1.5))
+                sample.setOpacity(1.0)
                 label.setText(name)
                 label.setAttr("color", (220, 220, 220))
             else:
-                sample.setPen(pg.mkPen(color="#444444", width=1))
+                sample.setOpacity(0.25)
                 label.setText(f"{name} (隐藏)")
                 label.setAttr("color", (100, 100, 100))
 

@@ -191,43 +191,43 @@ scope/ui/
 
 ---
 
-## Phase 4 — ART 硬件集成 (Day 11~13)
+## Phase 4 — ART 硬件集成 (进行中 🏗️)
 
-### 目标
+### 说明
 
-替换 SimulatorDevice 为真实的 `ArtUsbDevice`。
+`ArtDevice` (基于 artdaq/NI-DAQmx 库) 已完成, 
+实际硬件交付前无法做端到端验证。
+以下列出的是硬布线 (pyusb) 方案的原计划, 
+当前已切换到 artdaq (NI-DAQmx 兼容) 方案。
 
-### 前提条件
-
-ART 采集卡固件已就绪, USB 数据包格式已确定。
-
-### 产出物
+### 当前状态
 
 ```
 scope/hardware/
-├── art_usb.py               # ArtUsbDevice: pyusb 驱动
-├── art_protocol.py          # 数据包解析: 原始 bytes → numpy array
-└── art_constants.py         # USB VID/PID, 端点地址, 命令字
+├── art_device.py        ← ✅ 已实现: AcquisitionDevice ABC 适配
+├── artdaq/              ← ✅ 已入库: NI-DAQmx 兼容封装
+└── ...
+
+ArtDevice 已完成的方法:
+  ✅ open/close               导入 artdaq, 加载 Art_DAQ.dll
+  ✅ start_acquisition        创建 Task → 加通道 → 配时钟 → 配触发 → 启动
+  ✅ stop_acquisition         停止 Task
+  ✅ read_chunk               task.read() → (ch, samples) ndarray
+  ✅ configure                保存采样率/通道数/量程
+  ✅ ping/reset/restore_state Watchdog 接口
+  ✅ make_analysis_result     原始数据 → AnalysisResult
 ```
 
-### 需要与硬件确定的接口
+### 需要硬件到齐后验证
 
 | 项目 | 说明 |
 |------|------|
-| USB VID / PID | 设备识别 |
-| 端点配置 | Bulk IN 端点号, 最大包大小 |
-| 数据包格式 | 包头结构, 通道数据排列, 是否存在校验和 |
-| 触发信息 | 硬件触发标记如何嵌入数据流? (单独的端点? 数据包内标记位?) |
-| 采样率控制 | 通过哪个命令字设置? |
-| 通道使能 | 如何开关通道? |
-| 探活命令 | CMD_PING 的实现定义 |
-| 硬重置 | USB 级 reset 是否需要额外握手? |
-
-### 验证标准
-
-- 插入 ART 卡 → 软件自动识别 → 显示设备信息
-- 开始采集 → 实时波形显示 (与 SimulatorDevice 时期 UI 表现一致)
-- Watchdog: 断开 USB → 观察自动重连流程 → 恢复采集
+| DLL 加载 | `Art_DAQ.dll` 是否随硬件驱动正确安装 |
+| 通道数 | `ai0:3` 实际映射的物理通道 |
+| 触发信号 | `cfg_anlg_edge_start_trig` 与硬件触发是否匹配 |
+| 采样率上限 | ART 卡实际最大采样率 |
+| 超时行为 | USB 断开后 `read()` 能否及时抛异常 |
+| Watchdog | 自动重连后能否恢复采集 |
 
 ---
 
