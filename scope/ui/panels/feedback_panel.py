@@ -7,6 +7,7 @@ UI 上显示所有反馈 slot 的列表, 提供添加/编辑/删除操作。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional, Callable
 
@@ -209,8 +210,8 @@ class FeedbackPanel:
         if self._status_cb:
             self._status_cb()
 
-    async def _on_add(self):
-        """打开添加对话框"""
+    def _on_add(self):
+        """打开添加对话框 (同步, asyncio.run 执行异步操作)"""
         dialog = FeedbackDialog(self._table)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
@@ -219,8 +220,10 @@ class FeedbackPanel:
                 return
 
             try:
-                slot = RpycFeedbackSlot(config)
-                await self._mgr.add_slot(slot)
+                async def do_add():
+                    slot = RpycFeedbackSlot(config)
+                    await self._mgr.add_slot(slot)
+                asyncio.run(do_add())
                 self.refresh_table()
                 logger.info(f"反馈目标 '{config.slot_id}' 已添加")
             except KeyError:
@@ -234,7 +237,7 @@ class FeedbackPanel:
                     f"添加失败: {e}"
                 )
 
-    async def _on_edit(self):
+    def _on_edit(self):
         """编辑选中的 slot"""
         row = self._table.currentRow()
         if row < 0:
@@ -246,7 +249,6 @@ class FeedbackPanel:
         if not slot:
             return
 
-        # 当前配置回填到对话框
         dialog = FeedbackDialog(self._table, slot_id=slot_id)
         if hasattr(slot, '_rpyc_config'):
             cfg = slot._rpyc_config
@@ -259,13 +261,15 @@ class FeedbackPanel:
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_config = dialog.get_config()
             try:
-                await slot.reconfigure(new_config)
+                async def do_reconfig():
+                    await slot.reconfigure(new_config)
+                asyncio.run(do_reconfig())
                 self.refresh_table()
                 logger.info(f"反馈目标 '{slot_id}' 已更新")
             except Exception as e:
                 QMessageBox.critical(self._table, "错误", f"更新失败: {e}")
 
-    async def _on_remove(self):
+    def _on_remove(self):
         """删除选中的 slot"""
         row = self._table.currentRow()
         if row < 0:
