@@ -14,7 +14,6 @@ import logging
 import threading
 import time
 
-import numpy as np
 import qasync
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
@@ -22,6 +21,7 @@ from PyQt6.QtCore import Qt
 from scope.hardware import DeviceConfig
 from scope.hardware.simulator import SimulatorDevice
 from scope.io import FeedbackManager
+from scope.processing import ProcessingPipeline, AutoMeasure, MathOp, FFTAnalyze
 from scope.ui import MainWindow
 
 logging.basicConfig(
@@ -49,6 +49,21 @@ class ScopeApp:
             sample_rate=1_000_000,
             record_length=5000,
             channels_enabled=[0, 1, 2, 3],
+        )
+
+        # 信号处理管道
+        self._pipeline = ProcessingPipeline()
+        self._pipeline.add_stage(
+            AutoMeasure(
+                measurements=["Vpp", "Vrms", "Vmax", "Vmin", "Freq"],
+                channels=["CH1", "CH2", "CH3", "CH4"],
+            )
+        )
+        self._pipeline.add_stage(
+            MathOp("CH1 + CH2", output="MATH1")
+        )
+        self._pipeline.add_stage(
+            FFTAnalyze(channels=["CH1", "CH2"])
         )
 
     async def start(self):
@@ -108,19 +123,8 @@ class ScopeApp:
                 chunk = self.device.read_chunk()
                 result = self.device.make_analysis_result(chunk)
 
-                # 模拟 Pipeline: 填充测量值
-                for ch_idx in range(len(self._config.channels_enabled)):
-                    ch_name = f"CH{ch_idx + 1}"
-                    data = chunk[ch_idx]
-                    result.measurements[f"{ch_name}_Vpp"] = float(np.ptp(data))
-                    result.measurements[f"{ch_name}_Vrms"] = float(np.std(data))
-                    # 简单的过零频率检测
-                    zero_crossings = np.where(np.diff(np.signbit(data)))[0]
-                    if len(zero_crossings) > 1:
-                        period = np.mean(np.diff(zero_crossings)) / self._config.sample_rate
-                        result.measurements[f"{ch_name}_Freq"] = float(1.0 / period) if period > 0 else 0.0
-                    result.measurements[f"{ch_name}_Vmax"] = float(np.max(data))
-                    result.measurements[f"{ch_name}_Vmin"] = float(np.min(data))
+                # Pipeline: 自动测量 + 数学运算 + FFT
+                result = self._pipeline.process(result)
 
                 # 投递到 UI (通过 pyqtSignal 跨线程)
                 if self.main_win:
