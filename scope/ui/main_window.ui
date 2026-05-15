@@ -60,23 +60,14 @@
   <!-- ─── Central Widget ─── -->
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="centralLayout">
-    <item>
-     <layout class="QHBoxLayout" name="mainArea">
-      <!-- 波形视图占位 (运行时替换为 pyqtgraph PlotWidget) -->
-      <item>
-       <widget class="QWidget" name="waveformContainer" native="true"/>
+    <!-- 上: 波形区 (占大部分空间) -->
+    <item stretch="3">
+     <widget class="QWidget" name="waveformContainer" native="true"/>
+    </item>
 
-      </item>
-
-      <!-- 右侧面板: QTabWidget -->
-      <item>
-       <widget class="QTabWidget" name="sideTabs">
-        <property name="minimumSize">
-         <size><width>280</width><height>0</height></size>
-        </property>
-        <property name="maximumSize">
-         <size><width>350</width><height>16777215</height></size>
-        </property>
+    <!-- 下: 配置面板 (QTabWidget) -->
+    <item stretch="1">
+     <widget class="QTabWidget" name="bottomTabs">
 
         <!-- Tab 0: 通道 -->
         <widget class="QWidget" name="tabChannels">
@@ -207,8 +198,6 @@
         </widget>
        </widget>
       </item>
-     </layout>
-    </item>
 
     <!-- 底部测量条 -->
     <item>

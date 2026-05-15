@@ -20,7 +20,7 @@ from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
 from .panels.measurement_panel import MeasurementPanel
 from .panels.trigger_panel import TriggerPanel
-from .panels.feedback_panel import FeedbackPanel
+from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ class MainWindow(QMainWindow):
             hw_check=self.triggerHwMode,
         )
 
-        # ── 测量面板 ──
-        self.measure_panel = MeasurementPanel(self.measurementTable)
+        # ── 测量面板 (动态行) ──
+        self.measure_panel = MeasurementPanel(self.tabMeasurements)
 
         # ── 反馈面板 ──
         self._feedback_mgr = feedback_manager or FeedbackManager()
