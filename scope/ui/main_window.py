@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QMainWindow, QMessageBox, QTableWidgetItem
+from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem
 
 from scope.model import AnalysisResult
 from scope.io import FeedbackManager
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import QFileDialog
 
 from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
 from .panels.device_panel import DevicePanel
+from .mini_chart import MiniChartWidget
 from scope.config.settings import ConfigManager
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,16 @@ class MainWindow(QMainWindow):
 
         # 图例点击 → 同步通道面板复选框
         self.waveform._on_visible_changed = self._on_legend_toggle
+
+        # ── 迷你图 (左下角持久化) ──
+        self.mini_chart = MiniChartWidget()
+        # 填入 miniChartContainer 的布局
+        mc_lay = self.miniChartContainer.layout() or QVBoxLayout(self.miniChartContainer)
+        self.miniChartContainer.setLayout(mc_lay)
+        while mc_lay.count():
+            item = mc_lay.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        mc_lay.addWidget(self.mini_chart)
 
         # ── 设备面板 (替换触发) ──
         self.device_panel = DevicePanel()

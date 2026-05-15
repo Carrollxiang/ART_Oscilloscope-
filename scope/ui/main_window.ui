@@ -64,9 +64,14 @@
      <widget class="QWidget" name="waveformContainer" native="true"/>
     </item>
 
-    <!-- 下: 配置面板 (QTabWidget) -->
+    <!-- 下: 迷你图(左) + 配置面板(右) -->
     <item stretch="1">
-     <widget class="QTabWidget" name="bottomTabs">
+     <layout class="QHBoxLayout" name="bottomArea">
+      <item stretch="1">
+       <widget class="QWidget" name="miniChartContainer" native="true"/>
+      </item>
+      <item stretch="3">
+       <widget class="QTabWidget" name="bottomTabs">
 
         <!-- Tab 0: 通道 -->
         <widget class="QWidget" name="tabChannels">
@@ -104,6 +109,8 @@
         </widget>
        </widget>
       </item>
+     </layout>
+    </item>
 
     <!-- 底部测量条 -->
     <item>

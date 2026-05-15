@@ -203,6 +203,9 @@ class ScopeApp:
             # Pipeline: 自动测量 + 数学运算 + FFT
             result = self._pipeline.process(result)
 
+            # 迷你图数据
+            self.main_win.mini_chart.add_from_result(result)
+
             # 更新 UI
             self.main_win.data_received.emit(result)
 
