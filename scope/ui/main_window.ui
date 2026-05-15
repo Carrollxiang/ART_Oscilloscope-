@@ -15,6 +15,7 @@
     <property name="title"><string>文件(&amp;F)</string></property>
     <addaction name="actionSaveConfig"/>
     <addaction name="actionLoadConfig"/>
+    <addaction name="actionArtConfig"/>
     <addaction name="separator"/>
     <addaction name="actionExportData"/>
     <addaction name="separator"/>
@@ -41,6 +42,9 @@
   <action name="actionLoadConfig">
    <property name="text"><string>加载配置</string></property>
    <property name="shortcut"><string>Ctrl+O</string></property>
+  </action>
+  <action name="actionArtConfig">
+   <property name="text"><string>ART 设备配置…</string></property>
   </action>
   <action name="actionExportData">
    <property name="text"><string>导出数据…</string></property>

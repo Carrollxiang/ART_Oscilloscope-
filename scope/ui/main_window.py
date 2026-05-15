@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QMainWindow, QMessageBox, QTableWidgetItem
+from PyQt6.QtWidgets import QMainWindow, QDialog, QMessageBox, QTableWidgetItem
 
 from scope.model import AnalysisResult
 from scope.io import FeedbackManager
@@ -21,6 +21,7 @@ from .panels.channel_panel import ChannelPanel
 from .panels.measurement_panel import MeasurementPanel
 from .panels.trigger_panel import TriggerPanel
 from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
+from .panels.art_config_dialog import ArtConfigDialog
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,24 @@ class MainWindow(QMainWindow):
         self._connect_actions()
 
         logger.info("MainWindow 初始化完成")
+
+    def _show_art_config(self):
+        """打开 ART 设备配置对话框。"""
+        dlg = ArtConfigDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            params = dlg.get_device_params()
+            config = dlg.get_device_config()
+            logger.info(f"ART 配置已更新: {params}")
+            # 发出信号, 由 main.py 的 ScopeApp 接收后重建设备
+            # TODO: 连接 ScopeApp 的设备重建逻辑
+            QMessageBox.information(
+                self, "配置已保存",
+                f"设备: {params['device_name']}/{params['ai_channels']}\n"
+                f"采样率: {config.sample_rate} Sa/s\n"
+                f"时长: {config.record_length/config.sample_rate:.3f}s ({config.record_length} 样本)\n"
+                f"接地: {params['terminal_config']}\n"
+                f"触发: {params['trigger_source'] or '无'}"
+            )
 
     def _on_legend_toggle(self, ch: int, visible: bool):
         """图例点击切换时, 同步通道面板的复选框。"""
@@ -177,6 +196,7 @@ class MainWindow(QMainWindow):
         self.actionResetLayout.triggered.connect(
             lambda: logger.info("重置布局 (待实现)")
         )
+        self.actionArtConfig.triggered.connect(self._show_art_config)
 
     def _show_about(self):
         QMessageBox.about(
