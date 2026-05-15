@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
             btn_add=self.btnAddFeedback,
             btn_edit=self.btnEditFeedback,
             btn_remove=self.btnRemoveFeedback,
+            btn_pause=self.btnPauseFeedback,
             feedback_manager=self._feedback_mgr,
             status_callback=self._update_status_bar,
         )
@@ -117,8 +118,8 @@ class MainWindow(QMainWindow):
             result.trigger.trigger_position
         )
 
-        # 3. 更新测量表格
-        self.measure_panel.update_measurements(result.measurements)
+        # 3. 更新测量面板 (带时间窗口和原始数据)
+        self.measure_panel.update_from_result(result)
 
         # 4. 更新状态栏
         self._update_status_bar(result)
@@ -141,8 +142,15 @@ class MainWindow(QMainWindow):
             )
 
         # 反馈状态
-        running, total = self.feedback_panel.get_active_count()
-        self.statusFeedback.setText(f"反馈: {running}/{total} 活跃")
+        running, paused, total = self.feedback_panel.get_active_count()
+        status_parts = []
+        if running:
+            status_parts.append(f"{running} 运行")
+        if paused:
+            status_parts.append(f"{paused} 暂停")
+        if not running and not paused:
+            status_parts.append("0 活跃")
+        self.statusFeedback.setText(f"反馈: {' | '.join(status_parts)}/{total}")
 
     # ── 内部 ──────────────────────────────────────────────────
 

@@ -96,6 +96,27 @@ class FeedbackSlot(ABC):
         """
         ...
 
+    # ── 暂停/恢复 ──────────────────────────────────────────────
+
+    async def pause(self):
+        """
+        暂停推送。
+
+        连接池保持打开, 但不再发送数据。
+        dispatch() 会跳过 PAUSED 状态的 slot。
+        """
+        if self._status == SlotStatus.RUNNING:
+            self._status = SlotStatus.PAUSED
+            logger.info(f"[{self._config.slot_id}] 已暂停")
+
+    async def resume(self):
+        """
+        恢复推送。
+        """
+        if self._status == SlotStatus.PAUSED:
+            self._status = SlotStatus.RUNNING
+            logger.info(f"[{self._config.slot_id}] 已恢复")
+
     # ── 数据推送 ───────────────────────────────────────────────
 
     @abstractmethod

@@ -138,13 +138,12 @@ class FeedbackPanel:
     """
 
     def __init__(self, table_widget, btn_add, btn_edit, btn_remove,
+                 btn_pause,
                  feedback_manager: FeedbackManager,
                  status_callback: Optional[Callable[[], None]] = None):
         """
         table_widget: main_window.feedbackTable
-        btn_add: 添加按钮
-        btn_edit: 编辑按钮
-        btn_remove: 删除按钮
+        btn_add / btn_edit / btn_remove / btn_pause: 按钮
         feedback_manager: FeedbackManager 实例
         status_callback: 更新状态栏的回调
         """
@@ -152,6 +151,7 @@ class FeedbackPanel:
         self._btn_add = btn_add
         self._btn_edit = btn_edit
         self._btn_remove = btn_remove
+        self._btn_pause = btn_pause
         self._mgr = feedback_manager
         self._status_cb = status_callback
 
@@ -180,6 +180,7 @@ class FeedbackPanel:
         self._btn_add.clicked.connect(self._on_add)
         self._btn_edit.clicked.connect(self._on_edit)
         self._btn_remove.clicked.connect(self._on_remove)
+        self._btn_pause.clicked.connect(self._on_pause)
 
     def refresh_table(self):
         """刷新表格显示所有 slot 的最新状态"""
@@ -197,6 +198,8 @@ class FeedbackPanel:
             status_item = QTableWidgetItem(info.status)
             if info.status == "running":
                 status_item.setForeground(QBrush(QColor("#00FF00")))
+            elif info.status == "paused":
+                status_item.setForeground(QBrush(QColor("#FFAA00")))
             elif info.status == "error":
                 status_item.setForeground(QBrush(QColor("#FF0000")))
             else:
@@ -287,9 +290,35 @@ class FeedbackPanel:
             self.refresh_table()
             logger.info(f"反馈目标 '{slot_id}' 已删除")
 
+    def _on_pause(self):
+        """暂停或恢复选中的 slot"""
+        row = self._table.currentRow()
+        if row < 0:
+            QMessageBox.information(self._table, "提示", "请先选择一个反馈目标")
+            return
+
+        slot_id = self._table.item(row, 0).text()
+        slot = self._mgr.get_slot(slot_id)
+        if not slot:
+            return
+
+        if slot.status.value == "running":
+            asyncio.run(slot.pause())
+            self._btn_pause.setText("继续")
+        elif slot.status.value == "paused":
+            asyncio.run(slot.resume())
+            self._btn_pause.setText("暂停")
+        else:
+            QMessageBox.information(self._table, "提示", "该 slot 未运行")
+            return
+
+        self.refresh_table()
+        logger.info(f"反馈目标 '{slot_id}' 状态 → {slot.status.value}")
+
     def get_active_count(self) -> tuple[int, int]:
-        """返回 (运行中, 总数)"""
+        """返回 (运行中, 暂停中, 总数)"""
         infos = self._mgr.list_slots()
         total = len(infos)
         running = sum(1 for i in infos if i.status == "running")
-        return running, total
+        paused = sum(1 for i in infos if i.status == "paused")
+        return running, paused, total
