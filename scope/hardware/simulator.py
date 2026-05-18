@@ -58,7 +58,7 @@ class SimulatorDevice(AcquisitionDevice):
         self._running = False
         self._seq = 0
 
-        # 每通道信号参数
+        # 每通道信号参数 (自动扩展到实际通道数)
         self._signals: list[SimSignalConfig] = [
             SimSignalConfig(waveform="sine",     frequency=1000.0, amplitude=2.0),
             SimSignalConfig(waveform="square",   frequency=1000.0, amplitude=3.3),
@@ -117,6 +117,14 @@ class SimulatorDevice(AcquisitionDevice):
         n_ch = len(self._config.channels_enabled)
         n_samples = self._config.record_length
         fs = self._config.sample_rate
+
+        # 自动扩展信号配置到实际通道数
+        while len(self._signals) < n_ch:
+            idx = len(self._signals)
+            wf = ["sine", "square", "triangle", "noise"][idx % 4]
+            freq = [1000.0, 1000.0, 500.0, 0][idx % 4]
+            amp = [2.0, 3.3, 1.5, 0.5][idx % 4]
+            self._signals.append(SimSignalConfig(waveform=wf, frequency=freq, amplitude=amp))
 
         chunk = np.zeros((n_ch, n_samples), dtype=np.float32)
         t = np.arange(n_samples, dtype=np.float64) / fs
@@ -187,6 +195,9 @@ class SimulatorDevice(AcquisitionDevice):
 
     def configure(self, config: DeviceConfig):
         self._config = config
+        # 扩展垂直档位到实际通道数
+        while len(self._config.vertical_ranges) < len(config.channels_enabled):
+            self._config.vertical_ranges.append(5.0)
 
     def get_config(self) -> DeviceConfig:
         if not self._config:
