@@ -49,10 +49,10 @@ class ScopeApp:
         self._running = False
         self._device_type = "unknown"
 
-        # 设备配置 (16 通道, ai0:15, 30k Sa/s)
+        # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧)
         self._config = DeviceConfig(
             sample_rate=30_000,      # 上限 31250 Sa/s
-            record_length=5000,
+            record_length=15000,     # 30k × 0.5s = 15000
             channels_enabled=list(range(16)),
         )
 
@@ -196,12 +196,24 @@ class ScopeApp:
         """
         收到 ART 配置变更 → 重建设备。
 
-        策略: 先创建并验证新设备, 成功后再停掉旧设备并切换。
-              如果新设备启动失败, 旧设备继续运行, 不回退到模拟器。
+        策略:
+          1. 停掉旧设备 (释放硬件资源)
+          2. 创建新设备
+          3. 如果新设备失败 → 恢复旧设备继续运行
+          4. 如果旧设备也恢复失败 → 终极回退到模拟器
         """
         self._art_params = params
+        old_device = self.device
+        old_config = self._config
 
-        # 1. 先创建新设备并验证, 不动旧设备
+        # 1. 停掉旧设备 + 定时器 (释放硬件, 让新设备能创建 Task)
+        self._timer.stop()
+        try:
+            old_device.stop_acquisition()
+        except Exception:
+            pass
+
+        # 2. 创建并启动新设备
         new_device = None
         try:
             new_device = ArtDevice(
@@ -221,43 +233,57 @@ class ScopeApp:
 
             new_device.configure(config)
             new_device.start_acquisition()
-            # 验证能读到数据
-            _ = new_device.read_chunk()
+            _ = new_device.read_chunk()  # 验证能读到数据
+
+            # 成功 → 关掉旧设备, 换入新设备
+            try:
+                old_device.close()
+            except Exception:
+                pass
+            self.device = new_device
+            self._config = config
+            self._device_type = "art"
+            logger.info(
+                f"✅ ART 设备已切换: {params['device_name']}/"
+                f"{params['ai_channels']}, "
+                f"{config.sample_rate}Sa/s, "
+                f"{config.record_length}samples"
+            )
 
         except Exception as e:
-            logger.error(f"新设备配置失败, 当前设备不变: {e}")
+            logger.error(f"新设备启动失败: {e}")
             if new_device is not None:
                 try:
                     new_device.stop_acquisition()
-                except Exception:
-                    pass
-                try:
                     new_device.close()
                 except Exception:
                     pass
-            return  # ← 关键: 不碰旧设备, 不回退模拟器
 
-        # 2. 新设备验证通过 → 停旧换新
-        self._timer.stop()
-        try:
-            self.device.stop_acquisition()
-            self.device.close()
-        except Exception as e:
-            logger.warning(f"关闭旧设备时异常: {e}")
+            # 3. 恢复旧设备
+            try:
+                old_device.configure(old_config)
+                old_device.start_acquisition()
+                self.device = old_device
+                self._config = old_config
+                if hasattr(old_device, '_device_type') and old_device._device_type:
+                    self._device_type = old_device._device_type
+                else:
+                    self._device_type = "simulator"
+                logger.info("已恢复旧设备继续运行")
+            except Exception as restore_err:
+                logger.error(f"恢复旧设备也失败: {restore_err}")
+                # 4. 终极回退到模拟器
+                fallback = SimulatorDevice()
+                fallback.open()
+                fallback.configure(old_config)
+                fallback.start_acquisition()
+                self.device = fallback
+                self._config = old_config
+                self._device_type = "simulator"
+                logger.info("已回退到模拟设备")
 
-        self.device = new_device
-        self._config = config
-        if hasattr(new_device, '_device_type'):
-            self._device_type = "art"
-        logger.info(
-            f"✅ ART 设备已切换: {params['device_name']}/"
-            f"{params['ai_channels']}, "
-            f"{config.sample_rate}Sa/s, "
-            f"{config.record_length}samples"
-        )
-
-        # 3. 重启 QTimer (可能新配置改变帧时长)
-        frame_ms = int(config.record_length / config.sample_rate * 1000)
+        # 5. 重启 QTimer
+        frame_ms = int(self._config.record_length / self._config.sample_rate * 1000)
         self._timer.setInterval(max(frame_ms, 50))
         self._timer.start()
 
