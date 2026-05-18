@@ -21,15 +21,27 @@ from PyQt6.QtGui import QColor, QPen
 
 logger = logging.getLogger(__name__)
 
-# 通道颜色
+# 通道颜色 (最多支持 32 通道)
 CHANNEL_COLORS = [
-    QColor("#FFFF00"),  # CH1: 黄
-    QColor("#00FFFF"),  # CH2: 青
-    QColor("#FF00FF"),  # CH3: 紫
-    QColor("#00FF00"),  # CH4: 绿
+    QColor("#FFFF00"),  # CH1:  黄
+    QColor("#00FFFF"),  # CH2:  青
+    QColor("#FF00FF"),  # CH3:  紫
+    QColor("#00FF00"),  # CH4:  绿
+    QColor("#FFA500"),  # CH5:  橙
+    QColor("#FF69B4"),  # CH6:  粉
+    QColor("#87CEEB"),  # CH7:  天蓝
+    QColor("#98FB98"),  # CH8:  淡绿
+    QColor("#FFD700"),  # CH9:  金
+    QColor("#DDA0DD"),  # CH10: 梅
+    QColor("#40E0D0"),  # CH11: 碧绿
+    QColor("#FF6347"),  # CH12: 番茄红
+    QColor("#B0C4DE"),  # CH13: 灰蓝
+    QColor("#F0E68C"),  # CH14: 卡其
+    QColor("#C0C0C0"),  # CH15: 银灰
+    QColor("#FFB6C1"),  # CH16: 浅粉
 ]
 
-CHANNEL_NAMES = ["CH1", "CH2", "CH3", "CH4"]
+CHANNEL_NAMES = [f"CH{i+1}" for i in range(32)]
 
 
 class WaveformView:
@@ -37,7 +49,7 @@ class WaveformView:
     波形视图控件 — 带图例的 pyqtgraph PlotWidget。
     """
 
-    def __init__(self, parent_widget, channel_count: int = 4):
+    def __init__(self, parent_widget, channel_count: int = 16):
         self._channel_count = channel_count
         self._curves: dict[int, pg.PlotDataItem] = {}
         self._trigger_line: Optional[pg.InfiniteLine] = None

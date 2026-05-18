@@ -1,13 +1,18 @@
 """
 数字示波器 — 主入口
 
+模式:
+  - 默认 (无参数)     → 连接 ART 硬件 (ArtDevice)
+  - --mock / -m       → 模拟数据 (SimulatorDevice)，无硬件也可运行
+
 架构:
   - 纯 PyQt6 事件循环 (不依赖 qasync)
-  - SimulatorDevice 在采集线程中生成模拟数据
+  - SimulatorDevice / ArtDevice 在采集线程中生成/读取数据
   - QTimer 驱动 UI 刷新
   - 跨线程通过 pyqtSignal 通信
 """
 
+import argparse
 import asyncio
 import logging
 import threading
@@ -37,25 +42,26 @@ class ScopeApp:
     示波器应用 — 整合采集、分析、反馈、UI。
     """
 
-    def __init__(self):
-        self.device = SimulatorDevice()
+    def __init__(self, mock: bool = False):
+        self._mock = mock
         self.feedback_mgr = FeedbackManager()
         self.main_win: MainWindow = None
         self._running = False
+        self._device_type = "unknown"
 
-        # 设备配置
+        # 设备配置 (16 通道, ai0:15, 30k Sa/s)
         self._config = DeviceConfig(
-            sample_rate=10_000,      # 10kHz → 5000 samples = 0.5s/帧
+            sample_rate=30_000,      # 上限 31250 Sa/s
             record_length=5000,
-            channels_enabled=[0, 1, 2, 3],
+            channels_enabled=list(range(16)),
         )
 
-        # 信号处理管道
+        # 信号处理管道 (16 通道)
         self._pipeline = ProcessingPipeline()
         self._pipeline.add_stage(
             AutoMeasure(
                 measurements=["Vpp", "Vrms", "Vmax", "Vmin", "Freq"],
-                channels=["CH1", "CH2", "CH3", "CH4"],
+                channels=[f"CH{i+1}" for i in range(16)],
             )
         )
         self._pipeline.add_stage(
@@ -68,29 +74,88 @@ class ScopeApp:
         # ART 设备参数 (用于配置对话框 → 设备重建)
         self._art_params = {
             "device_name": "Dev42",
-            "ai_channels": "ai0:3",
+            "ai_channels": "ai0:15",
             "terminal_config": "NRSE",
             "min_val": -10.0,
             "max_val": 10.0,
             "read_timeout": 5.0,
-            "trigger_source": "",
+            "trigger_source": "ai12",
             "trigger_slope": "rising",
-            "trigger_level": 0.0,
+            "trigger_level": 1.0,
         }
 
         # asyncio loop 用于 feedback dispatch
         self._async_loop = asyncio.new_event_loop()
 
+        # 创建设备
+        self.device = self._create_device()
+
+    def _create_device(self):
+        """
+        根据 mock 标志创建设备:
+          - mock=True  → SimulatorDevice (跳过硬件)
+          - mock=False → 先尝试 ArtDevice; 失败后回退到 SimulatorDevice
+        """
+        if self._mock:
+            logger.info("Mock 模式: 使用 SimulatorDevice (模拟数据)")
+            self._device_type = "simulator"
+            dev = SimulatorDevice()
+            dev.open()
+            dev.configure(self._config)
+            return dev
+
+        # 默认: 尝试 ART 硬件
+        logger.info("尝试连接 ART 硬件 (Dev42/ai0:15) ...")
+        art = ArtDevice(
+            device_name=self._art_params["device_name"],
+            ai_channels=self._art_params["ai_channels"],
+            terminal_config=self._art_params["terminal_config"],
+            min_val=self._art_params["min_val"],
+            max_val=self._art_params["max_val"],
+            trigger_source=self._art_params["trigger_source"],
+            trigger_slope=self._art_params["trigger_slope"],
+            trigger_level=self._art_params["trigger_level"],
+        )
+        art._read_timeout = self._art_params["read_timeout"]
+
+        if art.open():
+            try:
+                art.configure(self._config)
+                art.start_acquisition()
+                logger.info("✅ ART 硬件连接成功")
+                self._device_type = "art"
+                return art
+            except Exception as e:
+                logger.warning(f"ART 硬件启动失败: {e}")
+                try:
+                    art.close()
+                except Exception:
+                    pass
+        else:
+            logger.warning("Art_DAQ.dll 加载失败 — 硬件不可用")
+
+        # 回退到模拟设备
+        logger.info("回退到 SimulatorDevice (模拟数据)")
+        self._device_type = "simulator"
+        dev = SimulatorDevice()
+        dev.open()
+        dev.configure(self._config)
+        return dev
+
     def start(self):
         """启动所有子系统"""
-        # 1. 初始化设备
-        self.device.open()
-        self.device.configure(self._config)
-        self.device.start_acquisition()
+        # 1. 设备已在 __init__ 时 open + configure + start_acquisition
+        #   (ArtDevice 在 _create_device 中已启动; SimulatorDevice 同理)
+        #    但如果调用 start() 时设备尚未启动，补启一次
+        if not hasattr(self.device, '_running') or not self.device._running:
+            self.device.start_acquisition()
+
+        device_label = "模拟设备" if self._device_type == "simulator" else "ART 采集卡"
         logger.info(
-            f"模拟设备已启动: "
+            f"{device_label} 已启动: "
             f"{len(self._config.channels_enabled)}ch @ "
-            f"{self._config.sample_rate/1e6:.1f}MSa/s"
+            f"{self._config.sample_rate/1e6:.1f}MSa/s, "
+            f"模式={'mock' if self._mock else '硬件'}"
         )
 
         # 2. 启动 asyncio 工作线程 (在 UI 创建之前, 避免 asyncio.run 闪窗)
@@ -130,13 +195,13 @@ class ScopeApp:
     def _on_art_config(self, params: dict, config: DeviceConfig):
         """
         收到 ART 配置变更 → 重建设备。
+
+        策略: 先创建并验证新设备, 成功后再停掉旧设备并切换。
+              如果新设备启动失败, 旧设备继续运行, 不回退到模拟器。
         """
         self._art_params = params
 
-        self._timer.stop()
-        self.device.stop_acquisition()
-        self.device.close()
-
+        # 1. 先创建新设备并验证, 不动旧设备
         new_device = None
         try:
             new_device = ArtDevice(
@@ -156,19 +221,11 @@ class ScopeApp:
 
             new_device.configure(config)
             new_device.start_acquisition()
-            self.device = new_device
-            self._config = config
-            new_device = None  # 成功, 交接所有权
-            logger.info(
-                f"ART 设备已切换: {params['device_name']}/"
-                f"{params['ai_channels']}, "
-                f"{config.sample_rate}Sa/s, "
-                f"{config.record_length}samples"
-            )
+            # 验证能读到数据
+            _ = new_device.read_chunk()
 
         except Exception as e:
-            logger.error(f"ART 设备切换失败: {e}")
-            # 清理失败的 ArtDevice
+            logger.error(f"新设备配置失败, 当前设备不变: {e}")
             if new_device is not None:
                 try:
                     new_device.stop_acquisition()
@@ -178,17 +235,28 @@ class ScopeApp:
                     new_device.close()
                 except Exception:
                     pass
-            # 重启原设备
-            try:
-                self.device = SimulatorDevice()
-                self.device.open()
-                self.device.configure(self._config)
-                self.device.start_acquisition()
-                logger.info("已回退到模拟设备")
-            except Exception as restore_err:
-                logger.error(f"回退模拟设备也失败: {restore_err}")
+            return  # ← 关键: 不碰旧设备, 不回退模拟器
 
-        # 重启 QTimer (可能新配置改变帧时长)
+        # 2. 新设备验证通过 → 停旧换新
+        self._timer.stop()
+        try:
+            self.device.stop_acquisition()
+            self.device.close()
+        except Exception as e:
+            logger.warning(f"关闭旧设备时异常: {e}")
+
+        self.device = new_device
+        self._config = config
+        if hasattr(new_device, '_device_type'):
+            self._device_type = "art"
+        logger.info(
+            f"✅ ART 设备已切换: {params['device_name']}/"
+            f"{params['ai_channels']}, "
+            f"{config.sample_rate}Sa/s, "
+            f"{config.record_length}samples"
+        )
+
+        # 3. 重启 QTimer (可能新配置改变帧时长)
         frame_ms = int(config.record_length / config.sample_rate * 1000)
         self._timer.setInterval(max(frame_ms, 50))
         self._timer.start()
@@ -222,6 +290,10 @@ class ScopeApp:
                 self._async_loop,
             )
 
+            # FINITE 模式: 重新触发等待下一帧
+            if hasattr(self.device, 'rearm'):
+                self.device.rearm()
+
         except Exception as e:
             logger.error(f"采集错误: {e}", exc_info=True)
 
@@ -234,9 +306,24 @@ class ScopeApp:
 def main():
     import sys
 
+    parser = argparse.ArgumentParser(prog="digital-scope", description="多通道数字示波器")
+    parser.add_argument(
+        "-m", "--mock",
+        action="store_true",
+        help="Mock 模式: 使用模拟数据，不连接真实硬件"
+    )
+    args = parser.parse_args()
+
+    if args.mock:
+        logger.info("🟡 启动模式: mock — 使用模拟数据，不连接硬件")
+    else:
+        logger.info("🟢 启动模式: hardware — 连接 ART 采集卡 (添加 --mock 使用模拟数据)")
+
     app = QApplication(sys.argv)
 
-    scope_app = ScopeApp()
+    scope_app = ScopeApp(mock=args.mock)
+
+    # start() 会在 __init__ 中自动完成，此处显式调用确保 timer 等就绪
     scope_app.start()
 
     # 进入 Qt 事件循环

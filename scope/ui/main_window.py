@@ -57,15 +57,15 @@ class MainWindow(QMainWindow):
         uic.loadUi(UI_PATH, self)
 
         # ── 波形视图 (替换 waveformContainer) ──
-        self.waveform = WaveformView(self.waveformContainer, channel_count=4)
+        self.waveform = WaveformView(self.waveformContainer, channel_count=16)
 
         # ── 通道面板 (替换 channelList) ──
-        self.channel_panel = ChannelPanel(channel_count=4)
+        self.channel_panel = ChannelPanel(channel_count=16)
         self._embed_widget(self.tabChannels.layout(), self.channel_panel)
         self.channel_panel.channel_changed.connect(self._on_channel_changed)
 
-        # 初始可见性: 默认打开 CH1/CH2
-        for ch in range(4):
+        # 初始可见性: 默认打开全部通道 (由 ChannelPanel 的复选框控制)
+        for ch in range(16):
             visible = self.channel_panel.is_channel_enabled(ch)
             self.waveform.set_channel_visible(ch, visible)
 

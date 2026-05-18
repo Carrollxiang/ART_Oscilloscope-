@@ -23,12 +23,24 @@ from scope.model.enums import ChannelCoupling, MeasurementId
 
 logger = logging.getLogger(__name__)
 
-# 通道预设颜色
+# 通道预设颜色 (循环使用, 最多支持 32 通道)
 CHANNEL_COLORS = [
-    QColor("#FFFF00"),  # CH1: 黄
-    QColor("#00FFFF"),  # CH2: 青
-    QColor("#FF00FF"),  # CH3: 紫
-    QColor("#00FF00"),  # CH4: 绿
+    QColor("#FFFF00"),  # CH1:  黄
+    QColor("#00FFFF"),  # CH2:  青
+    QColor("#FF00FF"),  # CH3:  紫
+    QColor("#00FF00"),  # CH4:  绿
+    QColor("#FFA500"),  # CH5:  橙
+    QColor("#FF69B4"),  # CH6:  粉
+    QColor("#87CEEB"),  # CH7:  天蓝
+    QColor("#98FB98"),  # CH8:  淡绿
+    QColor("#FFD700"),  # CH9:  金
+    QColor("#DDA0DD"),  # CH10: 梅
+    QColor("#40E0D0"),  # CH11: 碧绿
+    QColor("#FF6347"),  # CH12: 番茄红
+    QColor("#B0C4DE"),  # CH13: 灰蓝
+    QColor("#F0E68C"),  # CH14: 卡其
+    QColor("#C0C0C0"),  # CH15: 银灰
+    QColor("#FFB6C1"),  # CH16: 浅粉
 ]
 
 
@@ -43,7 +55,7 @@ class ChannelPanel(QWidget):
     # 信号: (channel_index, 属性名, 新值)
     channel_changed = pyqtSignal(int, str, object)
 
-    def __init__(self, parent=None, channel_count: int = 4):
+    def __init__(self, parent=None, channel_count: int = 16):
         super().__init__(parent)
 
         self._channel_count = channel_count
@@ -99,7 +111,7 @@ class ChannelPanel(QWidget):
 
         # 启用复选框
         cb = QCheckBox(f"CH{ch + 1}")
-        cb.setChecked(ch < 2)  # 默认前两个通道开启
+        cb.setChecked(True)  # 默认全部通道开启
         cb.setStyleSheet(f"color: {color.name()}; font-weight: bold;")
         cb.toggled.connect(lambda checked, c=ch: self._on_change(c, "enabled", checked))
         layout.addWidget(cb)

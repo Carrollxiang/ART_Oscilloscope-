@@ -28,7 +28,7 @@ class ScopeConfig:
     # 设备参数
     device: dict = field(default_factory=lambda: {
         "device_name": "Dev42",
-        "ai_channels": "ai0:3",
+        "ai_channels": "ai0:15",
         "terminal_config": "NRSE",
         "min_val": -10.0,
         "max_val": 10.0,
@@ -83,7 +83,7 @@ class ConfigManager:
             d = dp.get_config()
             cfg.device.update({
                 "device_name": p.get("device_name", "Dev42"),
-                "ai_channels": p.get("ai_channels", "ai0:3"),
+                "ai_channels": p.get("ai_channels", "ai0:15"),
                 "terminal_config": p.get("terminal_config", "NRSE"),
                 "min_val": p.get("min_val", -10.0),
                 "max_val": p.get("max_val", 10.0),
@@ -125,7 +125,7 @@ class ConfigManager:
         try:
             dp = main_win.device_panel
             dp.editDeviceName.setText(cfg.device.get("device_name", "Dev42"))
-            dp.editAiChannels.setText(cfg.device.get("ai_channels", "ai0:3"))
+            dp.editAiChannels.setText(cfg.device.get("ai_channels", "ai0:15"))
 
             term = cfg.device.get("terminal_config", "NRSE")
             for i in range(dp.cmbTerminal.count()):

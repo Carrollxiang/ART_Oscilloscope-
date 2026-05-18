@@ -77,7 +77,7 @@ class DevicePanel(QWidget):
         g1 = QGroupBox("设备")
         f1 = QFormLayout(g1)
         self.editDeviceName = QLineEdit("Dev42")
-        self.editAiChannels = QLineEdit("ai0:3")
+        self.editAiChannels = QLineEdit("ai0:15")
         f1.addRow("设备名", self.editDeviceName)
         f1.addRow("AI 通道", self.editAiChannels)
         left_col.addWidget(g1)
@@ -104,10 +104,9 @@ class DevicePanel(QWidget):
                         self.cmbTrigSlope.setEnabled(on),
                         self.spinTrigLevel.setEnabled(on))
         )
-        self.chkTrig.setChecked(False)
-        self.editTrigSrc.setEnabled(False)
-        self.cmbTrigSlope.setEnabled(False)
-        self.spinTrigLevel.setEnabled(False)
+        self.chkTrig.setChecked(True)
+        self.editTrigSrc.setText("ai12")
+        self.spinTrigLevel.setValue(1.0)
         left_col.addWidget(g3)
 
         # ── 右: 采集参数 ──
@@ -137,7 +136,7 @@ class DevicePanel(QWidget):
         f2.addRow("读取超时", self.spinTimeout)
         self.spinSampleRate = QSpinBox()
         self.spinSampleRate.setRange(100, 250_000)
-        self.spinSampleRate.setValue(10_000)
+        self.spinSampleRate.setValue(30_000)
         self.spinSampleRate.setSuffix(" Sa/s")
         f2.addRow("采样率", self.spinSampleRate)
         dur = QHBoxLayout()
@@ -275,16 +274,29 @@ class DevicePanel(QWidget):
     def get_config(self) -> DeviceConfig:
         rate = self.spinSampleRate.value()
         samples = int(rate * self.spinDuration.value())
+        # 从 ai_channels 解析实际通道数
+        ch_str = self.editAiChannels.text()
+        if ":" in ch_str:
+            parts = ch_str.split(":")[-1]
+            try:
+                end = int(parts)
+                start_str = ch_str.split(":")[0]
+                start = int(''.join(c for c in start_str if c.isdigit()) or 0)
+                n_ch = end - start + 1
+            except ValueError:
+                n_ch = 4
+        else:
+            n_ch = 4
         return DeviceConfig(
             sample_rate=rate,
             record_length=max(samples, 10),
-            channels_enabled=[0, 1, 2, 3],
+            channels_enabled=list(range(n_ch)),
         )
 
     def load_params(self, params: dict):
         """从现有设备参数回填。"""
         self.editDeviceName.setText(params.get("device_name", "Dev42"))
-        self.editAiChannels.setText(params.get("ai_channels", "ai0:3"))
+        self.editAiChannels.setText(params.get("ai_channels", "ai0:15"))
 
         term = params.get("terminal_config", "NRSE")
         for i in range(self.cmbTerminal.count()):
@@ -295,7 +307,7 @@ class DevicePanel(QWidget):
         self.spinMinVal.setValue(params.get("min_val", -10.0))
         self.spinMaxVal.setValue(params.get("max_val", 10.0))
         self.spinTimeout.setValue(params.get("read_timeout", 5.0))
-        self.spinSampleRate.setValue(params.get("sample_rate", 10_000))
+        self.spinSampleRate.setValue(params.get("sample_rate", 30_000))
         self.spinDuration.setValue(params.get("duration", 0.5))
         self._update_samples()
 

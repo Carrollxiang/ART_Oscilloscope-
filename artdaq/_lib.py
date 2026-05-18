@@ -5,6 +5,7 @@ from __future__ import unicode_literals
 
 import ctypes
 from numpy.ctypeslib import ndpointer
+import os
 import platform
 import six
 import sys
@@ -193,6 +194,11 @@ class DaqLibImporter(object):
 
             if sys.version_info < (3,):
                 lib_name = lib_name.encode('ascii')
+
+            # 将 ART 采集卡 DLL 目录加入搜索路径
+            dll_dir = r"C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64"
+            if os.path.isdir(dll_dir):
+                os.add_dll_directory(dll_dir)
 
             if 'iron' in platform.python_implementation().lower():
                 windll = ctypes.windll.Art_DAQ

@@ -24,8 +24,8 @@ from scope.model import TriggerInfo
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEVICE = "Dev42"
-DEFAULT_AI_CHANNELS = "ai0:3"
-DEFAULT_RATE = 10_000
+DEFAULT_AI_CHANNELS = "ai0:15"
+DEFAULT_RATE = 30_000
 DEFAULT_SAMPLES = 5000
 DEFAULT_TIMEOUT = 5.0
 
@@ -45,8 +45,8 @@ class ArtDevice(AcquisitionDevice):
         terminal_config: str = "NRSE",
         min_val: float = -10.0,
         max_val: float = 10.0,
-        trigger_source: str = "",
-        trigger_level: float = 0.0,
+        trigger_source: str = "ai12",
+        trigger_level: float = 1.0,
         trigger_slope: str = "rising",
     ):
         super().__init__()
@@ -148,7 +148,7 @@ class ArtDevice(AcquisitionDevice):
                 max_val=self._max_val,
             )
 
-            # 2. 采样时钟
+            # 2. 采样时钟 — 有限点采集，由硬件触发或 QTimer 驱动
             task.timing.cfg_samp_clk_timing(
                 rate=cfg.sample_rate,
                 sample_mode=self._AcquisitionType.FINITE,
@@ -272,6 +272,24 @@ class ArtDevice(AcquisitionDevice):
             ),
             channels=channels,
         )
+
+    def rearm(self):
+        """
+        重新触发采集 (FINITE 模式)。
+
+        在有限采集模式下，每帧采集完成后 Task 自动停止。
+        调用 rearm() 重新启动 Task，等待下一次硬件触发。
+        """
+        if self._task is None or not self._running:
+            return
+        try:
+            self._task.stop()
+        except Exception:
+            pass
+        try:
+            self._task.start()
+        except Exception as e:
+            logger.warning(f"rearm 失败: {e}")
 
     # ── 配置 ───────────────────────────────────────────────────
 

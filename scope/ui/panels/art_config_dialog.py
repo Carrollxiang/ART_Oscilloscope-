@@ -292,7 +292,7 @@ class ArtConfigDialog(QDialog):
         """用现有参数回填 UI。"""
         p = self._params
         self.editDeviceName.setText(p.get("device_name", "Dev42"))
-        self.editAiChannels.setText(p.get("ai_channels", "ai0:3"))
+        self.editAiChannels.setText(p.get("ai_channels", "ai0:15"))
 
         term = p.get("terminal_config", "NRSE")
         for i in range(self.cmbTerminal.count()):
@@ -375,7 +375,7 @@ class ArtConfigDialog(QDialog):
         return self.cmbSampleMode.currentData()
 
     def _parse_channel_count(self) -> int:
-        """从 ai_channels 字符串解析通道数, 如 ai0:3 → 4。"""
+        """从 ai_channels 字符串解析通道数, 如 "ai0:15" → 16。"""
         ch_str = self.editAiChannels.text()
         if ":" in ch_str:
             parts = ch_str.split(":")[-1]
