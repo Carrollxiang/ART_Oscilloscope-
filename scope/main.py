@@ -206,10 +206,15 @@ class ScopeApp:
         old_device = self.device
         old_config = self._config
 
-        # 1. 停掉旧设备 + 定时器 (释放硬件, 让新设备能创建 Task)
+        # 1. 停掉旧设备 + 关闭 Task 句柄 (释放硬件, 让新设备能创建 Task)
         self._timer.stop()
         try:
             old_device.stop_acquisition()
+        except Exception:
+            pass
+        # 必须关闭 Task 句柄, 否则 NI-DAQmx 仍视设备为 reserved
+        try:
+            old_device._close_task()
         except Exception:
             pass
 
