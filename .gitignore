@@ -21,5 +21,8 @@ env/
 .DS_Store
 Thumbs.db
 
+# Logs
+*.log
+
 # Test artifact
 test_hardware.py
