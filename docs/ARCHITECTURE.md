@@ -341,10 +341,11 @@ class AnalysisResult:
 ```
 
 **关键特性**:
-- 采集由 **QTimer + FINITE 模式** 驱动, 非独立线程
+- 采集由 **QTimer + FINITE 模式** 驱动, 非独立线程 (v0.2 过渡方案)
 - 硬件触发信号到来 → Task 采集完成 → QTimer 读取 → 处理 → rearm
 - 每次触发产生一帧完整数据 (如 30k Sa/s × 0.5s = 15000 点)
 - 反馈的"周期"由 QTimer 频率 (500ms) 决定, 但数据量由触发频率决定
+- **后续目标**: 引入 qasync 将 QTimer 替换为 asyncio 协程, 采集/UI/网络统一事件循环
 
 ---
 
@@ -512,35 +513,61 @@ FeedbackManager.dispatch()        ← asyncio context
 
 ### 事件循环集成
 
-当前架构: **纯 PyQt6 事件循环** (不依赖 qasync), 采集由 QTimer 驱动。
-asyncio loop 用于 feedback dispatch, 在独立线程中运行 (`_async_worker`)。
+**目标架构**: 使用 **qasync** 桥接 PyQt 事件循环和 asyncio, 使采集、UI、网络 I/O 统一在同一个事件循环中。
+
+```python
+import qasync
+
+async def main():
+    app = QApplication(sys.argv)
+    device = SimulatorDevice()
+    pipeline = ProcessingPipeline()
+    feedback_mgr = FeedbackManager()
+    main_win = MainWindow()
+
+    slot = RpycFeedbackSlot(RpycSlotConfig(
+        slot_id="to-scope2",
+        host="192.168.1.100", port=18861,
+        subscriptions=[DataSubscription("CH1_Vpp")],
+    ))
+    await feedback_mgr.add_slot(slot)
+
+    device.on_acquisition_complete.connect(
+        lambda result: pipeline.process(result, callback=lambda processed:
+            feedback_mgr.dispatch(processed)
+        )
+    )
+
+    with qasync.QApplicationExecutor(app):
+        await asyncio.gather(
+            device.start(),
+            main_win.show()
+        )
+
+qasync.run(main())
+```
+
+**当前实现 (v0.2 过渡方案)**: 纯 PyQt6 事件循环 + 独立 asyncio 线程, 未使用 qasync。
+qasync 将在后续版本引入, 届时 QTimer 驱动改为 asyncio 协程驱动。
 
 ```python
 def start(self):
-    # 1. 设备已在 __init__ 时初始化
-    # 2. asyncio loop 在独立线程运行 (feedback dispatch)
     async_thread = threading.Thread(target=self._async_worker, daemon=True)
     async_thread.start()
-
-    # 3. 主窗口
     self.main_win = MainWindow(...)
     self.main_win.show()
-
-    # 4. QTimer 驱动采集
     self._timer = QTimer()
-    self._timer.setInterval(500)  # 0.5s/帧
+    self._timer.setInterval(500)
     self._timer.timeout.connect(self._on_timer_tick)
     self._timer.start()
 
 def _on_timer_tick(self):
-    # 阻塞读取 → pipeline → UI 刷新 → dispatch → rearm
     chunk = self.device.read_chunk()
     result = self.device.make_analysis_result(chunk)
     result = self._pipeline.process(result)
     self.main_win.data_received.emit(result)
     asyncio.run_coroutine_threadsafe(
-        self.feedback_mgr.dispatch(result),
-        self._async_loop,
+        self.feedback_mgr.dispatch(result), self._async_loop,
     )
     self.device.rearm()
 
