@@ -116,19 +116,6 @@ class DevicePanel(QWidget):
         for code, label in self.TERMINAL_MODES:
             self.cmbTerminal.addItem(label, code)
         f2.addRow("接地方式", self.cmbTerminal)
-        vr = QHBoxLayout()
-        self.spinMinVal = QDoubleSpinBox()
-        self.spinMinVal.setRange(-100, 0)
-        self.spinMinVal.setValue(-10.0)
-        self.spinMinVal.setSuffix(" V")
-        self.spinMaxVal = QDoubleSpinBox()
-        self.spinMaxVal.setRange(0, 100)
-        self.spinMaxVal.setValue(10.0)
-        self.spinMaxVal.setSuffix(" V")
-        vr.addWidget(self.spinMinVal)
-        vr.addWidget(QLabel("~"))
-        vr.addWidget(self.spinMaxVal)
-        f2.addRow("电压量程", vr)
         self.spinTimeout = QDoubleSpinBox()
         self.spinTimeout.setRange(0.1, 60.0)
         self.spinTimeout.setValue(5.0)
@@ -262,8 +249,6 @@ class DevicePanel(QWidget):
             "device_name": self.editDeviceName.text(),
             "ai_channels": self.editAiChannels.text(),
             "terminal_config": self.cmbTerminal.currentData(),
-            "min_val": self.spinMinVal.value(),
-            "max_val": self.spinMaxVal.value(),
             "read_timeout": self.spinTimeout.value(),
             "trigger_source": self.editTrigSrc.text()
                               if self.chkTrig.isChecked() else "",
@@ -304,8 +289,6 @@ class DevicePanel(QWidget):
                 self.cmbTerminal.setCurrentIndex(i)
                 break
 
-        self.spinMinVal.setValue(params.get("min_val", -10.0))
-        self.spinMaxVal.setValue(params.get("max_val", 10.0))
         self.spinTimeout.setValue(params.get("read_timeout", 5.0))
         self.spinSampleRate.setValue(params.get("sample_rate", 30_000))
         self.spinDuration.setValue(params.get("duration", 0.5))

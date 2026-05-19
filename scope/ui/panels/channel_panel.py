@@ -64,16 +64,16 @@ class ChannelPanel(QWidget):
         self._build_channel_rows()
 
     def _build_channel_rows(self):
-        """为每个通道创建控制行 (放入 QScrollArea)"""
+        """为每个通道创建控制行 (两列网格, 高信息密度)"""
         from PyQt6.QtWidgets import QVBoxLayout as VBoxLayout
-        from PyQt6.QtWidgets import QScrollArea
+        from PyQt6.QtWidgets import QGridLayout, QScrollArea
 
         # 创建主布局
         self.setLayout(VBoxLayout())
         lay = self.layout()
 
         # 标题
-        title = QLabel("通道开关 / 垂直档位 / 耦合 / 探头比")
+        title = QLabel("通道开关 / 电压量程 (±V)")
         title.setStyleSheet("color: #888; font-size: 11px; padding: 2px;")
         lay.addWidget(title)
 
@@ -84,18 +84,17 @@ class ChannelPanel(QWidget):
         scroll.setStyleSheet("QScrollArea { border: none; }")
 
         container = QWidget()
-        container_layout = VBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(4)
+        grid = QGridLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(2)
 
         for ch in range(self._channel_count):
-            row = self._create_channel_row(ch)
-            self._controls.append(row)
+            row_data = self._create_channel_row(ch)
+            self._controls.append(row_data)
             w = QWidget()
-            w.setLayout(row["layout"])
-            container_layout.addWidget(w)
+            w.setLayout(row_data["layout"])
+            grid.addWidget(w, ch // 2, ch % 2)  # 2列网格
 
-        container_layout.addStretch()
         scroll.setWidget(container)
         lay.addWidget(scroll, stretch=1)
 
