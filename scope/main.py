@@ -49,11 +49,13 @@ class ScopeApp:
         self._running = False
         self._device_type = "unknown"
 
-        # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧)
+        # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧, ±10V)
         self._config = DeviceConfig(
             sample_rate=30_000,      # 上限 31250 Sa/s
             record_length=15000,     # 30k × 0.5s = 15000
             channels_enabled=list(range(16)),
+            channel_min_vals=[-10.0] * 16,
+            channel_max_vals=[10.0] * 16,
         )
 
         # 信号处理管道 (16 通道)

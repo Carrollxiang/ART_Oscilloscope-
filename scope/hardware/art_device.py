@@ -144,8 +144,7 @@ class ArtDevice(AcquisitionDevice):
             task = self._artdaq.Task()
             self._task = task
 
-            # 1. 添加 AI 电压通道
-            ch_str = f"{self._device_name}/{self._ai_channels}"
+            # 1. 添加 AI 电压通道 (逐通道设置独立量程)
             term_cfg = self._terminal_config.upper()
             term_map = {
                 "DEFAULT": self._TerminalConfiguration.DEFAULT,
@@ -154,12 +153,23 @@ class ArtDevice(AcquisitionDevice):
                 "DIFFERENTIAL": self._TerminalConfiguration.DIFFERENTIAL,
                 "PSEUDODIFFERENTIAL": self._TerminalConfiguration.PSEUDODIFFERENTIAL,
             }
-            task.ai_channels.add_ai_voltage_chan(
-                ch_str,
-                terminal_config=term_map.get(term_cfg, self._TerminalConfiguration.NRSE),
-                min_val=self._min_val,
-                max_val=self._max_val,
-            )
+            term = term_map.get(term_cfg, self._TerminalConfiguration.NRSE)
+            n_ch = len(cfg.channels_enabled)
+
+            # 确保量程数组长度匹配
+            while len(cfg.channel_min_vals) < n_ch:
+                cfg.channel_min_vals.append(-10.0)
+            while len(cfg.channel_max_vals) < n_ch:
+                cfg.channel_max_vals.append(10.0)
+
+            for ch_idx in cfg.channels_enabled:
+                ch = f"{self._device_name}/ai{ch_idx}"
+                task.ai_channels.add_ai_voltage_chan(
+                    ch,
+                    terminal_config=term,
+                    min_val=cfg.channel_min_vals[ch_idx],
+                    max_val=cfg.channel_max_vals[ch_idx],
+                )
 
             # 2. 采样时钟 — 有限点采集，由硬件触发或 QTimer 驱动
             task.timing.cfg_samp_clk_timing(
@@ -276,13 +286,13 @@ class ArtDevice(AcquisitionDevice):
         channels = {}
         for ch_idx in range(n_ch):
             name = f"CH{ch_idx + 1}"
-            vr = cfg.vertical_ranges[ch_idx] if ch_idx < len(cfg.vertical_ranges) else 5.0
+            max_val = cfg.channel_max_vals[ch_idx] if ch_idx < len(cfg.channel_max_vals) else 10.0
             channels[name] = ChannelData(
                 raw=chunk[ch_idx].copy(),
                 time_axis=t.copy(),
                 sample_rate=fs,
                 resolution=self._info.resolution_bits,
-                vertical_scale=vr,
+                vertical_scale=max_val,
                 vertical_offset=0.0,
                 enabled=ch_idx in cfg.channels_enabled,
             )

@@ -239,9 +239,7 @@ class MainWindow(QMainWindow):
         logger.debug(f"通道 CH{ch+1} {key} → {value}")
 
         if key == "enabled":
-            # 切换波形显示/隐藏
             self.waveform.set_channel_visible(ch, bool(value))
-        # TODO: scale/coupling/probe 更新设备配置
 
     def _embed_widget(self, layout, widget):
         """将 widget 填入指定 layout"""

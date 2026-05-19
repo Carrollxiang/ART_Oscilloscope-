@@ -20,6 +20,8 @@ class DeviceConfig:
     sample_rate: float = 1_000_000       # 采样率 (Sa/s)
     channels_enabled: list[int] = field(default_factory=lambda: [0, 1, 2, 3])
     vertical_ranges: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 5.0])
+    channel_min_vals: list[float] = field(default_factory=lambda: [-10, -10, -10, -10])
+    channel_max_vals: list[float] = field(default_factory=lambda: [10, 10, 10, 10])
     trigger_source: int = 0
     trigger_level: float = 0.0
     trigger_slope: str = "rising"

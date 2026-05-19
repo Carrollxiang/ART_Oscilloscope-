@@ -100,7 +100,7 @@ class ChannelPanel(QWidget):
         lay.addWidget(scroll, stretch=1)
 
     def _create_channel_row(self, ch: int) -> dict:
-        """创建单个通道的控制行"""
+        """创建单个通道的控制行: [☑ CH1] [最小 -10V] [最大 10V]"""
         from PyQt6.QtWidgets import QHBoxLayout
 
         layout = QHBoxLayout()
@@ -116,39 +116,38 @@ class ChannelPanel(QWidget):
         cb.toggled.connect(lambda checked, c=ch: self._on_change(c, "enabled", checked))
         layout.addWidget(cb)
 
-        # V/div
-        scale = QDoubleSpinBox()
-        scale.setSuffix(" V/div")
-        scale.setDecimals(1)
-        scale.setRange(0.01, 10.0)
-        scale.setValue(1.0)
-        scale.setSingleStep(0.5)
-        scale.valueChanged.connect(lambda v, c=ch: self._on_change(c, "scale", v))
-        layout.addWidget(scale)
+        # 最小电压
+        from PyQt6.QtWidgets import QLabel as Lbl
+        layout.addWidget(Lbl(" 最小"))
+        min_val = QDoubleSpinBox()
+        min_val.setRange(-100.0, 100.0)
+        min_val.setValue(-10.0)
+        min_val.setSuffix(" V")
+        min_val.setSingleStep(1.0)
+        min_val.setDecimals(1)
+        min_val.setFixedWidth(100)
+        min_val.valueChanged.connect(lambda v, c=ch: self._on_change(c, "min_val", v))
+        layout.addWidget(min_val)
 
-        # 耦合
-        coupling = QComboBox()
-        coupling.addItems(["DC", "AC", "GND"])
-        coupling.currentTextChanged.connect(
-            lambda t, c=ch: self._on_change(c, "coupling", t.lower())
-        )
-        layout.addWidget(coupling)
+        # 最大电压
+        layout.addWidget(Lbl("最大"))
+        max_val = QDoubleSpinBox()
+        max_val.setRange(-100.0, 100.0)
+        max_val.setValue(10.0)
+        max_val.setSuffix(" V")
+        max_val.setSingleStep(1.0)
+        max_val.setDecimals(1)
+        max_val.setFixedWidth(100)
+        max_val.valueChanged.connect(lambda v, c=ch: self._on_change(c, "max_val", v))
+        layout.addWidget(max_val)
 
-        # 探头比
-        probe = QDoubleSpinBox()
-        probe.setSuffix("X")
-        probe.setDecimals(1)
-        probe.setRange(0.1, 1000.0)
-        probe.setValue(1.0)
-        probe.valueChanged.connect(lambda v, c=ch: self._on_change(c, "probe", v))
-        layout.addWidget(probe)
+        layout.addStretch()
 
         return {
             "layout": layout,
             "enable": cb,
-            "scale": scale,
-            "coupling": coupling,
-            "probe": probe,
+            "min_val": min_val,
+            "max_val": max_val,
             "color": color,
         }
 
@@ -163,20 +162,15 @@ class ChannelPanel(QWidget):
             return self._controls[ch]["enable"].isChecked()
         return False
 
-    def get_channel_scale(self, ch: int) -> float:
+    def get_channel_min_val(self, ch: int) -> float:
         if ch < len(self._controls):
-            return self._controls[ch]["scale"].value()
-        return 1.0
+            return self._controls[ch]["min_val"].value()
+        return -10.0
 
-    def get_channel_coupling(self, ch: int) -> str:
+    def get_channel_max_val(self, ch: int) -> float:
         if ch < len(self._controls):
-            return self._controls[ch]["coupling"].currentText().lower()
-        return "dc"
-
-    def get_channel_probe(self, ch: int) -> float:
-        if ch < len(self._controls):
-            return self._controls[ch]["probe"].value()
-        return 1.0
+            return self._controls[ch]["max_val"].value()
+        return 10.0
 
     def get_channel_color(self, ch: int) -> QColor:
         if ch < len(self._controls):
@@ -186,3 +180,13 @@ class ChannelPanel(QWidget):
     @property
     def channel_count(self) -> int:
         return self._channel_count
+
+    def get_all_channel_ranges(self) -> tuple[list[float], list[float]]:
+        """返回 (min_vals, max_vals) 各通道电压量程列表。"""
+        min_vals = []
+        max_vals = []
+        for ch in range(self._channel_count):
+            ctrl = self._controls[ch]
+            min_vals.append(ctrl["min_val"].value())
+            max_vals.append(ctrl["max_val"].value())
+        return min_vals, max_vals
