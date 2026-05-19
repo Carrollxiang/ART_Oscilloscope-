@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import collections
 import logging
 from typing import Optional
 
@@ -68,6 +69,7 @@ class MeasurementRow(QWidget):
         self._meas_key = meas_key
         self._on_remove = on_remove
         self._frame_duration = frame_duration
+        self._value_buffer = collections.deque(maxlen=200)  # ~100s @ 2 Hz
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 3, 0, 3)
@@ -116,17 +118,11 @@ class MeasurementRow(QWidget):
         self.end_spin.setFixedWidth(90)
         layout.addWidget(self.end_spin)
 
-        # 当前值
+        # 值 + 标准差 + 单位
         self.value_label = QLabel("—")
         self.value_label.setStyleSheet("font-weight: bold; font-size: 13px;")
-        self.value_label.setMinimumWidth(90)
-        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.value_label.setMinimumWidth(160)
         layout.addWidget(self.value_label)
-
-        # 单位
-        self.unit_label = QLabel(self._unit_of(meas_key))
-        self.unit_label.setStyleSheet("color: #888;")
-        layout.addWidget(self.unit_label)
 
         # 删除
         if on_remove:
@@ -206,12 +202,21 @@ class MeasurementRow(QWidget):
         return func(segment, fs)
 
     def update_value(self, result: AnalysisResult):
-        """用一帧数据计算并显示当前值"""
+        """用一帧数据计算并显示当前值 ± 标准差"""
         value = self.compute_value(result)
-        if value is not None:
-            self.value_label.setText(self._fmt(value))
+        unit = self._unit_of(self.get_meas_key())
+        if value is not None and not np.isnan(value):
+            self._value_buffer.append(value)
+            if len(self._value_buffer) >= 5:
+                vals = np.array(list(self._value_buffer))
+                std = np.std(vals)
+                self.value_label.setText(
+                    f"{self._fmt(value)}  ±{self._fmt(std)} {unit}"
+                )
+            else:
+                self.value_label.setText(f"{self._fmt(value)} {unit}")
         else:
-            self.value_label.setText("—")
+            self.value_label.setText(f"— {unit}")
 
     @staticmethod
     def _fmt(v: float) -> str:
