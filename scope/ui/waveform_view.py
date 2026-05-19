@@ -95,7 +95,7 @@ class WaveformView:
             brush=(30, 30, 30, 200),
             pen=(100, 100, 100),
             labelTextColor=(220, 220, 220),
-            columnCount=2,
+            colCount=2,
         )
         self._legend.setParentItem(self.plot_widget.plotItem.vb)
         self._legend.anchor((1, 0), (1, 0), (10, 10))
@@ -171,10 +171,13 @@ class WaveformView:
 
     # ── 图例点击 ──────────────────────────────────────────────
 
-    def _on_legend_sample_clicked(self, legend_item, sample):
+    def _on_legend_sample_clicked(self, item):
         """图例点击回调: 切换对应通道的显隐。"""
+        # item 是 (sample_curve, label) 元组, sigSampleClicked 发单个 LegendItem
+        # 但 pyqtgraph 实际发的是被点击的 sample 曲线对象
+        curve = item[0] if isinstance(item, tuple) else item
         for ch, c in self._curves.items():
-            if c is sample:
+            if c is curve:
                 new_visible = not self._visible.get(ch, False)
                 self.set_channel_visible(ch, new_visible)
                 if self._on_visible_changed:
