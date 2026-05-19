@@ -79,7 +79,7 @@ class WaveformView:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(self.plot_widget)
 
-        # 创建各通道曲线 + 图例
+        # 创建各通道曲线
         for ch in range(channel_count):
             color = CHANNEL_COLORS[ch % len(CHANNEL_COLORS)]
             pen = pg.mkPen(color=color, width=1.5)
@@ -88,16 +88,17 @@ class WaveformView:
             curve.hide()
             self._curves[ch] = curve
 
-        # 图例 (右上角)
+        # ── 图例 (2列, 右上角) ──
         self._legend = pg.LegendItem(
-            size=(80, 100),
-            offset=(70, 10),
+            size=(120, 20),
+            offset=(10, 10),
             brush=(30, 30, 30, 200),
             pen=(100, 100, 100),
             labelTextColor=(220, 220, 220),
+            columnCount=2,
         )
         self._legend.setParentItem(self.plot_widget.plotItem.vb)
-        self._legend.anchor((1, 0), (1, 0), (10, 10))  # 右上角
+        self._legend.anchor((1, 0), (1, 0), (10, 10))
         self._legend.setZValue(100)
         for ch in range(channel_count):
             curve = self._curves[ch]
@@ -116,14 +117,14 @@ class WaveformView:
         self.plot_widget.setMouseEnabled(y=False)
 
         # 可见性状态 (与 ChannelPanel 同步)
-        self._visible: dict[int, bool] = {ch: False for ch in range(channel_count)}
+        self._visible: dict[int, bool] = {ch: True for ch in range(channel_count)}
         self._on_visible_changed: Optional[Callable[[int, bool], None]] = None
 
-        # 点击图例切换可见性
-        self._legend.mousePressEvent = self._on_legend_click
         self._update_legend_appearance()
+        # 图例点击: 使用 pyqtgraph 内置回调
+        self._legend.sigSampleClicked.connect(self._on_legend_sample_clicked)
 
-        logger.info("WaveformView 已创建 (带图例)")
+        logger.info("WaveformView 已创建 (2列图例)")
 
     # ── 波形数据 ───────────────────────────────────────────────
 
@@ -170,25 +171,15 @@ class WaveformView:
 
     # ── 图例点击 ──────────────────────────────────────────────
 
-    def _on_legend_click(self, ev):
-        """图例点击事件: 切换对应通道的显隐。"""
-        pos = ev.pos()
-        item_height = 20
-        y_offset = 5
-
-        for ch in range(self._channel_count):
-            y_start = y_offset + ch * item_height
-            y_end = y_start + item_height
-            if y_start <= pos.y() <= y_end:
+    def _on_legend_sample_clicked(self, legend_item, sample):
+        """图例点击回调: 切换对应通道的显隐。"""
+        for ch, c in self._curves.items():
+            if c is sample:
                 new_visible = not self._visible.get(ch, False)
                 self.set_channel_visible(ch, new_visible)
-                self._update_legend_appearance()
                 if self._on_visible_changed:
                     self._on_visible_changed(ch, new_visible)
-                ev.accept()
                 return
-
-        pg.LegendItem.mousePressEvent(self._legend, ev)
 
     # ── 可见性控制 ────────────────────────────────────────────
 

@@ -61,8 +61,8 @@ class MeasurementRow(QWidget):
                  channel: str = "CH1",
                  meas_key: str = "Vpp",
                  start_time: float = 0.0,
-                 end_time: float = 0.01,
-                 frame_duration: float = 0.01,
+                 end_time: float = 500.0,
+                 frame_duration: float = 500.0,
                  on_remove=None):
         super().__init__(parent)
         self._meas_key = meas_key
@@ -70,19 +70,20 @@ class MeasurementRow(QWidget):
         self._frame_duration = frame_duration
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setContentsMargins(0, 3, 0, 3)
+        layout.setSpacing(6)
 
         # 名称
         self.name_edit = QLineEdit(name)
         self.name_edit.setPlaceholderText("名称")
-        self.name_edit.setMaximumWidth(100)
+        self.name_edit.setFixedWidth(80)
         layout.addWidget(self.name_edit)
 
         # 通道
         self.channel_combo = QComboBox()
         self.channel_combo.addItems(CHANNELS)
         self.channel_combo.setCurrentText(channel)
-        self.channel_combo.setMinimumWidth(55)
+        self.channel_combo.setFixedWidth(65)
         layout.addWidget(self.channel_combo)
 
         # 测量项
@@ -92,27 +93,27 @@ class MeasurementRow(QWidget):
         idx = next((i for i, (k, _, _) in enumerate(MEASUREMENT_TYPES)
                     if k == meas_key), 0)
         self.meas_combo.setCurrentIndex(idx)
-        self.meas_combo.setMinimumWidth(110)
+        self.meas_combo.setFixedWidth(120)
         layout.addWidget(self.meas_combo)
 
-        # 起始时间
+        # 起始时间 (ms)
         self.start_spin = QDoubleSpinBox()
-        self.start_spin.setDecimals(4)
-        self.start_spin.setRange(0.0, 999.9)
-        self.start_spin.setSuffix(" s")
+        self.start_spin.setDecimals(1)
+        self.start_spin.setRange(0.0, 60_000.0)
+        self.start_spin.setSuffix(" ms")
         self.start_spin.setValue(start_time)
-        self.start_spin.setSingleStep(0.001)
-        self.start_spin.setMaximumWidth(90)
+        self.start_spin.setSingleStep(10.0)
+        self.start_spin.setFixedWidth(90)
         layout.addWidget(self.start_spin)
 
-        # 结束时间
+        # 结束时间 (ms)
         self.end_spin = QDoubleSpinBox()
-        self.end_spin.setDecimals(4)
-        self.end_spin.setRange(0.0001, 999.9)
-        self.end_spin.setSuffix(" s")
+        self.end_spin.setDecimals(1)
+        self.end_spin.setRange(0.1, 60_000.0)
+        self.end_spin.setSuffix(" ms")
         self.end_spin.setValue(end_time)
-        self.end_spin.setSingleStep(0.001)
-        self.end_spin.setMaximumWidth(90)
+        self.end_spin.setSingleStep(10.0)
+        self.end_spin.setFixedWidth(90)
         layout.addWidget(self.end_spin)
 
         # 当前值
@@ -130,7 +131,7 @@ class MeasurementRow(QWidget):
         # 删除
         if on_remove:
             btn = QPushButton("✕")
-            btn.setFixedSize(24, 24)
+            btn.setFixedSize(22, 22)
             btn.setStyleSheet(
                 "QPushButton { color: #FF4444; border: none; }"
                 "QPushButton:hover { background: #442222; }"
@@ -180,9 +181,9 @@ class MeasurementRow(QWidget):
         fs = ch_data.sample_rate
         meas_key = self.get_meas_key()
 
-        # 时间窗口 → 样本范围
-        start_t = self.get_start_time()
-        end_t = self.get_end_time()
+        # 时间窗口 (ms → s) → 样本范围
+        start_t = self.get_start_time() / 1000.0
+        end_t = self.get_end_time() / 1000.0
         if end_t <= start_t:
             return None
 
@@ -239,10 +240,10 @@ class MeasurementPanel:
         self._last_result: Optional[AnalysisResult] = None
         self._setup_ui()
 
-        # 默认行 (0.5s 帧)
-        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=0.5)
-        self.add_row(name="CH1 频率", meas_key="Freq", end_time=0.5)
-        self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=0.5)
+        # 默认行 (500ms 帧)
+        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=500)
+        self.add_row(name="CH1 频率", meas_key="Freq", end_time=500)
+        self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=500)
 
     def _setup_ui(self):
         # 获取或创建布局, 清空子控件
@@ -258,7 +259,7 @@ class MeasurementPanel:
                     item.widget().deleteLater()
 
         # 标题
-        title = QLabel("测量项 (名称 / 通道 / 测量项 / 起始时间 / 结束时间)")
+        title = QLabel("测量项 (名称 / 通道 / 测量 / 起始~结束 ms)")
         title.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(title)
 
@@ -288,12 +289,12 @@ class MeasurementPanel:
 
     def add_row(self, name: str = "", channel: str = "CH1",
                 meas_key: str = "Vpp",
-                start_time: float = 0.0, end_time: float = 0.5):
-        frame_dur = 0.01
+                start_time: float = 0.0, end_time: float = 500.0):
+        frame_dur = 500.0
         if self._last_result:
             ch = self._last_result.channels.get(channel)
             if ch:
-                frame_dur = ch.time_axis[-1] if len(ch.time_axis) > 0 else 0.01
+                frame_dur = ch.time_axis[-1] * 1000 if len(ch.time_axis) > 0 else 500.0
 
         row = MeasurementRow(
             name=name, channel=channel, meas_key=meas_key,
