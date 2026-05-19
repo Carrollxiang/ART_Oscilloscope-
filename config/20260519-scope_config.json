@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "device": {
+    "device_name": "Dev42",
+    "ai_channels": "ai0:15",
+    "terminal_config": "NRSE",
+    "min_val": -10.0,
+    "max_val": 10.0,
+    "read_timeout": 5.0,
+    "sample_rate": 30000,
+    "duration": 0.5,
+    "sample_mode": "FINITE",
+    "trigger_source": "ai12",
+    "trigger_slope": "rising",
+    "trigger_level": 1.0
+  },
+  "channels": {
+    "enabled": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "scales": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "couplings": [
+      "dc",
+      "dc",
+      "dc",
+      "dc"
+    ],
+    "probes": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "measurements": [
+    {
+      "name": "CH1 幅值",
+      "channel": "CH1",
+      "meas_key": "Vavg",
+      "start": 0.0,
+      "end": 500.0
+    },
+    {
+      "name": "CH1 频率",
+      "channel": "CH2",
+      "meas_key": "Vavg",
+      "start": 0.0,
+      "end": 500.0
+    },
+    {
+      "name": "CH2 幅值",
+      "channel": "CH3",
+      "meas_key": "Vavg",
+      "start": 0.0,
+      "end": 500.0
+    },
+    {
+      "name": "你好",
+      "channel": "CH4",
+      "meas_key": "Vavg",
+      "start": 0.0,
+      "end": 500.0
+    }
+  ]
+}

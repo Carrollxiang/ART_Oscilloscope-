@@ -30,33 +30,30 @@ class ScopeConfig:
         "device_name": "Dev42",
         "ai_channels": "ai0:15",
         "terminal_config": "NRSE",
-        "min_val": -10.0,
-        "max_val": 10.0,
         "read_timeout": 5.0,
-        "sample_rate": 10000,
+        "sample_rate": 30000,
         "duration": 0.5,
         "sample_mode": "FINITE",
-        "trigger_source": "",
+        "trigger_source": "ai12",
         "trigger_slope": "rising",
-        "trigger_level": 0.0,
+        "trigger_level": 1.0,
     })
 
     # 通道状态
     channels: dict = field(default_factory=lambda: {
-        "enabled": [True, True, False, False],
-        "scales": [1.0, 1.0, 1.0, 1.0],
-        "couplings": ["dc", "dc", "dc", "dc"],
-        "probes": [1.0, 1.0, 1.0, 1.0],
+        "enabled": [True] * 16,
+        "min_vals": [-10.0] * 16,
+        "max_vals": [10.0] * 16,
     })
 
     # 测量行
     measurements: list[dict] = field(default_factory=lambda: [
         {"name": "CH1 幅值", "channel": "CH1", "meas_key": "Vpp",
-         "start": 0.0, "end": 0.5},
+         "start": 0.0, "end": 500.0},
         {"name": "CH1 频率", "channel": "CH1", "meas_key": "Freq",
-         "start": 0.0, "end": 0.5},
+         "start": 0.0, "end": 500.0},
         {"name": "CH2 幅值", "channel": "CH2", "meas_key": "Vpp",
-         "start": 0.0, "end": 0.5},
+         "start": 0.0, "end": 500.0},
     ])
 
 
@@ -85,8 +82,6 @@ class ConfigManager:
                 "device_name": p.get("device_name", "Dev42"),
                 "ai_channels": p.get("ai_channels", "ai0:15"),
                 "terminal_config": p.get("terminal_config", "NRSE"),
-                "min_val": p.get("min_val", -10.0),
-                "max_val": p.get("max_val", 10.0),
                 "read_timeout": p.get("read_timeout", 5.0),
                 "sample_rate": d.sample_rate,
                 "duration": d.record_length / d.sample_rate if d.sample_rate > 0 else 0.5,
@@ -103,9 +98,8 @@ class ConfigManager:
             cp = main_win.channel_panel
             n = len(cp._controls)
             cfg.channels["enabled"] = [cp.is_channel_enabled(i) for i in range(n)]
-            cfg.channels["scales"] = [cp.get_channel_scale(i) for i in range(n)]
-            cfg.channels["couplings"] = [cp.get_channel_coupling(i) for i in range(n)]
-            cfg.channels["probes"] = [cp.get_channel_probe(i) for i in range(n)]
+            cfg.channels["min_vals"] = [cp.get_channel_min_val(i) for i in range(n)]
+            cfg.channels["max_vals"] = [cp.get_channel_max_val(i) for i in range(n)]
         except Exception:
             logger.warning("读取通道状态失败", exc_info=True)
 
@@ -133,8 +127,6 @@ class ConfigManager:
                     dp.cmbTerminal.setCurrentIndex(i)
                     break
 
-            dp.spinMinVal.setValue(cfg.device.get("min_val", -10.0))
-            dp.spinMaxVal.setValue(cfg.device.get("max_val", 10.0))
             dp.spinTimeout.setValue(cfg.device.get("read_timeout", 5.0))
             dp.spinSampleRate.setValue(cfg.device.get("sample_rate", 10000))
             dp.spinDuration.setValue(cfg.device.get("duration", 0.5))
@@ -163,13 +155,10 @@ class ConfigManager:
             for i in range(min(len(cp._controls), len(ch.get("enabled", [])))):
                 ctrl = cp._controls[i]
                 ctrl["enable"].setChecked(ch["enabled"][i])
-            for i in range(min(len(cp._controls), len(ch.get("scales", [])))):
-                cp._controls[i]["scale"].setValue(ch["scales"][i])
-            for i in range(min(len(cp._controls), len(ch.get("couplings", [])))):
-                idx = {"dc": 0, "ac": 1, "gnd": 2}.get(ch["couplings"][i], 0)
-                cp._controls[i]["coupling"].setCurrentIndex(idx)
-            for i in range(min(len(cp._controls), len(ch.get("probes", [])))):
-                cp._controls[i]["probe"].setValue(ch["probes"][i])
+            for i in range(min(len(cp._controls), len(ch.get("min_vals", [])))):
+                cp._controls[i]["min_val"].setValue(ch["min_vals"][i])
+            for i in range(min(len(cp._controls), len(ch.get("max_vals", [])))):
+                cp._controls[i]["max_val"].setValue(ch["max_vals"][i])
         except Exception as e:
             logger.warning(f"应用通道状态失败: {e}")
 
