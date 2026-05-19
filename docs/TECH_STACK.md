@@ -4,8 +4,8 @@
 
 | 项 | 选择 | 理由 |
 |----|------|------|
-| 语言 | **Python 3.11+** | 生态成熟, numpy/scipy 信号处理栈完整, asyncio 原生支持 |
-| 包管理 | **uv** (推荐) 或 **poetry** | uv 速度快一个数量级, 锁文件可靠 |
+| 语言 | **Python 3.10+** | 生态成熟, numpy/scipy 信号处理栈完整, asyncio 原生支持 |
+| 包管理 | **pip** (当前) | 使用 requirements.txt + 清华镜像源 (https://pypi.tuna.tsinghua.edu.cn/simple) |
 | Python 分发 | embed Python (打包用) | 最终交付时可用 PyInstaller / Nuitka 打包成单文件 |
 
 ## 2. 核心框架
@@ -54,87 +54,79 @@
 ## 5. 项目结构
 
 ```
-scope/
+```
+project-root/
+├── main.py                     # 入口转发 (设置 DLL 路径 → 调用 scope.main.main)
 ├── pyproject.toml
 ├── requirements.txt
-├── README.md
+├── requirements-dev.txt
+├── .gitignore
+├── test_hardware.py            # ART 硬件诊断工具 (无 GUI)
 │
-├── scope/                          # 主包
+├── artdaq/                     # ART 采集卡驱动 (NI-DAQmx 兼容封装, 已入库)
+│
+├── scope/                      # 主包
 │   ├── __init__.py
-│   ├── main.py                     # 应用入口
+│   ├── main.py                 # 应用入口 (ScopeApp + 参数解析)
 │   │
-│   ├── model/                      # 数据模型 (零依赖, 纯数据类)
+│   ├── model/                  # 数据模型
 │   │   ├── __init__.py
-│   │   ├── analysis_result.py      # AnalysisResult, ChannelData, TriggerInfo
-│   │   └── enums.py                # 枚举 (通道状态、触发类型、反馈协议类型)
+│   │   ├── analysis_result.py  # AnalysisResult, ChannelData, TriggerInfo
+│   │   └── enums.py            # 枚举
 │   │
-│   ├── hardware/                   # 硬件抽象层
+│   ├── hardware/               # 硬件抽象层
 │   │   ├── __init__.py
-│   │   ├── device.py              # AcquisitionDevice (ABC)
-│   │   ├── simulator.py           # SimulatorDevice (模拟器)
-│   │   └── art_device.py          # ArtDevice (ART USB 卡)
+│   │   ├── device.py           # AcquisitionDevice (ABC)
+│   │   ├── simulator.py        # SimulatorDevice (16 通道模拟信号)
+│   │   └── art_device.py       # ArtDevice (ART USB 卡, artdaq)
 │   │
-│   ├── acquisition/               # 缓存与采集层
+│   ├── acquisition/            # 缓存与采集层 (预留)
 │   │   ├── __init__.py
-│   │   ├── ring_buffer.py         # 环形缓冲区
-│   │   ├── stream_reader.py       # USB 流读取线程
-│   │   ├── watchdog.py            # 健康监测 + 自动重连
-│   │   └── timestamp.py           # 时间戳管理
+│   │   ├── ring_buffer.py
+│   │   └── watchdog.py
 │   │
-│   ├── trigger/                   # 触发引擎
+│   ├── processing/             # 信号处理链
 │   │   ├── __init__.py
-│   │   ├── engine.py              # 触发引擎主控
-│   │   ├── edge.py                # 边沿触发
-│   │   └── pulse.py               # 脉宽触发 (扩展)
+│   │   ├── pipeline.py         # Pipeline 框架
+│   │   ├── measurements.py     # 自动测量
+│   │   ├── math_ops.py         # 通道数学运算
+│   │   ├── fft.py              # FFT 频谱
+│   │   └── filters.py          # 数字滤波
 │   │
-│   ├── processing/                # 信号处理链
+│   ├── io/                     # 网络与存储
 │   │   ├── __init__.py
-│   │   ├── pipeline.py            # Pipeline 框架 (责任链模式)
-│   │   ├── measurements.py        # 自动测量 (Vpp, Freq, Vrms...)
-│   │   ├── math_ops.py            # 通道数学运算
-│   │   ├── fft.py                 # FFT 频谱分析
-│   │   └── filters.py             # 数字滤波
+│   │   ├── feedback_manager.py # FeedbackManager
+│   │   └── feedback_slots/
+│   │       ├── __init__.py
+│   │       ├── base.py         # FeedbackSlot ABC
+│   │       ├── rpyc_slot.py    # ✅ rpyc 协议
+│   │       ├── rpyc_pool.py    # ✅ rpyc 连接池
+│   │       └── null_slot.py    # ✅ 调试用
 │   │
-│   ├── io/                        # 网络与存储
+│   ├── ui/                     # PyQt6 界面
 │   │   ├── __init__.py
-│   │   ├── feedback_manager.py    # FeedbackManager (调度器)
-│   │   ├── feedback_slots/        # 反馈插槽实现
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py            # FeedbackSlot (ABC)
-│   │   │   ├── rpyc_slot.py       # ✅ rpyc 协议 (主)
-│   │   │   ├── rpyc_pool.py       # ✅ rpyc 连接池
-│   │   │   ├── null_slot.py       # ✅ 调试用
-│   │   │   ├── udp_slot.py        # 🔲
-│   │   │   ├── serial_slot.py     # 🔲
-│   │   │   └── modbus_slot.py     # 🔲
-│   │   ├── rest_api.py            # FastAPI (可选)
-│   │   ├── recorder.py            # HDF5 记录
-│   │   └── playback.py            # 数据回放 (可选)
+│   │   ├── main_window.py      # 主窗口控制器
+│   │   ├── main_window.ui      # Qt Designer 布局
+│   │   ├── waveform_view.py    # pyqtgraph 波形 + 图例 + 降采样
+│   │   ├── mini_chart.py       # 迷你趋势图
+│   │   └── panels/
+│   │       ├── channel_panel.py      # 16 通道控制
+│   │       ├── device_panel.py       # 设备设置 (替代触发 Tab)
+│   │       ├── measurement_panel.py  # 动态测量行
+│   │       ├── feedback_panel.py     # 反馈 slot 管理
+│   │       ├── feedback_dialog.ui    # 对话框布局
+│   │       └── art_config_dialog.py  # (旧, 可清理)
 │   │
-│   ├── ui/                        # PyQt6 界面
-│   │   ├── __init__.py
-│   │   ├── main_window.py         # 主窗口控制器
-│   │   ├── main_window.ui         # Qt Designer 布局
-│   │   ├── waveform_view.py       # pyqtgraph 波形 + 图例
-│   │   ├── panels/
-│   │   │   ├── channel_panel.py   # 通道开关/档位/耦合/探头
-│   │   │   ├── device_panel.py    # 设备设置 (替代触发)
-│   │   │   ├── measurement_panel.py   # 动态测量行
-│   │   │   ├── feedback_panel.py  # 反馈 slot 管理
-│   │   │   ├── feedback_dialog.ui # 添加对话框布局
-│   │   │   └── art_config_dialog.py # (旧, 可删除)
-│   │   └── resources/
-│   │
-│   └── config/                    # 配置 (预留)
+│   └── config/
 │       ├── __init__.py
 │       └── settings.py
 │
-└── tests/                         # 测试
-    ├── test_phase0.py              # ✅ 数据模型 + 模拟器 (8 tests)
-    ├── test_feedback_slots.py      # ✅ 反馈系统 (19 tests)
-    ├── test_art_device.py          # ✅ ART 硬件适配 (18 tests)
-    └── test_processing.py          # ✅ 信号处理管道 (27 tests)
-    └── test_watchdog.py            # 🔲
+└── tests/
+    ├── test_phase0.py           # ✅ 数据模型 + 模拟器 (8 tests)
+    ├── test_feedback_slots.py   # ✅ 反馈系统 (19 tests)
+    ├── test_art_device.py       # ✅ ART 硬件适配 (18 tests)
+    └── test_processing.py       # ✅ 信号处理管道 (27 tests)
+```
 ```
 
 ## 6. 关键第三方依赖速查
@@ -147,12 +139,13 @@ scope/
 | `numpy` | ≥1.24 | 数值计算基础库 |
 | **`rpyc`** | **≥5.3** | **实验室仪器 RPC 协议 (主要反馈通道)** |
 | **`artdaq`** | **内置** | **ART 采集卡驱动 (NI-DAQmx 兼容)** |
-| `pyusb` | ≥1.3 | USB 通信 (备选) |
-| `pyserial` | ≥3.5 (可选) | 串口通信 |
-| `scipy` | ≥1.10 (可选) | 滤波器设计 |
-| `h5py` | ≥3.8 (可选) | HDF5 记录 |
-| `pymodbus` | ≥3.6 (可选) | Modbus 协议 |
-| `httpx` | ≥0.25 (可选) | HTTP 异步客户端 |
+| `pyusb` | ≥1.3 | USB 通信 (备选, 已安装) |
+| `pyserial` | ≥3.5 | 串口通信 (已安装) |
+| `scipy` | ≥1.10 | 滤波器设计 (已安装) |
+| `h5py` | ≥3.8 | HDF5 记录 (已安装) |
+| `pymodbus` | ≥3.6 | Modbus 协议 (已安装) |
+| `httpx` | ≥0.25 | HTTP 异步客户端 (已安装) |
+| `six` | ≥1.17 | artdaq 库依赖 (已安装) |
 
 ## 7. 开发工具
 

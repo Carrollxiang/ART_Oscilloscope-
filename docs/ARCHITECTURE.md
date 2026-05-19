@@ -8,7 +8,7 @@
 
 | 原则 | 说明 |
 |------|------|
-| **硬件触发驱动** | 所有上层数据流由硬件触发事件驱动，无需软件定时器打拍子 |
+| **硬件触发驱动 + QTimer 帧循环** | 硬件触发驱动采集(FINITE模式), QTimer 打拍子触发读取, 通过 rearm() 重建 Task 等待下一次触发 |
 | **硬件抽象隔离** | 通过 `AcquisitionDevice` 接口隔离硬件差异，上位机开发可先跑模拟器 |
 | **反馈即插即用 (Hot-plug Feedback)** | 反馈通道可在运行时随时添加、移除、修改，不阻塞主采集流程 |
 | **Watchdog 自愈** | 采集链路具备超时检测 → 自动重连 → 状态恢复的闭环能力 |
@@ -96,13 +96,17 @@ class AcquisitionDevice(ABC):
 - 使用 `artdaq.Task` API 直接操作设备 (绕过 artdaq_main.py 的全局 task)
 - `read_chunk()` 调 `task.read()` → 返回 `list of lists` → 转为 `(ch, samples) float32 ndarray`
 - 硬件触发由 `task.triggers.start_trigger.cfg_anlg_edge_start_trig()` 配置
-- `read_timeout` 超时抛 `TimeoutError` → Watchdog 触发自动重连
-- 未安装 `Art_DAQ.dll` 时 `open()` 返回 `False`, 程序可优雅降级
+- 采集模式: `AcquisitionType.FINITE` (有限点采集), 触发后采集 `samps_per_chan` 个点后自动停止
+- `rearm()` 每帧读取后重建整个 Task (调用 `_close_task()` + `start_acquisition()`), 重新等待触发
+- `read_timeout` 超时抛 `TimeoutError` → 上层捕获后跳过失继续下一帧
+- 默认配置: 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V
+- DLL 路径: `C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64\Art_DAQ.dll`
 
 **关键设计决策**:
-- 硬件未就绪时使用 `SimulatorDevice` 开发上层逻辑
+- `--mock` / `-m` 命令行参数控制是否使用模拟器 (`ScopeApp.__init__(mock=True)`)
+- 硬件模式(`mock=False`): 默认尝试连接 ART 硬件, 失败后自动回退到模拟器
+- 配置切换: 先停旧设备 + 关闭 Task 句柄 → 创建新设备 → 失败时恢复旧设备 (不回退模拟器)
 - `SimulatorDevice` 内置"故障注入"能力（随机断流、丢包），用于测试 Watchdog
-- `ArtDevice` 与 `SimulatorDevice` 互换只需改 `main.py` 一行代码
 
 ### 第 2 层 — 缓存与采集层
 
@@ -207,22 +211,24 @@ math_pipeline = [
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                       波形视图                                │
-│  右上角图例: ■CH1(黄) ■CH2(青) ■CH3(紫) ■CH4(绿)           │
+│  右上角图例: ■CH1(黄) ■CH2(青) ■CH3(紫) ■CH4(绿) ...       │
 │  点击图例切换通道显隐, 隐藏→灰色+ (隐藏) 标注                │
 │  触发位置标记 (白色虚线)                                      │
+│  自动降采样: >2000 点/通道时压缩至 ~1500 点 (性能优化)       │
 ├──────────────────────────────────────────────────────────────┤
 │  [通道]  [设备设置]  [测量]  [反馈]                           │
-│  ┌──────┬──────────┬──────────┬────────────┐                 │
-│  │CH1☑  │ 设备名   │名称/通道 │  rpyc:1.2.3│                 │
-│  │1V/div│ Dev42    │/测量/时  │  ●运行     │                 │
-│  │DC ▼  │AI ai0:3  │间段 → 值 │  ○暂停     │                 │
-│  │1.0X  │采集参数  │[+添加]   │  [继续]    │                 │
-│  │CH2☑  │触发配置  │[✕删除]  │  [+添加]   │                 │
-│  │...   │[测试通讯]│          │  [编辑]    │                 │
-│  │      │[✅应用]  │          │  [删除]    │                 │
-│  └──────┴──────────┴──────────┴────────────┘                 │
+│  ┌────────┬──────────┬──────────┬────────────┐                │
+│  │CH1 ☑   │ 设备     │名称/通道 │ rpyc slot  │                │
+│  │1.0V/div│ Dev42    │/测量/时  │ ●运行      │                │
+│  │DC ▼    │ AI通道   │间段 → 值 │ [继续]     │                │
+│  │1.0X    │ ai0:15   │[+添加]   │ [+添加]    │                │
+│  │...     │ 硬件触发 │[✕删除]  │ [编辑]     │                │
+│  │CH16 ☑  │ ai12 1V  │          │ [删除]     │                │
+│  │(滚动)  │ [测试]   │          │            │                │
+│  │        │ [✅应用] │          │            │                │
+│  └────────┴──────────┴──────────┴────────────┘                │
 ├──────────────────────────────────────────────────────────────┤
-│ 采样率: 10kHz │ 帧 #: 42 │ 触发: edge │ 反馈: 1/2 活跃      │
+│ 采样率: 30kSa/s │ 帧 #: 42 │ 触发: ai12 1V │ 反馈: 1/2 活跃 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -230,16 +236,17 @@ math_pipeline = [
 
 | 面板 | 文件 | 说明 |
 |------|------|------|
-| 通道 | `channel_panel.py` | 4 通道复选框/垂直档位/耦合/探头比, 复选框同步波形显隐 |
-| **设备设置** | `device_panel.py` | 替代原"触发"Tab, 含 ART 全部配置 + 通讯测试 + 应用按钮, 2 列布局 |
+| 通道 | `channel_panel.py` | 16 通道复选框/垂直档位/耦合/探头比, 复选框同步波形显隐, 默认全部开启 |
+| **设备设置** | `device_panel.py` | 替代原"触发"Tab, 含 ART 全部配置 + 硬件触发 + 通讯测试 + 应用按钮, 2 列布局 |
 | 测量 | `measurement_panel.py` | 动态行: 名称+通道+测量项+起始/结束时间 → 窗口内计算值, 可任意增删 |
 | 反馈 | `feedback_panel.py` | 动态 slot 列表, 添加/编辑/暂停/继续/删除, 支持 rpyc |
 
 **波形视图特性** (waveform_view.py):
-- 4 通道叠加, 黄/青/紫/绿 区分
+- 16 通道叠加, 16 色循环 (黄/青/紫/绿/橙/粉/天蓝/淡绿...)
 - 右上角图例, 点击切换显隐 (隐藏时变灰)
 - 触发位置白色虚线标记
 - 通道面板复选框同步控制显隐
+- 自动降采样: 每通道 >2000 点 → 压缩至 ~1500 点
 - OpenGL 加速渲染 (fallback 安全)
 
 ### 第 6 层 — 网络与 I/O 层
@@ -301,53 +308,43 @@ class AnalysisResult:
 ## 4. 数据流时序
 
 ```
-[ART 采集卡]
+[ART 采集卡 / SimulatorDevice]
     │
-    │ USB Bulk Transfer (硬件触发模式)
+    │ FINITE 模式: 等待触发 → 采样完成 → 数据就绪
     ▼
-[采集线程 — threading.Thread]
-    │ 解析 USB 数据包 → numpy array
-    │ 写入 RingBuffer
-    │ 组装 AnalysisResult (channels + trigger_info)
+[QTimer (500ms) 驱动]
     │
+    │ QTimer 每 500ms 触发一次 _on_timer_tick
     ▼
-[asyncio.Queue 跨线程传递]
+[ScopeApp._on_timer_tick()]
     │
-    ▼
-[主事件循环 — asyncio + qasync]
+    ├→ read_chunk() 阻塞等待触发数据 (最长 _read_timeout=5s)
+    │   │ FINITE 模式: 触发信号到位 → 采集完成 → 返回数据
+    │   │ 超时 → TimeoutError (跳过, 下一帧继续)
+    │
+    ├→ make_analysis_result() → AnalysisResult
     │
     ├→ Pipeline.process(result)
-    │   ├─ 自动测量 (Vpp, Freq...)
-    │   ├─ FFT 分析
-    │   ├─ 数学运算
-    │   └─ 更新 result.measurements / result.fft
+    │   ├─ AutoMeasure (Vpp, Freq...)
+    │   ├─ MathOp (CH1+CH2 → MATH1)
+    │   └─ FFTAnalyze (频谱)
     │
-    ├→ UI 刷新 (通过 QThread.signal)
-    │   └─ pyqtgraph.update() → 屏幕绘制
+    ├→ UI 刷新 (通过 pyqtSignal data_received)
+    │   └─ WaveformView.update_waveform() → 降采样 → pyqtgraph 绘制
     │
-    ├→ FeedbackManager.dispatch(result)
-    │   │ 根据每个 slot 的订阅从 result.measurements 提取 payload
-    │   │
-    │   ├─ Slot A (rpyc→192.168.1.10:18861)
-    │   │   └─ on_data({"CH1_Vpp": 3.3})
-    │   │      └─ pool.acquire() → rpyc.call("exposed_update", data) → pool.release()
-    │   │
-    │   ├─ Slot B (rpyc→10.0.0.5:18861)
-    │   │   └─ on_data({"CH1_Freq": 1000.0})
-    │   │      └─ pool.acquire() → rpyc.call("exposed_update", data) → pool.release()
-    │   │
-    │   └─ Slot C (Null, 调试用)
-    │       └─ on_data(payload) → 写日志
+    ├→ FeedbackManager.dispatch(result)  (asyncio)
     │
-    │   ※ 全部 slot 并发 dispatch, 互不阻塞
-    │   ※ 每次触发 = 每个 active slot 发一次, 无独立 Timer
-    │   ※ rpyc 同步调用通过 run_in_executor 桥接到 asyncio
-    │
-    └→ Recorder.record(result) (可选)
-        └─ HDF5 文件存储
+    └→ device.rearm()  →  重建 Task → 等待下一次触发
+        │ _close_task() + start_acquisition()
+        │
+        └→ [等待 QTimer 下一拍]
 ```
 
-**关键特性**: 反馈的"周期"完全由硬件触发频率决定。1kHz 信号 → 每秒 1000 次反馈。工频 50Hz → 每秒 50 次。没有信号 → 零次反馈。不需要任何软件定时器参与同步。
+**关键特性**:
+- 采集由 **QTimer + FINITE 模式** 驱动, 非独立线程
+- 硬件触发信号到来 → Task 采集完成 → QTimer 读取 → 处理 → rearm
+- 每次触发产生一帧完整数据 (如 30k Sa/s × 0.5s = 15000 点)
+- 反馈的"周期"由 QTimer 频率 (500ms) 决定, 但数据量由触发频率决定
 
 ---
 
@@ -515,41 +512,41 @@ FeedbackManager.dispatch()        ← asyncio context
 
 ### 事件循环集成
 
-使用 **qasync** 桥接 PyQt 事件循环和 asyncio：
+当前架构: **纯 PyQt6 事件循环** (不依赖 qasync), 采集由 QTimer 驱动。
+asyncio loop 用于 feedback dispatch, 在独立线程中运行 (`_async_worker`)。
 
 ```python
-import qasync
+def start(self):
+    # 1. 设备已在 __init__ 时初始化
+    # 2. asyncio loop 在独立线程运行 (feedback dispatch)
+    async_thread = threading.Thread(target=self._async_worker, daemon=True)
+    async_thread.start()
 
-async def main():
-    app = QApplication(sys.argv)
+    # 3. 主窗口
+    self.main_win = MainWindow(...)
+    self.main_win.show()
 
-    device = SimulatorDevice()
-    pipeline = ProcessingPipeline()
-    feedback_mgr = FeedbackManager()
-    main_win = MainWindow()
+    # 4. QTimer 驱动采集
+    self._timer = QTimer()
+    self._timer.setInterval(500)  # 0.5s/帧
+    self._timer.timeout.connect(self._on_timer_tick)
+    self._timer.start()
 
-    # 添加一个 rpyc 反馈目标
-    slot = RpycFeedbackSlot(RpycSlotConfig(
-        slot_id="to-scope2",
-        host="192.168.1.100", port=18861,
-        subscriptions=[DataSubscription("CH1_Vpp")],
-    ))
-    await feedback_mgr.add_slot(slot)
-
-    # 采集完成 → 分析 → 反馈 的事件链
-    device.on_acquisition_complete.connect(
-        lambda result: pipeline.process(result, callback=lambda processed:
-            feedback_mgr.dispatch(processed)
-        )
+def _on_timer_tick(self):
+    # 阻塞读取 → pipeline → UI 刷新 → dispatch → rearm
+    chunk = self.device.read_chunk()
+    result = self.device.make_analysis_result(chunk)
+    result = self._pipeline.process(result)
+    self.main_win.data_received.emit(result)
+    asyncio.run_coroutine_threadsafe(
+        self.feedback_mgr.dispatch(result),
+        self._async_loop,
     )
+    self.device.rearm()
 
-    with qasync.QApplicationExecutor(app):
-        await asyncio.gather(
-            device.start(),
-            main_win.show()
-        )
-
-qasync.run(main())
+def _async_worker(self):
+    asyncio.set_event_loop(self._async_loop)
+    self._async_loop.run_forever()
 ```
 
 采集线程 (USB 同步读取) 在独立线程中运行, 通过 `asyncio.Queue` 跨线程传递 `AnalysisResult`。

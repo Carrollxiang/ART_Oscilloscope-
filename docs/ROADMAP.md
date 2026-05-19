@@ -162,48 +162,51 @@ scope/ui/
 | 触发 | 独立的"触发"Tab | 合并入 **设备设置** Tab (device_panel.py) |
 | 测量 | 固定表格 (行×通道) | **动态行**: 每行独立选名称/通道/测量项/时间段 |
 | 波形图例 | 无 | **右上角图例**, 点击切换显隐, 隐藏变灰 |
-| 通道控制 | 无 | 复选框实时切换波形显隐, 图例同步 |
-| 采集帧率 | 33ms (~30fps) | **500ms** (匹配 0.5s 帧时长) |
+| 通道数 | 4 (ai0:3) | **16 (ai0:15)**, 颜色循环 16 色 |
+| 通道控制 | 无 | 复选框实时切换波形显隐, 图例同步, 默认全部开启 |
+| 采集帧率 | 33ms (~30fps) | **500ms** (匹配 0.5s 帧时长, FINITE 模式) |
 
 ---
 
-## Phase 4 — ART 硬件集成 (进行中 🏗️)
+## Phase 4 — ART 硬件集成 (已完成 ✅)
 
 ### 说明
 
-`ArtDevice` (基于 artdaq/NI-DAQmx 库) 已完成, 
-实际硬件交付前无法做端到端验证。
-以下列出的是硬布线 (pyusb) 方案的原计划, 
-当前已切换到 artdaq (NI-DAQmx 兼容) 方案。
+基于 artdaq (NI-DAQmx 兼容) 库实现了 `ArtDevice`, 
+实际硬件已到货并完成端到端验证。
 
-### 当前状态
+### 硬件实测结果
 
-```
-scope/hardware/
-├── art_device.py        ← ✅ 已实现: AcquisitionDevice ABC 适配
-├── artdaq/              ← ✅ 已入库: NI-DAQmx 兼容封装
-└── ...
+| 项目 | 验证结果 |
+|------|---------|
+| DLL 加载 | `Art_DAQ.dll` (923 KB) 位于 `C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64`, `os.add_dll_directory()` 加载 |
+| 设备名 | **Dev42**, `ArtDAQ_GetDeviceAttribute` 可用但属性码不兼容, 实际通信正常 |
+| 通道数 | **16 通道** (ai0~ai15), `ai0:15` |
+| 采样率上限 | **31250 Sa/s** (16 通道), 默认设为 **30000 Sa/s** |
+| 触发信号 | 模拟触发 `cfg_anlg_edge_start_trig` 工作正常, 默认 ai12 上升沿 1V |
+| 有限点采集 | FINITE 模式 + `rearm()` 重建 Task 实现帧循环 |
+| 超时行为 | USB 断开后 `read()` 抛 `DaqError`, 上层捕获为 `TimeoutError` |
 
-ArtDevice 已完成的方法:
-  ✅ open/close               导入 artdaq, 加载 Art_DAQ.dll
-  ✅ start_acquisition        创建 Task → 加通道 → 配时钟 → 配触发 → 启动
-  ✅ stop_acquisition         停止 Task
-  ✅ read_chunk               task.read() → (ch, samples) ndarray
-  ✅ configure                保存采样率/通道数/量程
-  ✅ ping/reset/restore_state Watchdog 接口
-  ✅ make_analysis_result     原始数据 → AnalysisResult
-```
+### 关键架构变更
 
-### 需要硬件到齐后验证
+| 项 | 原始设计 | 最终实现 |
+|----|---------|---------|
+| 采集模式 | CONTINUOUS (连续) | **FINITE** (有限点) + 硬件触发 |
+| 帧循环 | QTimer 定时读取 | QTimer + **rearm()** (重建 Task 重新触发) |
+| 设备切换 | 先建新设备→验证→停旧设备 | **先停旧设备→关 Task→建新设备→失败恢复旧设备** |
+| 默认通道 | 4 通道 (ai0:3) | **16 通道 (ai0:15)** |
+| 默认采样率 | 10 kSa/s | **30 kSa/s** |
+| 硬件触发 | 无 (软件触发) | **ai12, 上升沿 1V** (默认开启) |
+| 波形渲染 | 全点渲染 (30k/帧) | **自动降采样** (~1500 点/通道) |
+| Mock 模式 | 无 | `python main.py --mock` 使用模拟器 |
 
-| 项目 | 说明 |
-|------|------|
-| DLL 加载 | `Art_DAQ.dll` 是否随硬件驱动正确安装 |
-| 通道数 | `ai0:3` 实际映射的物理通道 |
-| 触发信号 | `cfg_anlg_edge_start_trig` 与硬件触发是否匹配 |
-| 采样率上限 | ART 卡实际最大采样率 |
-| 超时行为 | USB 断开后 `read()` 能否及时抛异常 |
-| Watchdog | 自动重连后能否恢复采集 |
+### 已知限制
+
+| 限制 | 说明 | 计划 |
+|------|------|------|
+| 触发源固定 | 默认 ai12, 1V, 上升沿, 需 UI 支持修改 | Phase 5 |
+| 单通道速率 | 16 通道共享 ADC 转换时间, 通道越多单通道速率越低 | 架构限制 |
+| rearm 重建开销 | 每帧重建整个 Task (~数 ms), 不适合 1kHz+ 触发 | 优化方向 |
 
 ---
 
@@ -211,16 +214,18 @@ ArtDevice 已完成的方法:
 
 ### 可能的后续方向
 
-| 方向 | 说明 |
-|------|------|
-| 更多触发类型 | 脉宽触发, 逻辑触发, 视频触发 |
-| 协议解码 | UART / I2C / SPI / CAN 软件解码 |
-| 数学通道增强 | 积分, 微分, 对数, 指数 |
-| 预设场景 | 保存/加载示波器配置 (通道设置, 触发条件, 反馈目标) |
-| 数据回放 | 加载 HDF5 文件 → 模拟实时采集 |
-| 脚本化 | Python 脚本接口, 用户自定义分析逻辑 |
-| REST API | FastAPI 提供远程查询状态/获取当前波形快照 |
-| 打包发布 | PyInstaller / Nuitka 打包为独立 exe |
+| 方向 | 说明 | 优先级 |
+|------|------|--------|
+| 触发源 UI 配置 | 当前触发源 (ai12/1V/上升沿) 硬编码, 需 UI 支持修改 | 🔴 高 |
+| 单点/连续模式切换 | 当前仅 FINITE 模式, 需 UI 支持 CONTINUOUS | 🟡 中 |
+| 更多触发类型 | 脉宽触发, 逻辑触发, 视频触发 | 🟢 低 |
+| 协议解码 | UART / I2C / SPI / CAN 软件解码 | 🟢 低 |
+| 数学通道增强 | 积分, 微分, 对数, 指数 | 🟢 低 |
+| 预设场景 | 保存/加载示波器配置 (通道设置, 触发条件, 反馈目标) | 🟡 中 |
+| 数据回放 | 加载 HDF5 文件 → 模拟实时采集 | 🟢 低 |
+| 脚本化 | Python 脚本接口, 用户自定义分析逻辑 | 🟢 低 |
+| REST API | FastAPI 提供远程查询状态/获取当前波形快照 | 🟢 低 |
+| 打包发布 | PyInstaller / Nuitka 打包为独立 exe | 🟡 中 |
 
 ---
 
