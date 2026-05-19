@@ -5,10 +5,10 @@
   - 默认 (无参数)     → 连接 ART 硬件 (ArtDevice)
   - --mock / -m       → 模拟数据 (SimulatorDevice)，无硬件也可运行
 
-架构:
-  - 纯 PyQt6 事件循环 (不依赖 qasync)
-  - SimulatorDevice / ArtDevice 在采集线程中生成/读取数据
-  - QTimer 驱动 UI 刷新
+架构 (事件驱动):
+  - ArtDevice: register_done_event → 硬件触发 → DONE 回调 → 采集线程读取
+  - SimulatorDevice: QTimer 驱动 (保持兼容)
+  - 采集线程调用 _on_frame() → pyqtSignal → UI 线程处理
   - 跨线程通过 pyqtSignal 通信
 """
 
@@ -144,11 +144,23 @@ class ScopeApp:
 
     def start(self):
         """启动所有子系统"""
-        # 1. 设备已在 __init__ 时 open + configure + start_acquisition
-        #   (ArtDevice 在 _create_device 中已启动; SimulatorDevice 同理)
-        #    但如果调用 start() 时设备尚未启动，补启一次
-        if not hasattr(self.device, '_running') or not self.device._running:
-            self.device.start_acquisition()
+        # 1. 启动 asyncio 工作线程
+        async_thread = threading.Thread(
+            target=self._async_worker,
+            daemon=True,
+            name="async-worker",
+        )
+        async_thread.start()
+
+        # 2. 创建主窗口 (必须在注册回调之前, 否则第一帧到达时 main_win 为 None)
+        self.main_win = MainWindow(feedback_manager=self.feedback_mgr,
+                                    async_loop=self._async_loop)
+        self.main_win.art_config_applied.connect(self._on_art_config)
+        self.main_win.show()
+
+        # 3. 注册数据回调 (事件驱动: ArtDevice DONE → 采集线程 → _on_frame)
+        if hasattr(self.device, 'set_data_callback'):
+            self.device.set_data_callback(self._on_frame)
 
         device_label = "模拟设备" if self._device_type == "simulator" else "ART 采集卡"
         logger.info(
@@ -158,34 +170,21 @@ class ScopeApp:
             f"模式={'mock' if self._mock else '硬件'}"
         )
 
-        # 2. 启动 asyncio 工作线程 (在 UI 创建之前, 避免 asyncio.run 闪窗)
-        async_thread = threading.Thread(
-            target=self._async_worker,
-            daemon=True,
-            name="async-worker",
-        )
-        async_thread.start()
-
-        # 3. 创建主窗口
-        self.main_win = MainWindow(feedback_manager=self.feedback_mgr,
-                                    async_loop=self._async_loop)
-        self.main_win.art_config_applied.connect(self._on_art_config)
-        self.main_win.show()
-
-        # 3. 用 QTimer 驱动采集循环 (在主线程中运行)
+        # 4. SimulatorDevice 降级: 用 QTimer 驱动
         self._running = True
-        self._timer = QTimer()
-        # 每帧 = record_length / sample_rate = 5000/10000 = 0.5s
-        self._timer.setInterval(500)
-        self._timer.timeout.connect(self._on_timer_tick)
-        self._timer.start()
+        if not hasattr(self.device, 'set_data_callback'):
+            from PyQt6.QtCore import QTimer
+            self._timer = QTimer()
+            self._timer.setInterval(500)
+            self._timer.timeout.connect(self._on_timer_tick)
+            self._timer.start()
 
         logger.info("ScopeApp 已启动")
 
     def stop(self):
         """停止所有子系统"""
         self._running = False
-        if hasattr(self, '_timer') and self._timer:
+        if hasattr(self, '_timer'):
             self._timer.stop()
 
         self.device.stop_acquisition()
@@ -207,7 +206,8 @@ class ScopeApp:
         old_config = self._config
 
         # 1. 停掉旧设备 + 关闭 Task 句柄 (释放硬件, 让新设备能创建 Task)
-        self._timer.stop()
+        if hasattr(self, '_timer'):
+            self._timer.stop()
         try:
             old_device.stop_acquisition()
         except Exception:
@@ -242,7 +242,7 @@ class ScopeApp:
             # 不在此处读数据验证 — 硬件触发模式下会阻塞
             # 让第一个 QTimer tick 自然读取
 
-            # 成功 → 关掉旧设备, 换入新设备
+            # 成功 → 关掉旧设备, 换入新设备, 注册回调
             try:
                 old_device.close()
             except Exception:
@@ -250,6 +250,8 @@ class ScopeApp:
             self.device = new_device
             self._config = config
             self._device_type = "art"
+            if hasattr(new_device, 'set_data_callback'):
+                new_device.set_data_callback(self._on_frame)
             logger.info(
                 f"✅ ART 设备已切换: {params['device_name']}/"
                 f"{params['ai_channels']}, "
@@ -289,22 +291,25 @@ class ScopeApp:
                 self._device_type = "simulator"
                 logger.info("已回退到模拟设备")
 
-        # 5. 重启 QTimer
-        frame_ms = int(self._config.record_length / self._config.sample_rate * 1000)
-        self._timer.setInterval(max(frame_ms, 50))
-        self._timer.start()
+        # 5. 寄存器回调 (事件驱动) 或重启 QTimer (模拟器降级)
+        if hasattr(self.device, 'set_data_callback'):
+            self.device.set_data_callback(self._on_frame)
+        else:
+            frame_ms = int(self._config.record_length / self._config.sample_rate * 1000)
+            self._timer.setInterval(max(frame_ms, 50))
+            self._timer.start()
 
-    def _on_timer_tick(self):
-        """QTimer 回调: 采集一帧 → 处理 → 显示 → 反馈"""
+    def _on_frame(self, chunk: np.ndarray):
+        """
+        事件驱动回调: ArtDevice 采集线程读取到数据后调用 (非 UI 线程)。
+
+        使用 pyqtSignal.emit() 是线程安全的 — Qt 自动将调用排入接收者线程。
+        """
         try:
-            # 读取一帧
-            chunk = self.device.read_chunk()
             result = self.device.make_analysis_result(chunk)
-
-            # Pipeline: 自动测量 + 数学运算 + FFT
             result = self._pipeline.process(result)
 
-            # 迷你图数据 (仅筛选反馈订阅的物理量)
+            # 迷你图数据
             active_subs: set[str] = set()
             for slot_info in self.feedback_mgr.list_slots():
                 for sub in slot_info.subscriptions:
@@ -314,19 +319,24 @@ class ScopeApp:
             if filtered:
                 self.main_win.mini_chart.add_data(filtered)
 
-            # 更新 UI
+            # 更新 UI (跨线程安全)
             self.main_win.data_received.emit(result)
 
-            # Dispatch 到反馈系统 (在 asyncio loop 中执行)
+            # Dispatch 反馈 (asyncio loop)
             asyncio.run_coroutine_threadsafe(
                 self.feedback_mgr.dispatch(result),
                 self._async_loop,
             )
+        except Exception as e:
+            logger.error(f"数据处理错误: {e}", exc_info=True)
 
-            # FINITE 模式: 重新触发等待下一帧
+    def _on_timer_tick(self):
+        """QTimer 回调 (仅 SimulatorDevice 降级模式 — 保留兼容)"""
+        try:
+            chunk = self.device.read_chunk()
+            self._on_frame(chunk)
             if hasattr(self.device, 'rearm'):
                 self.device.rearm()
-
         except Exception as e:
             logger.error(f"采集错误: {e}", exc_info=True)
 

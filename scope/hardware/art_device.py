@@ -8,8 +8,9 @@ ART USB 采集卡设备驱动 — 基于 artdaq 库
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -75,6 +76,11 @@ class ArtDevice(AcquisitionDevice):
         self._seq = 0
         self._read_timeout = DEFAULT_TIMEOUT
 
+        # 事件驱动采集
+        self._done_event = threading.Event()
+        self._acquire_thread: Optional[threading.Thread] = None
+        self._data_callback: Optional[Callable[[np.ndarray], None]] = None
+
     # ── 生命周期 ────────────────────────────────────────────────
 
     def open(self) -> bool:
@@ -104,10 +110,17 @@ class ArtDevice(AcquisitionDevice):
         )
         return True
 
+    def set_data_callback(self, callback: Callable[[np.ndarray], None]):
+        """设置数据就绪回调 (线程安全: 从采集线程调用, 需 emit Qt signal)。"""
+        self._data_callback = callback
+
     def close(self):
         """关闭 Task。"""
-        self._close_task()
         self._running = False
+        self._done_event.set()  # 唤醒 worker 使其退出
+        if self._acquire_thread and self._acquire_thread.is_alive():
+            self._acquire_thread.join(timeout=2.0)
+        self._close_task()
         logger.info("ArtDevice 已关闭")
 
     def start_acquisition(self):
@@ -174,10 +187,23 @@ class ArtDevice(AcquisitionDevice):
                     f"slope={self._trigger_slope}"
                 )
 
-            # 4. 启动
+            # 4. 注册 DONE 事件回调 (硬件触发 → 采集完成 → 回调)
+            task.register_done_event(self._on_task_done)
+
+            # 5. 启动
             task.start()
             self._running = True
             self._seq = 0
+
+            # 6. 启动采集工作线程 (等待 DONE 事件 → 读取 → 回调 → rearm)
+            if self._acquire_thread is None or not self._acquire_thread.is_alive():
+                self._acquire_thread = threading.Thread(
+                    target=self._acquire_worker,
+                    daemon=True,
+                    name="art-acquire",
+                )
+                self._acquire_thread.start()
+
             logger.info(
                 f"采集已启动: {cfg.sample_rate/1e3:.1f}kSa/s, "
                 f"{cfg.record_length}samples/ch, "
@@ -192,6 +218,7 @@ class ArtDevice(AcquisitionDevice):
     def stop_acquisition(self):
         """停止采集。"""
         self._running = False
+        self._done_event.set()  # 唤醒 worker
         if self._task is not None:
             try:
                 self._task.stop()
@@ -336,6 +363,40 @@ class ArtDevice(AcquisitionDevice):
             raise
 
     # ── 内部 ───────────────────────────────────────────────────
+
+    def _on_task_done(self, task_handle, status, callback_data):
+        """
+        NI-DAQmx DONE 事件回调 (在 DLL 线程中执行)。
+
+        仅设置 Event 通知采集工作线程, 不在回调中做任何耗时操作。
+        """
+        self._done_event.set()
+        return 0
+
+    def _acquire_worker(self):
+        """
+        采集工作线程: 等待硬件触发 → DONE 事件 → 读取数据 → 回调 → rearm。
+
+        无轮询, 完全事件驱动。无触发信号时线程挂起在 Event.wait()。
+        """
+        while self._running:
+            self._done_event.wait(timeout=0.5)  # 0.5s 心跳, 防止死等
+            if not self._running:
+                return
+            self._done_event.clear()
+
+            try:
+                chunk = self.read_chunk()
+            except Exception as e:
+                logger.error(f"读取失败: {e}")
+                continue
+
+            # 回调通知上层 (线程安全: 上层应 emit Qt signal)
+            if self._data_callback:
+                self._data_callback(chunk)
+
+            # rearm: 重建 Task, 注册新 DONE 回调, 等待下一次触发
+            self.rearm()
 
     def _close_task(self):
         if self._task is not None:
