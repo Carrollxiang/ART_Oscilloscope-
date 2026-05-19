@@ -24,5 +24,8 @@ Thumbs.db
 # Logs
 *.log
 
+# Config snapshots
+config/*.json
+
 # Test artifact
 test_hardware.py
