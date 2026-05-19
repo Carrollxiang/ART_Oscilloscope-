@@ -213,10 +213,11 @@ class ScopeApp:
         except Exception:
             pass
         # 必须关闭 Task 句柄, 否则 NI-DAQmx 仍视设备为 reserved
-        try:
-            old_device._close_task()
-        except Exception:
-            pass
+        if hasattr(old_device, '_close_task'):
+            try:
+                old_device._close_task()
+            except Exception:
+                pass
 
         # 2. 创建并启动新设备
         new_device = None
@@ -238,7 +239,8 @@ class ScopeApp:
 
             new_device.configure(config)
             new_device.start_acquisition()
-            _ = new_device.read_chunk()  # 验证能读到数据
+            # 不在此处读数据验证 — 硬件触发模式下会阻塞
+            # 让第一个 QTimer tick 自然读取
 
             # 成功 → 关掉旧设备, 换入新设备
             try:

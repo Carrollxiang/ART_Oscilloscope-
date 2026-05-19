@@ -275,21 +275,18 @@ class ArtDevice(AcquisitionDevice):
 
     def rearm(self):
         """
-        重新触发采集 (FINITE 模式)。
+        重新触发采集 (FINITE 模式 + 硬件触发)。
 
-        在有限采集模式下，每帧采集完成后 Task 自动停止。
-        调用 rearm() 重新启动 Task，等待下一次硬件触发。
+        FINITE 模式下每帧采集完成后 Task 自动停止。
+        重建整个 Task 以重新等待下一次硬件触发。
         """
-        if self._task is None or not self._running:
+        if not self._running:
             return
         try:
-            self._task.stop()
-        except Exception:
-            pass
-        try:
-            self._task.start()
+            self._close_task()
+            self.start_acquisition()
         except Exception as e:
-            logger.warning(f"rearm 失败: {e}")
+            logger.error(f"rearm 失败: {e}")
 
     # ── 配置 ───────────────────────────────────────────────────
 
