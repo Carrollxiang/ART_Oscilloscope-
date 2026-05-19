@@ -69,20 +69,21 @@ class DevicePanel(QWidget):
         grid = QHBoxLayout(container)
         grid.setSpacing(6)
 
-        # 左列 + 右列
-        left_col = QVBoxLayout()
-        right_col = QVBoxLayout()
+        c1 = QVBoxLayout()
+        c2 = QVBoxLayout()
+        c3 = QVBoxLayout()
+        c4 = QVBoxLayout()
 
-        # ── 左: 设备 ──
+        # ── 列1: 设备标识 ──
         g1 = QGroupBox("设备")
         f1 = QFormLayout(g1)
         self.editDeviceName = QLineEdit("Dev42")
         self.editAiChannels = QLineEdit("ai0:15")
         f1.addRow("设备名", self.editDeviceName)
         f1.addRow("AI 通道", self.editAiChannels)
-        left_col.addWidget(g1)
+        c1.addWidget(g1)
 
-        # ── 左: 硬件触发 ──
+        # ── 列2: 硬件触发 ──
         g3 = QGroupBox("硬件触发")
         f3 = QFormLayout(g3)
         self.chkTrig = QCheckBox("启用")
@@ -107,9 +108,10 @@ class DevicePanel(QWidget):
         self.chkTrig.setChecked(True)
         self.editTrigSrc.setText("ai12")
         self.spinTrigLevel.setValue(1.0)
-        left_col.addWidget(g3)
+        c2.addWidget(g3)
+        c2.addStretch()
 
-        # ── 右: 采集参数 ──
+        # ── 列3: 采集参数 ──
         g2 = QGroupBox("采集参数")
         f2 = QFormLayout(g2)
         self.cmbTerminal = QComboBox()
@@ -142,9 +144,9 @@ class DevicePanel(QWidget):
         for code, label in self.SAMPLE_MODES:
             self.cmbSampleMode.addItem(label, code)
         f2.addRow("采样模式", self.cmbSampleMode)
-        right_col.addWidget(g2)
+        c3.addWidget(g2)
 
-        # ── 右: 通讯测试 ──
+        # ── 列4: 通讯测试 ──
         g4 = QGroupBox("通讯测试")
         t4 = QVBoxLayout(g4)
         self.btnTest = QPushButton("🧪 测试硬件通讯")
@@ -156,21 +158,27 @@ class DevicePanel(QWidget):
             "padding: 4px; background: #1a1a2e; border: 1px solid #333; "
             "font-family: Consolas; font-size: 11px;")
         t4.addWidget(self.testStatus)
-        right_col.addWidget(g4)
+        c4.addWidget(g4)
+        c4.addStretch()
 
-        # 左右列加入 grid
-        grid.addLayout(left_col)
-        grid.addLayout(right_col)
+        grid.addLayout(c1)
+        grid.addLayout(c2)
+        grid.addLayout(c3)
+        grid.addLayout(c4)
 
         scroll.setWidget(container)
         layout.addWidget(scroll)
 
-        # ── 应用按钮 (在 scroll 外, 固定底部) ──
+        # ── 应用按钮 (固定底部) ──
         self.btnApply = QPushButton("✅ 应用配置到设备")
         self.btnApply.setStyleSheet(
-            "QPushButton { padding: 6px; font-weight: bold; "
-            "background: #224422; border: 1px solid #484; }"
-            "QPushButton:hover { background: #336633; }"
+            "QPushButton {"
+            "  padding: 8px; font-weight: bold; font-size: 13px;"
+            "  background: #4CAF50; color: white;"
+            "  border: 1px solid #388E3C; border-radius: 4px;"
+            "}"
+            "QPushButton:hover { background: #66BB6A; }"
+            "QPushButton:pressed { background: #388E3C; }"
         )
         self.btnApply.clicked.connect(self._apply)
         layout.addWidget(self.btnApply)
