@@ -203,7 +203,6 @@ class ArtDevice(AcquisitionDevice):
             # 5. 启动
             task.start()
             self._running = True
-            self._seq = 0
 
             # 6. 启动采集工作线程 (等待 DONE 事件 → 读取 → 回调 → rearm)
             if self._acquire_thread is None or not self._acquire_thread.is_alive():

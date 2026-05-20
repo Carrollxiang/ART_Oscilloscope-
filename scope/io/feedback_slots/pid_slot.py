@@ -309,9 +309,9 @@ class PidFeedbackSlot(FeedbackSlot):
                 service = conn.root.get_ad9910_service()
                 service.adjust_amplitude(t.device_id, t.profile, delta_amp)
                 self._count_sent()
-                logger.debug(
-                    f"[{self.slot_id}] adjust_amplitude("
-                    f"dev=0x{t.device_id:04X}, prof=0x{t.profile:02X}, "
+                logger.info(
+                    f"[{self.slot_id}] sent #{self._sent_count}: "
+                    f"adjust(dev=0x{t.device_id:04X}, prof=0x{t.profile:02X}, "
                     f"delta={delta_amp:.6f})"
                 )
             finally:
