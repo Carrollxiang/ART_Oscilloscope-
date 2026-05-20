@@ -252,10 +252,12 @@ class PidFeedbackSlot(FeedbackSlot):
         key = self._pid_config.measurement_key
         value = payload.get(key)
         if value is None:
-            logger.warning(
-                f"[{self.slot_id}] measurement_key='{key}' 不在 payload 中, "
-                f"可用 keys: {list(payload.keys())}"
-            )
+            # 每 5 次打印一次, 避免刷屏
+            if self._sent_count % 5 == 0:
+                logger.warning(
+                    f"[{self.slot_id}] measurement_key='{key}' 不在 payload 中, "
+                    f"可用 keys: {list(payload.keys())[:5]}..."
+                )
             return
 
         self._latest_value = float(value)
@@ -263,8 +265,7 @@ class PidFeedbackSlot(FeedbackSlot):
         # PID 计算
         out = self._pid.step(self._latest_value)
         if out is None:
-            logger.debug(f"[{self.slot_id}] 死区内, delta=0 (measured={self._latest_value:.4f})")
-            return
+            return  # 死区内, 不发送
 
         logger.info(
             f"[{self.slot_id}] PID output={out:.6f} "

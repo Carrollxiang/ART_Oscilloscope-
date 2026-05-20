@@ -305,6 +305,12 @@ class ScopeApp:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
+            # 诊断: 每 10 帧打印一次 measurements keys
+            if result.sequence_num % 10 == 0:
+                keys = list(result.measurements.keys())
+                vals = {k: round(v, 3) for k, v in result.measurements.items()}
+                logger.info(f"measurements[{result.sequence_num}]: {vals}")
+
             # 迷你图数据
             active_subs: set[str] = set()
             for slot_info in self.feedback_mgr.list_slots():
@@ -314,6 +320,13 @@ class ScopeApp:
                         if k in active_subs}
             if filtered:
                 self.main_win.mini_chart.add_data(filtered)
+            elif active_subs:
+                # 有订阅但没有匹配 → 诊断
+                logger.warning(
+                    f"payload key 不匹配! "
+                    f"measurements keys={list(result.measurements.keys())[:5]}... "
+                    f"subscribed={list(active_subs)[:5]}..."
+                )
 
             # 更新 UI (跨线程安全)
             self.main_win.data_received.emit(result)
