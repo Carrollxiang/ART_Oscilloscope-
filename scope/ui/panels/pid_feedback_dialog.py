@@ -122,11 +122,14 @@ class PidFeedbackDialog(QDialog):
         f2.addRow("目标值", self.spinPreset)
 
         self.spinKp = QDoubleSpinBox()
-        self.spinKp.setRange(-100, 100); self.spinKp.setDecimals(4); self.spinKp.setValue(0.03); self.spinKp.setFixedWidth(100)
+        self.spinKp.setRange(-100, 100); self.spinKp.setDecimals(4); self.spinKp.setValue(0.03)
+        self.spinKp.setSingleStep(0.01); self.spinKp.setFixedWidth(100)
         self.spinKi = QDoubleSpinBox()
-        self.spinKi.setRange(-100, 100); self.spinKi.setDecimals(4); self.spinKi.setValue(0.0); self.spinKi.setFixedWidth(100)
+        self.spinKi.setRange(-100, 100); self.spinKi.setDecimals(4); self.spinKi.setValue(0.0)
+        self.spinKi.setSingleStep(0.01); self.spinKi.setFixedWidth(100)
         self.spinKd = QDoubleSpinBox()
-        self.spinKd.setRange(-100, 100); self.spinKd.setDecimals(4); self.spinKd.setValue(0.0); self.spinKd.setFixedWidth(100)
+        self.spinKd.setRange(-100, 100); self.spinKd.setDecimals(4); self.spinKd.setValue(0.0)
+        self.spinKd.setSingleStep(0.01); self.spinKd.setFixedWidth(100)
         f2.addRow("Kp", self.spinKp)
         f2.addRow("Ki", self.spinKi)
         f2.addRow("Kd", self.spinKd)
@@ -140,7 +143,7 @@ class PidFeedbackDialog(QDialog):
 
         self.spinDeadband = QDoubleSpinBox()
         self.spinDeadband.setRange(0, 10); self.spinDeadband.setDecimals(4); self.spinDeadband.setValue(0.0)
-        self.spinDeadband.setSuffix(" (0=禁用)")
+        self.spinDeadband.setSingleStep(0.01); self.spinDeadband.setSuffix(" (0=禁用)")
         f2.addRow("死区", self.spinDeadband)
         lay.addWidget(g2)
 

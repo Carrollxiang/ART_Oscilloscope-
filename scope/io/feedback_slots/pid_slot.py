@@ -177,8 +177,11 @@ class PidFeedbackSlot(FeedbackSlot):
 
     def get_info(self) -> SlotInfo:
         """覆盖基类, 从 PidParams 读取 PID 字段。"""
-        from .base import SlotInfo
         p = self._pid_config.pid
+        logger.debug(
+            f"[{self.slot_id}] get_info: sent={self._sent_count}, "
+            f"errors={self._error_count}, status={self._status.value}"
+        )
         return SlotInfo(
             slot_id=self._config.slot_id,
             label=self._config.label or self._config.slot_id,
