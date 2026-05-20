@@ -8,7 +8,7 @@
 
 | 原则 | 说明 |
 |------|------|
-| **硬件触发驱动 + QTimer 帧循环** | 硬件触发驱动采集(FINITE模式), QTimer 打拍子触发读取, 通过 rearm() 重建 Task 等待下一次触发 |
+| **硬件触发 + 事件驱动** | NI-DAQmx `register_done_event` 回调驱动采集线程, 零轮询, 无 QTimer 阻塞 |
 | **硬件抽象隔离** | 通过 `AcquisitionDevice` 接口隔离硬件差异，上位机开发可先跑模拟器 |
 | **反馈即插即用 (Hot-plug Feedback)** | 反馈通道可在运行时随时添加、移除、修改，不阻塞主采集流程 |
 | **Watchdog 自愈** | 采集链路具备超时检测 → 自动重连 → 状态恢复的闭环能力 |
@@ -211,24 +211,31 @@ math_pipeline = [
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                       波形视图                                │
-│  右上角图例: ■CH1(黄) ■CH2(青) ■CH3(紫) ■CH4(绿) ...       │
-│  点击图例切换通道显隐, 隐藏→灰色+ (隐藏) 标注                │
+│  右上角图例 (2列, colCount=2): CH1~CH16 点击切换显隐          │
 │  触发位置标记 (白色虚线)                                      │
 │  自动降采样: >2000 点/通道时压缩至 ~1500 点 (性能优化)       │
 ├──────────────────────────────────────────────────────────────┤
 │  [通道]  [设备设置]  [测量]  [反馈]                           │
 │  ┌────────┬──────────┬──────────┬────────────┐                │
-│  │CH1 ☑   │ 设备     │名称/通道 │ rpyc slot  │                │
-│  │1.0V/div│ Dev42    │/测量/时  │ ●运行      │                │
-│  │DC ▼    │ AI通道   │间段 → 值 │ [继续]     │                │
-│  │1.0X    │ ai0:15   │[+添加]   │ [+添加]    │                │
-│  │...     │ 硬件触发 │[✕删除]  │ [编辑]     │                │
-│  │CH16 ☑  │ ai12 1V  │          │ [删除]     │                │
-│  │(滚动)  │ [测试]   │          │            │                │
-│  │        │ [✅应用] │          │            │                │
+│  │CH1 ☑   │ 设备     │ 触发     │ 采集参数   │ 通讯测试     │
+│  │-10~+10V│ Dev42    │ ai12 1V  │ 接地 NRSE  │ [🧪测试]    │
+│  │        │ ai0:15   │ rising   │ 30k Sa/s   │              │
+│  │CH2 ☑   │          │          │ 0.5s=15k   │              │
+│  │...     │          │          │ FINITE     │              │
+│  │(2列)   │          │          │            │              │
 │  └────────┴──────────┴──────────┴────────────┘                │
+│                        [✅ 应用配置到设备]                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ 测量项    通道  测量   起始ms 结束ms  值±σ 单位           │  │
+│  │ CH1 幅值  CH1   Vpp    0.0   500.0   5.30±0.2 V          │  │
+│  │ [+ 添加测量]                                              │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ [+ 添加 PID 反馈]                                         │  │
+│  │ [▶] [●] ch1-fb-dds  PID  ●idle  [开始] [编辑]            │  │
+│  └──────────────────────────────────────────────────────────┘  │
 ├──────────────────────────────────────────────────────────────┤
-│ 采样率: 30kSa/s │ 帧 #: 42 │ 触发: ai12 1V │ 反馈: 1/2 活跃 │
+│ 采样率: 30k │ 帧 #: 42 │ 触发: ai12 1V │ 反馈: 1/2 活跃     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -236,17 +243,15 @@ math_pipeline = [
 
 | 面板 | 文件 | 说明 |
 |------|------|------|
-| 通道 | `channel_panel.py` | 16 通道复选框/垂直档位/耦合/探头比, 复选框同步波形显隐, 默认全部开启 |
-| **设备设置** | `device_panel.py` | 替代原"触发"Tab, 含 ART 全部配置 + 硬件触发 + 通讯测试 + 应用按钮, 2 列布局 |
-| 测量 | `measurement_panel.py` | 动态行: 名称+通道+测量项+起始/结束时间 → 窗口内计算值, 可任意增删 |
-| 反馈 | `feedback_panel.py` | 动态 slot 列表, 添加/编辑/暂停/继续/删除, 支持 rpyc |
+| 通道 | `channel_panel.py` | 16 通道 2 列网格, 每行: [☑ CHn] [最小V] [最大V], 逐通道独立电压量程 |
+| **设备设置** | `device_panel.py` | 4 列布局: 设备 \| 硬件触发 \| 采集参数 \| 通讯测试, 含绿色应用按钮 |
+| 测量 | `measurement_panel.py` | 动态行: 名称+通道+测量项+起始/结束(ms) → 值 ± 标准差, 200帧缓存 |
+| 反馈 | `feedback_panel.py` | PID 反馈卡片列表: 开始/暂停/继续三态, 可折叠详情, 自动暂停通知 |
+| PID 对话框 | `pid_feedback_dialog.py` | AD9910/RTMQ 独立选择, PID 参数 (Kp/Ki/Kd/I限幅/死区) |
 
 **波形视图特性** (waveform_view.py):
-- 16 通道叠加, 16 色循环 (黄/青/紫/绿/橙/粉/天蓝/淡绿...)
-- 右上角图例, 点击切换显隐 (隐藏时变灰)
-- 触发位置白色虚线标记
-- 通道面板复选框同步控制显隐
-- 自动降采样: 每通道 >2000 点 → 压缩至 ~1500 点
+- 16 通道叠加, 16 色循环, pyqtgraph `colCount=2` 图例, `sigSampleClicked` 切换显隐
+- 自动降采样: 每通道 >2000 点 → ~1500 点
 - OpenGL 加速渲染 (fallback 安全)
 
 ### 第 6 层 — 网络与 I/O 层
@@ -305,47 +310,54 @@ class AnalysisResult:
 
 ---
 
-## 4. 数据流时序
+## 4. 数据流时序 (v0.3 事件驱动)
 
 ```
-[ART 采集卡 / SimulatorDevice]
+[ART 采集卡]
     │
-    │ FINITE 模式: 等待触发 → 采样完成 → 数据就绪
+    │ Task.start() → 等待硬件触发 (FINITE模式)
+    │ 触发信号 → Task 采集完成 → DONE 事件
     ▼
-[QTimer (500ms) 驱动]
-    │
-    │ QTimer 每 500ms 触发一次 _on_timer_tick
+[NI-DAQmx DONE 回调 (DLL 线程)]
+    │ Threading.Event.set()
     ▼
-[ScopeApp._on_timer_tick()]
-    │
-    ├→ read_chunk() 阻塞等待触发数据 (最长 _read_timeout=5s)
-    │   │ FINITE 模式: 触发信号到位 → 采集完成 → 返回数据
-    │   │ 超时 → TimeoutError (跳过, 下一帧继续)
+[ArtDevice._acquire_worker (采集线程)]
+    │ Event.wait() → 唤醒 → read_chunk() → _data_callback(chunk)
+    ▼
+[ScopeApp._on_frame(chunk)]          ← 采集线程调用
     │
     ├→ make_analysis_result() → AnalysisResult
     │
     ├→ Pipeline.process(result)
-    │   ├─ AutoMeasure (Vpp, Freq...)
+    │   ├─ AutoMeasure (Vpp, Freq...) → result.measurements
     │   ├─ MathOp (CH1+CH2 → MATH1)
     │   └─ FFTAnalyze (频谱)
     │
-    ├→ UI 刷新 (通过 pyqtSignal data_received)
+    ├→ UI 刷新 (pyqtSignal data_received → 主线程)
     │   └─ WaveformView.update_waveform() → 降采样 → pyqtgraph 绘制
+    │   └─ MeasurementPanel.update_from_result() → 值±σ 显示
     │
-    ├→ FeedbackManager.dispatch(result)  (asyncio)
+    ├→ FeedbackManager.dispatch(result)  ← asyncio.run_coroutine_threadsafe
+    │   │  并发执行所有 RUNNING 状态的 slot.on_data(payload)
+    │   │
+    │   ├─ PidFeedbackSlot.on_data(payload)
+    │   │   │  提取 measurement_key → PID.step() → _send_ad9910() / _send_rtmq()
+    │   │   └─ RpycConnectionPool.acquire() → rpyc call → release()
+    │   │
+    │   └─ (跳过 IDLE / PAUSED 状态的 slot)
     │
-    └→ device.rearm()  →  重建 Task → 等待下一次触发
-        │ _close_task() + start_acquisition()
+    └→ device.rearm()  ← _close_task() + start_acquisition()
+        │  重建 Task + 注册新 DONE 回调
         │
-        └→ [等待 QTimer 下一拍]
+        └→ 等待下一次硬件触发 (零轮询)
 ```
 
 **关键特性**:
-- 采集由 **QTimer + FINITE 模式** 驱动, 非独立线程 (v0.2 过渡方案)
-- 硬件触发信号到来 → Task 采集完成 → QTimer 读取 → 处理 → rearm
-- 每次触发产生一帧完整数据 (如 30k Sa/s × 0.5s = 15000 点)
-- 反馈的"周期"由 QTimer 频率 (500ms) 决定, 但数据量由触发频率决定
-- **后续目标**: 引入 qasync 将 QTimer 替换为 asyncio 协程, 采集/UI/网络统一事件循环
+- 采集由 **register_done_event 事件驱动**, 零 CPU 轮询
+- 无触发信号时采集线程挂在 `Event.wait()`, UI 完全流畅
+- 每次触发一帧 (30k Sa/s × 0.5s = 15000 点 × 16ch)
+- 反馈周期 = 硬件触发频率, PID 状态封装在每个 slot 实例内
+- SimulatorDevice 保留 QTimer 降级路径 (`--mock` 模式)
 
 ---
 
@@ -500,13 +512,59 @@ FeedbackManager.dispatch()        ← asyncio context
 
 关键点: rpyc 是同步库，每个 `acquire` 可能阻塞等待。通过 `asyncio.get_event_loop().run_in_executor()` 将阻塞操作扔到线程池，不阻塞主事件循环。
 
+### PID 反馈插槽 (PidFeedbackSlot)
+
+继承 `FeedbackSlot`, 实现闭环 PID 控制:
+
+```python
+@dataclass
+class PidParams:
+    preset_value: float = 0.8      # 目标值
+    kp: float = 0.03               # P 系数
+    ki: float = 0.0                # I 系数 (0=纯P)
+    kd: float = 0.0                # D 系数
+    i_limit: float = 0.1           # 积分限幅 (抗饱和)
+    output_limit: float = 0.1      # 输出限幅
+    deadband: float = 0.0          # 死区
+    error_history_size: int = 10   # I 窗口
+
+class PidController:
+    def step(self, measured_value) -> float | None
+    # P = Kp·error, I = Ki·Σerrors (窗口+限幅), D = Kd·Δerror
+    # 死区内返回 None, 不发送
+
+class PidFeedbackSlot(FeedbackSlot):
+    async def on_data(self, payload):
+        value = payload[measurement_key]
+        delta = self._pid.step(value)
+        if delta is not None:
+            await self._send_ad9910(target, delta)  # 或 _send_rtmq
+```
+
+**设备定位 (严格分离)**:
+
+```python
+@dataclass
+class Ad9910Target:
+    ip: str; port: int = 3251
+    device_id: int = 0x0D11       # hex SN
+    profile: int = 0x00
+
+@dataclass
+class RtmqTarget:
+    ip: str; port: int = 18861
+    card_index: int = 2           # RWG 板卡号
+    sbg_channel: int = 0x60       # 边带通道
+```
+
 ### 协议支持现状
 
 | 协议 | 状态 | 说明 |
 |------|------|------|
-| **rpyc** | ✅ 已实现 (Phase 1) | 主要协议，带连接池 |
-| null (调试) | ✅ 已实现 (Phase 1) | 只打日志，不产生网络 I/O |
-| UDP | 🔲 后续 | 标准库 socket，零依赖 |
+| **rpyc (PID)** | ✅ 已实现 | AD9910 + RTMQ 闭环反馈, 带连接池 |
+| rpyc (通用) | ✅ 已实现 | 通用数据推送, 带连接池 |
+| null (调试) | ✅ 已实现 | 只打日志, 不产生网络 I/O |
+| UDP | 🔲 后续 | 标准库 socket |
 | 串口 | 🔲 后续 | pyserial |
 | Modbus | 🔲 后续 | pymodbus |
 | MQTT / HTTP | 🔲 按需 | 暂未规划 |

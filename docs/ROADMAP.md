@@ -158,13 +158,15 @@ scope/ui/
 
 | 项 | 原始设计 | 最终实现 |
 |----|---------|---------|
-| 布局 | 左波形 + 右侧面板 | **上波形 + 下配置**, waveformContainer stretch=3 |
-| 触发 | 独立的"触发"Tab | 合并入 **设备设置** Tab (device_panel.py) |
-| 测量 | 固定表格 (行×通道) | **动态行**: 每行独立选名称/通道/测量项/时间段 |
-| 波形图例 | 无 | **右上角图例**, 点击切换显隐, 隐藏变灰 |
-| 通道数 | 4 (ai0:3) | **16 (ai0:15)**, 颜色循环 16 色 |
-| 通道控制 | 无 | 复选框实时切换波形显隐, 图例同步, 默认全部开启 |
-| 采集帧率 | 33ms (~30fps) | **500ms** (匹配 0.5s 帧时长, FINITE 模式) |
+| 布局 | 左波形 + 右侧面板 | **上波形 + 下配置** |
+| 触发 | 独立 Tab | **设备设置** 4 列面板 (设备 \| 触发 \| 采集 \| 测试) |
+| 测量 | 固定表格 | **动态行**: 名称+通道+测量项+ms时间窗 → 值±σ |
+| 波形图例 | 无 | **2列图例** (colCount=2), sigSampleClicked 切换 |
+| 通道数 | 4 | **16 (ai0:15)**, 2列网格, 逐通道电压量程 |
+| 通道控制 | 垂直档位/耦合/探头 | **逐通道 min/max 电压量程** (硬件支持) |
+| 采集驱动 | QTimer 轮询 | **register_done_event 事件驱动** (v0.3) |
+| 反馈 | rpyc 通用推送 | **PID 闭环反馈** (AD9910/RTMQ 独立) |
+| 采集帧率 | 33ms | 由**触发频率**决定 (非固定) |
 
 ---
 
@@ -211,6 +213,32 @@ scope/ui/
 ---
 
 ## Phase 5 — 打磨与扩展 (持续)
+
+## Phase 5 — PID 反馈系统 (已完成 ✅)
+
+### 实际产出
+
+```
+scope/io/feedback_slots/
+├── pid_slot.py              # PidFeedbackSlot + PidController + Target dataclasses
+scope/ui/panels/
+│── pid_feedback_dialog.py   # AD9910/RTMQ PID 配置对话框
+feedback_panel.py            # 扩展: + 添加 PID 按钮, idle/start/pause 三态
+
+docs/FEEDBACK_DESIGN.md      # 设计方案文档
+```
+
+### 关键设计
+
+| 项 | 说明 |
+|----|------|
+| AD9910 / RTMQ 分离 | `Ad9910Target(ip, port, device_id, profile)` vs `RtmqTarget(ip, port, card_index, sbg_channel)` |
+| PID 状态封装 | `PidController` 类, deque 误差缓存, 死区, I 抗饱和 |
+| 三态按钮 | 创建→IDLE, 点开始→RUNNING, 点暂停→PAUSED, 点继续→RUNNING |
+| connection pool | 每个 slot 独立 `RpycConnectionPool` (min=1, max=2) |
+| 语义名订阅 | local_key=CH1_Vpp (取值), remote_key=显示名 (payload key) |
+
+---
 
 ### 可能的后续方向
 

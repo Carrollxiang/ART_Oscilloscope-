@@ -1,6 +1,6 @@
 # 反馈系统落地方案
 
-> 状态: 方案讨论中 · 不执行
+> 状态: ✅ 已实现 (v0.3) — 详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 

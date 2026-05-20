@@ -95,31 +95,32 @@ project-root/
 │   │
 │   ├── io/                     # 网络与存储
 │   │   ├── __init__.py
-│   │   ├── feedback_manager.py # FeedbackManager
+│   │   ├── feedback_manager.py # FeedbackManager (asyncio 调度)
 │   │   └── feedback_slots/
 │   │       ├── __init__.py
-│   │       ├── base.py         # FeedbackSlot ABC
-│   │       ├── rpyc_slot.py    # ✅ rpyc 协议
-│   │       ├── rpyc_pool.py    # ✅ rpyc 连接池
+│   │       ├── base.py         # FeedbackSlot ABC + DataSubscription
+│   │       ├── pid_slot.py     # ✅ PidFeedbackSlot + PidController
+│   │       ├── rpyc_slot.py    # ✅ rpyc 通用推送
+│   │       ├── rpyc_pool.py    # ✅ rpyc 连接池 (线程安全)
 │   │       └── null_slot.py    # ✅ 调试用
 │   │
 │   ├── ui/                     # PyQt6 界面
 │   │   ├── __init__.py
-│   │   ├── main_window.py      # 主窗口控制器
+│   │   ├── main_window.py      # 主窗口控制器 + 信号桥接
 │   │   ├── main_window.ui      # Qt Designer 布局
-│   │   ├── waveform_view.py    # pyqtgraph 波形 + 图例 + 降采样
+│   │   ├── waveform_view.py    # pyqtgraph 波形 + 2列图例 + 降采样
 │   │   ├── mini_chart.py       # 迷你趋势图
 │   │   └── panels/
-│   │       ├── channel_panel.py      # 16 通道控制
-│   │       ├── device_panel.py       # 设备设置 (替代触发 Tab)
-│   │       ├── measurement_panel.py  # 动态测量行
-│   │       ├── feedback_panel.py     # 反馈 slot 管理
-│   │       ├── feedback_dialog.ui    # 对话框布局
-│   │       └── art_config_dialog.py  # (旧, 可清理)
+│   │       ├── channel_panel.py       # 16 通道 2列, 逐通道电压量程
+│   │       ├── device_panel.py        # 设备设置 4列 (设备|触发|采集|测试)
+│   │       ├── measurement_panel.py   # 动态测量行 + 标准差
+│   │       ├── feedback_panel.py      # PID 反馈卡片 (idle/run/pause)
+│   │       ├── pid_feedback_dialog.py # PID + AD9910/RTMQ 配置
+│   │       └── art_config_dialog.py   # (旧)
 │   │
 │   └── config/
 │       ├── __init__.py
-│       └── settings.py
+│       └── settings.py         # 配置保存/加载 (JSON)
 │
 └── tests/
     ├── test_phase0.py           # ✅ 数据模型 + 模拟器 (8 tests)
@@ -138,7 +139,8 @@ project-root/
 | `qasync` | ≥0.27 | Qt + asyncio 桥接 |
 | `numpy` | ≥1.24 | 数值计算基础库 |
 | **`rpyc`** | **≥5.3** | **实验室仪器 RPC 协议 (主要反馈通道)** |
-| **`artdaq`** | **内置** | **ART 采集卡驱动 (NI-DAQmx 兼容)** |
+| **`artdaq`** | **内置** | **ART 采集卡驱动 (NI-DAQmx 兼容), register_done_event 事件驱动** |
+| **`rpyc`** | **≥5.3** | **PID 反馈 RPC 协议 (AD9910 DDS / RTMQ 白盒子)** |
 | `pyusb` | ≥1.3 | USB 通信 (备选, 已安装) |
 | `pyserial` | ≥3.5 | 串口通信 (已安装) |
 | `scipy` | ≥1.10 | 滤波器设计 (已安装) |
