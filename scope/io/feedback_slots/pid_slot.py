@@ -87,6 +87,7 @@ class PidSlotConfig(SlotConfig):
     pid: PidParams = field(default_factory=PidParams)
     measurement_key: str = ""          # 订阅的测量项, 如 "CH1_Vpp"
     target: Optional[TargetConfig] = None
+    connect_timeout: float = 5.0       # rpyc 连接超时 (秒)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -187,14 +188,14 @@ class PidFeedbackSlot(FeedbackSlot):
             port=t.port,
             min_size=1,
             max_size=2,
-            acquire_timeout=self._pid_config.get("connect_timeout", 5.0),
+            connect_timeout=self._pid_config.connect_timeout,
         )
         self._status = SlotStatus.RUNNING
         logger.info(f"[{self.slot_id}] PID 反馈已启动 → {self._get_target()}")
 
     async def stop(self):
         if self._pool is not None:
-            await self._pool.close_all()
+            self._pool.close()
             self._pool = None
         self._status = SlotStatus.IDLE
         logger.info(f"[{self.slot_id}] PID 反馈已停止")
@@ -261,7 +262,7 @@ class PidFeedbackSlot(FeedbackSlot):
     async def _send_ad9910(self, t: Ad9910Target, delta_amp: float):
         """通过 rpyc 向 AD9910 推送幅度调整。"""
         try:
-            conn = await self._pool.acquire()
+            conn = self._pool.acquire()
             try:
                 service = conn.root.get_ad9910_service()
                 service.adjust_amplitude(t.device_id, t.profile, delta_amp)
@@ -272,14 +273,14 @@ class PidFeedbackSlot(FeedbackSlot):
                     f"delta={delta_amp:.6f})"
                 )
             finally:
-                await self._pool.release(conn)
+                self._pool.release(conn)
         except Exception as e:
             self._count_error(str(e))
 
     async def _send_rtmq(self, t: RtmqTarget, delta_amp: float):
         """通过 rpyc 向 RTMQ 白盒子推送幅度调整。"""
         try:
-            conn = await self._pool.acquire()
+            conn = self._pool.acquire()
             try:
                 # 获取当前幅度, 计算新幅度
                 rwg = conn.root.get_rwg_info()
@@ -297,6 +298,6 @@ class PidFeedbackSlot(FeedbackSlot):
                     f"(delta={delta_amp:.6f})"
                 )
             finally:
-                await self._pool.release(conn)
+                self._pool.release(conn)
         except Exception as e:
             self._count_error(str(e))

@@ -312,8 +312,9 @@ class FeedbackCard(QFrame):
 
         row.addStretch()
 
-        # 暂停/继续
-        self._btnPause = QPushButton("继续" if info.status == "paused" else "暂停")
+        # 暂停/继续/开始
+        btn_text = {"idle": "开始", "running": "暂停", "paused": "继续"}.get(info.status, "开始")
+        self._btnPause = QPushButton(btn_text)
         self._btnPause.setFixedSize(44, 22)
         self._btnPause.setStyleSheet("font-size: 10px; padding: 2px 4px;")
         self._btnPause.clicked.connect(lambda: self._on_pause(self._slot_id) if self._on_pause else None)
@@ -380,8 +381,9 @@ class FeedbackCard(QFrame):
         # 状态灯
         ms = getattr(info, 'measurement_status', 'unknown')
         self._led.set_color(MEAS_LED.get(ms, "#888"))
-        # 暂停按钮
-        self._btnPause.setText("继续" if info.status == "paused" else "暂停")
+        # 开始/暂停/继续 按钮
+        btn_text = {"idle": "开始", "running": "暂停", "paused": "继续"}.get(info.status, "开始")
+        self._btnPause.setText(btn_text)
         # 重建详情
         old = self._detail
         self._detail = self._build_detail(info)
@@ -527,7 +529,7 @@ class FeedbackPanel:
                 cfg.measurement_key = cfg.subscriptions[0].local_key
             try:
                 async def do():
-                    await self._mgr.add_slot(PidFeedbackSlot(cfg))
+                    await self._mgr.add_slot(PidFeedbackSlot(cfg), auto_start=False)
                 self._run_async(do())
                 self._refresh()
             except KeyError:
@@ -544,13 +546,15 @@ class FeedbackPanel:
     def _on_pause(self, slot_id: str):
         slot = self._mgr.get_slot(slot_id)
         if not slot: return
-        if slot.status.value == "running":
-            async def do_pause(): await slot.pause()
-        elif slot.status.value == "paused":
-            async def do_pause(): await slot.resume()
+        st = slot.status.value
+        if st == "idle":
+            async def do_start(): await slot.start(); self._run_async(do_start())
+        elif st == "running":
+            async def do_pause(): await slot.pause(); self._run_async(do_pause())
+        elif st == "paused":
+            async def do_resume(): await slot.resume(); self._run_async(do_resume())
         else:
             return
-        self._run_async(do_pause())
         self._refresh()
 
     def get_active_count(self) -> tuple:
