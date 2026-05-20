@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPainter, QBrush as QGBrush
 
 from scope.io import FeedbackManager, RpycFeedbackSlot, RpycSlotConfig, DataSubscription
+from scope.io.feedback_slots.pid_slot import PidFeedbackSlot, PidSlotConfig
 
 logger = logging.getLogger(__name__)
 
@@ -429,10 +430,15 @@ class FeedbackPanel:
                 if item.widget():
                     item.widget().deleteLater()
         top = QHBoxLayout()
-        btn_add = QPushButton("+ 添加")
+        btn_add = QPushButton("+ 添加 RPC")
         btn_add.setStyleSheet("color: #228822; font-weight: bold;")
         btn_add.clicked.connect(self._on_add)
         top.addWidget(btn_add)
+        btn_pid = QPushButton("+ 添加 PID")
+        btn_pid.setStyleSheet("color: #CC6600; font-weight: bold;")
+        btn_pid.clicked.connect(self._on_add_pid)
+        top.addWidget(btn_pid)
+        top.addStretch()
         layout.addLayout(top)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -509,6 +515,25 @@ class FeedbackPanel:
                 self._refresh()
             except Exception as e:
                 QMessageBox.critical(self._parent, "错误", f"更新失败: {e}")
+
+    def _on_add_pid(self):
+        """打开 PID 反馈配置对话框。"""
+        from .pid_feedback_dialog import PidFeedbackDialog
+        dlg = PidFeedbackDialog(self._parent, measurement_items=self._get_meas_items())
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            cfg = dlg.get_config()
+            # 使用第一个订阅的 local_key 填充 measurement_key
+            if not cfg.measurement_key and cfg.subscriptions:
+                cfg.measurement_key = cfg.subscriptions[0].local_key
+            try:
+                async def do():
+                    await self._mgr.add_slot(PidFeedbackSlot(cfg))
+                self._run_async(do())
+                self._refresh()
+            except KeyError:
+                QMessageBox.warning(self._parent, "重复", f'"{cfg.slot_id}" 已存在')
+            except Exception as e:
+                QMessageBox.critical(self._parent, "错误", f"添加失败: {e}")
 
     def _on_remove(self, slot_id: str):
         if QMessageBox.question(self._parent, "确认", f'删除反馈目标 "{slot_id}"?',
