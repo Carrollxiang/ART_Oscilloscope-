@@ -215,12 +215,17 @@ class PidFeedbackSlot(FeedbackSlot):
     async def on_data(self, payload: dict[str, Any]):
         t = self._pid_config.target
         if t is None:
+            logger.warning(f"[{self.slot_id}] 无目标设备, 跳过")
             return
 
         # 提取测量值
         key = self._pid_config.measurement_key
         value = payload.get(key)
         if value is None:
+            logger.warning(
+                f"[{self.slot_id}] measurement_key='{key}' 不在 payload 中, "
+                f"可用 keys: {list(payload.keys())}"
+            )
             return
 
         self._latest_value = float(value)
@@ -228,7 +233,13 @@ class PidFeedbackSlot(FeedbackSlot):
         # PID 计算
         out = self._pid.step(self._latest_value)
         if out is None:
-            return  # 死区内, 不发送
+            logger.debug(f"[{self.slot_id}] 死区内, delta=0 (measured={self._latest_value:.4f})")
+            return
+
+        logger.info(
+            f"[{self.slot_id}] PID output={out:.6f} "
+            f"(measured={self._latest_value:.4f}, preset={self._pid_config.pid.preset_value:.4f})"
+        )
 
         # RPC 发送
         if isinstance(t, Ad9910Target):
