@@ -432,14 +432,10 @@ class FeedbackPanel:
                 if item.widget():
                     item.widget().deleteLater()
         top = QHBoxLayout()
-        btn_add = QPushButton("+ 添加 RPC")
-        btn_add.setStyleSheet("color: #228822; font-weight: bold;")
-        btn_add.clicked.connect(self._on_add)
+        btn_add = QPushButton("+ 添加 PID 反馈")
+        btn_add.setStyleSheet("color: #CC6600; font-weight: bold;")
+        btn_add.clicked.connect(self._on_add_pid)
         top.addWidget(btn_add)
-        btn_pid = QPushButton("+ 添加 PID")
-        btn_pid.setStyleSheet("color: #CC6600; font-weight: bold;")
-        btn_pid.clicked.connect(self._on_add_pid)
-        top.addWidget(btn_pid)
         top.addStretch()
         layout.addLayout(top)
         scroll = QScrollArea()
@@ -473,7 +469,7 @@ class FeedbackPanel:
             if info.slot_id in self._cards:
                 self._cards[info.slot_id].update_info(info)
         for info in infos:
-            if info.auto_paused and info.slot_id not in self._notified_auto_pause:
+            if info.auto_paused and info.slot_id not in self._notified_auto_pause and info.consecutive_errors > 0:
                 self._notified_auto_pause.add(info.slot_id)
                 QMessageBox.warning(self._parent, "自动暂停",
                     f"'{info.slot_id}' 连续 {info.consecutive_errors} 次失败, 已暂停。\n最后错误: {info.last_error}")
@@ -484,11 +480,14 @@ class FeedbackPanel:
         return self._meas_panel.get_subscriptions() if self._meas_panel else []
 
     def _run_async(self, coro):
-        """在 async loop 上执行协程, 避免 asyncio.run 闪窗。"""
+        """在 async loop 上执行协程。"""
         if self._async_loop and self._async_loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, self._async_loop)
         else:
-            asyncio.run(coro)
+            try:
+                asyncio.run(coro)
+            except RuntimeError:
+                pass  # 忽略嵌套事件循环
 
     def _on_add(self):
         dlg = FeedbackDialog(self._parent, measurement_items=self._get_meas_items())
@@ -506,17 +505,35 @@ class FeedbackPanel:
     def _on_edit(self, slot_id: str):
         slot = self._mgr.get_slot(slot_id)
         if not slot: return
-        dlg = FeedbackDialog(self._parent, slot_id=slot_id,
-                             measurement_items=self._get_meas_items(),
-                             existing_config=getattr(slot, '_rpyc_config', None))
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            try:
-                async def do():
-                    await slot.reconfigure(dlg.get_config())
-                self._run_async(do())
-                self._refresh()
-            except Exception as e:
-                QMessageBox.critical(self._parent, "错误", f"更新失败: {e}")
+
+        # 根据 slot 类型打开对应的对话框
+        if isinstance(slot, PidFeedbackSlot):
+            from .pid_feedback_dialog import PidFeedbackDialog
+            dlg = PidFeedbackDialog(
+                self._parent, slot_id=slot_id,
+                measurement_items=self._get_meas_items(),
+                existing_config=slot._pid_config,
+            )
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                try:
+                    new_cfg = dlg.get_config()
+                    async def do_pid(): await slot.reconfigure(new_cfg)
+                    self._run_async(do_pid())
+                    self._refresh()
+                except Exception as e:
+                    QMessageBox.critical(self._parent, "错误", f"更新失败: {e}")
+        else:
+            dlg = FeedbackDialog(self._parent, slot_id=slot_id,
+                                 measurement_items=self._get_meas_items(),
+                                 existing_config=getattr(slot, '_rpyc_config', None))
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                try:
+                    async def do():
+                        await slot.reconfigure(dlg.get_config())
+                    self._run_async(do())
+                    self._refresh()
+                except Exception as e:
+                    QMessageBox.critical(self._parent, "错误", f"更新失败: {e}")
 
     def _on_add_pid(self):
         """打开 PID 反馈配置对话框。"""
@@ -548,11 +565,14 @@ class FeedbackPanel:
         if not slot: return
         st = slot.status.value
         if st == "idle":
-            async def do_start(): await slot.start(); self._run_async(do_start())
+            async def do_start(): await slot.start()
+            self._run_async(do_start())
         elif st == "running":
-            async def do_pause(): await slot.pause(); self._run_async(do_pause())
+            async def do_pause(): await slot.pause()
+            self._run_async(do_pause())
         elif st == "paused":
-            async def do_resume(): await slot.resume(); self._run_async(do_resume())
+            async def do_resume(): await slot.resume()
+            self._run_async(do_resume())
         else:
             return
         self._refresh()
