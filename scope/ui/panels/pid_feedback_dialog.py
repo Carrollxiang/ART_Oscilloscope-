@@ -220,9 +220,9 @@ class PidFeedbackDialog(QDialog):
                 measurement_key = f"{m['channel']}_{m['meas_key']}"
                 subs.append(DataSubscription(
                     local_key=measurement_key,
-                    remote_key=m.get('name', measurement_key),
+                    remote_key=measurement_key,  # 与 local_key 一致, 避免 payload key 不匹配
                 ))
-                break  # 只取第一个选中项
+                break
 
         return PidSlotConfig(
             slot_id=self.editId.text().strip() or "pid-fb",

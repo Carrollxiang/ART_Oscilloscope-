@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 from scope.model.enums import SlotStatus
-from .base import FeedbackSlot, SlotConfig, DataSubscription
+from .base import FeedbackSlot, SlotConfig, DataSubscription, SlotInfo
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,36 @@ class PidFeedbackSlot(FeedbackSlot):
         self._pool: Any = None  # RpycConnectionPool, 延迟创建
         self._latest_value: float = 0.0
         self._last_connection_check: float = 0.0
+
+    # ── 覆盖 get_info 以正确读取 PidParams ──────────────────────
+
+    def get_info(self) -> SlotInfo:
+        """覆盖基类, 从 PidParams 读取 PID 字段。"""
+        from .base import SlotInfo
+        p = self._pid_config.pid
+        return SlotInfo(
+            slot_id=self._config.slot_id,
+            label=self._config.label or self._config.slot_id,
+            protocol=self.protocol,
+            status=self._status.value,
+            target=self._get_target(),
+            subscriptions=[s.local_key for s in self._config.subscriptions],
+            sent_count=self._sent_count,
+            error_count=self._error_count,
+            consecutive_errors=self._consecutive_errors,
+            last_error=self._last_error,
+            last_sent_at=self._last_sent_at,
+            auto_paused=self._auto_paused,
+            feedback_mode="PID",
+            setpoint=p.preset_value,
+            pid_kp=p.kp,
+            pid_ki=p.ki,
+            pid_kd=p.kd,
+            feedback_threshold=p.deadband,
+            feedback_limit=p.output_limit,
+            latest_value=self._latest_value,
+            measurement_status="unknown",
+        )
 
     # ── 生命周期 ────────────────────────────────────────────────
 
