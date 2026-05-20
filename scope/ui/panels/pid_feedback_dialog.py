@@ -186,10 +186,11 @@ class PidFeedbackDialog(QDialog):
         self.spinILimit.setValue(p.i_limit); self.spinOutLimit.setValue(p.output_limit)
         self.spinDeadband.setValue(p.deadband)
 
-        # 回填订阅
+        # 回填订阅 (匹配语义名)
         for i, item in enumerate(self._meas_items):
-            key = f"{item['channel']}_{item['meas_key']}"
-            if any(s.local_key == key for s in cfg.subscriptions):
+            if cfg.measurement_key == item.get('name'):
+                self.subList.item(i).setSelected(True)
+            elif any(s.remote_key == item.get('name') for s in cfg.subscriptions):
                 self.subList.item(i).setSelected(True)
 
     def get_config(self) -> PidSlotConfig:
@@ -217,11 +218,16 @@ class PidFeedbackDialog(QDialog):
         for idx in range(self.subList.count()):
             if self.subList.item(idx).isSelected() and idx < len(self._meas_items):
                 m = self._meas_items[idx]
-                measurement_key = f"{m['channel']}_{m['meas_key']}"
+                # local_key: 从 AnalysisResult.measurements 取值的 key (如 "CH1_Vpp")
+                local_key = f"{m['channel']}_{m['meas_key']}"
+                # 语义名: 同一通道同一测量项, 不同时间窗口可起不同名 (如 "CH1 幅值" / "CH1 早期幅值")
+                semantic_name = m.get('name', local_key)
                 subs.append(DataSubscription(
-                    local_key=measurement_key,
-                    remote_key=measurement_key,  # 与 local_key 一致, 避免 payload key 不匹配
+                    local_key=local_key,
+                    remote_key=semantic_name,
                 ))
+                # measurement_key 匹配 payload 中的 key (= remote_key)
+                measurement_key = semantic_name
                 break
 
         return PidSlotConfig(
