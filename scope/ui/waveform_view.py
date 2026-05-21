@@ -138,14 +138,9 @@ class WaveformView:
             curve.hide()
             return
 
-        # 降采样: 每 N 个点取一个, 减少 CPU 渲染负担
-        n = len(data)
-        if n > 2000:
-            step = n // 1500  # 目标 ~1500 点/通道
-            if step < 1:
-                step = 1
-            data = data[::step]
-            time_axis = time_axis[::step]
+        # 降采样: 每隔一个点画一个 (性能优化)
+        data = data[::2]
+        time_axis = time_axis[::2]
 
         curve.setData(time_axis, data)
         curve.show()

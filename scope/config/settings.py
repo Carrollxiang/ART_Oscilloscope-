@@ -56,6 +56,9 @@ class ScopeConfig:
          "start": 0.0, "end": 500.0},
     ])
 
+    # PID 反馈 slot
+    feedback_slots: list[dict] = field(default_factory=list)
+
 
 class ConfigManager:
     """
@@ -109,6 +112,52 @@ class ConfigManager:
             cfg.measurements = mp.get_subscriptions()
         except Exception:
             logger.warning("读取测量行失败", exc_info=True)
+
+        # 反馈 slot (PID)
+        try:
+            from scope.io.feedback_slots.pid_slot import (
+                PidFeedbackSlot, Ad9910Target, RtmqTarget,
+            )
+            mgr = main_win._feedback_mgr
+            slots = []
+            for info in mgr.list_slots():
+                slot = mgr.get_slot(info.slot_id)
+                if not isinstance(slot, PidFeedbackSlot):
+                    continue
+                pc = slot._pid_config
+                p = pc.pid
+                entry = {
+                    "slot_id": pc.slot_id,
+                    "label": pc.label,
+                    "measurement_key": pc.measurement_key,
+                    "pid": {
+                        "preset_value": p.preset_value,
+                        "kp": p.kp, "ki": p.ki, "kd": p.kd,
+                        "i_limit": p.i_limit, "output_limit": p.output_limit,
+                        "deadband": p.deadband,
+                    },
+                    "subscriptions": [
+                        {"local_key": s.local_key, "remote_key": s.remote_key}
+                        for s in pc.subscriptions
+                    ],
+                }
+                t = pc.target
+                if isinstance(t, Ad9910Target):
+                    entry["target"] = {
+                        "type": "ad9910",
+                        "ip": t.ip, "port": t.port,
+                        "device_id": t.device_id, "profile": t.profile,
+                    }
+                elif isinstance(t, RtmqTarget):
+                    entry["target"] = {
+                        "type": "rtmq",
+                        "ip": t.ip, "port": t.port,
+                        "card_index": t.card_index, "sbg_channel": t.sbg_channel,
+                    }
+                slots.append(entry)
+            cfg.feedback_slots = slots
+        except Exception:
+            logger.warning("读取反馈 slot 失败", exc_info=True)
 
         return cfg
 
@@ -177,6 +226,73 @@ class ConfigManager:
         except Exception as e:
             logger.warning(f"应用测量行失败: {e}")
 
+        # 反馈 slot (PID) — 清空后重建
+        try:
+            from scope.io.feedback_slots.pid_slot import (
+                PidFeedbackSlot, PidSlotConfig, PidParams,
+                Ad9910Target, RtmqTarget,
+            )
+            from scope.io.feedback_slots.base import DataSubscription
+            import asyncio
+
+            mgr = main_win._feedback_mgr
+            # 移除旧 slot
+            for sid in list(mgr._slots.keys()):
+                mgr.remove_slot(sid)
+
+            for s in cfg.feedback_slots:
+                t = s.get("target", {})
+                if t.get("type") == "ad9910":
+                    target = Ad9910Target(
+                        ip=t.get("ip", "192.168.1.20"),
+                        port=t.get("port", 3251),
+                        device_id=t.get("device_id", 0x0D11),
+                        profile=t.get("profile", 0),
+                    )
+                elif t.get("type") == "rtmq":
+                    target = RtmqTarget(
+                        ip=t.get("ip", "192.168.1.20"),
+                        port=t.get("port", 18861),
+                        card_index=t.get("card_index", 2),
+                        sbg_channel=t.get("sbg_channel", 0x60),
+                    )
+                else:
+                    continue
+
+                p = s.get("pid", {})
+                pid = PidParams(
+                    preset_value=p.get("preset_value", 0.8),
+                    kp=p.get("kp", 0.03), ki=p.get("ki", 0.0), kd=p.get("kd", 0.0),
+                    i_limit=p.get("i_limit", 0.1),
+                    output_limit=p.get("output_limit", 0.1),
+                    deadband=p.get("deadband", 0.0),
+                )
+                subs = [
+                    DataSubscription(
+                        local_key=sub.get("local_key", ""),
+                        remote_key=sub.get("remote_key", ""),
+                    )
+                    for sub in s.get("subscriptions", [])
+                ]
+                slot_config = PidSlotConfig(
+                    slot_id=s.get("slot_id", "pid"),
+                    label=s.get("label", ""),
+                    pid=pid,
+                    measurement_key=s.get("measurement_key", ""),
+                    target=target,
+                    subscriptions=subs,
+                )
+                # 用同步方式添加 slot
+                try:
+                    loop = asyncio.get_running_loop()
+                    asyncio.ensure_future(mgr.add_slot(
+                        PidFeedbackSlot(slot_config), auto_start=False))
+                except RuntimeError:
+                    asyncio.run(mgr.add_slot(
+                        PidFeedbackSlot(slot_config), auto_start=False))
+        except Exception as e:
+            logger.warning(f"应用反馈 slot 失败: {e}")
+
     @staticmethod
     def save_to_file(main_win, filepath: str):
         """收集并保存配置到 JSON 文件。"""
@@ -204,6 +320,8 @@ class ConfigManager:
                 cfg.device.update(data["device"])
             if "channels" in data:
                 cfg.channels.update(data["channels"])
+            if "feedback_slots" in data:
+                cfg.feedback_slots = data["feedback_slots"]
             ConfigManager.apply(main_win, cfg)
             logger.info(f"配置已加载: {filepath}")
             return True
