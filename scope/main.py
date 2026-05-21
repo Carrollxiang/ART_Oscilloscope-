@@ -306,13 +306,12 @@ class ScopeApp:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # 诊断: 每 10 帧打印一次 measurements keys
-            if result.sequence_num % 10 == 0:
-                keys = list(result.measurements.keys())
-                vals = {k: round(v, 3) for k, v in result.measurements.items()}
-                logger.info(f"measurements[{result.sequence_num}]: {vals}")
+            # 先同步更新测量面板 → 把标签化窗口值写入 result.measurements
+            #   (确保 dispatch 时能按 tag 名找到对应值, 而非全局 Pipeline 值)
+            if hasattr(self.main_win, 'measure_panel'):
+                self.main_win.measure_panel.update_from_result(result)
 
-            # 迷你图数据
+            # 迷你图数据 (含 tags)
             active_subs: set[str] = set()
             for slot_info in self.feedback_mgr.list_slots():
                 for sub in slot_info.subscriptions:
@@ -321,18 +320,11 @@ class ScopeApp:
                         if k in active_subs}
             if filtered:
                 self.main_win.mini_chart.add_data(filtered)
-            elif active_subs:
-                # 有订阅但没有匹配 → 诊断
-                logger.warning(
-                    f"payload key 不匹配! "
-                    f"measurements keys={list(result.measurements.keys())[:5]}... "
-                    f"subscribed={list(active_subs)[:5]}..."
-                )
 
-            # 更新 UI (跨线程安全)
+            # 更新 UI (波形 + 测量面板显示)
             self.main_win.data_received.emit(result)
 
-            # Dispatch 反馈 (asyncio loop)
+            # Dispatch 反馈
             asyncio.run_coroutine_threadsafe(
                 self.feedback_mgr.dispatch(result),
                 self._async_loop,

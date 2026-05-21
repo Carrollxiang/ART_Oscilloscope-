@@ -323,10 +323,16 @@ class MeasurementPanel:
             row.deleteLater()
 
     def update_from_result(self, result: AnalysisResult):
-        """用最新一帧 AnalysisResult 更新所有行"""
+        """用最新一帧 AnalysisResult 更新所有行, 并把窗口化值写入 result.measurements。"""
         self._last_result = result
         for row in self._rows:
             row.update_value(result)
+            # 把每行的窗口化值以标签名为 key 写入 result.measurements
+            #   → 反馈系统通过标签名订阅窗口化值, 而非全局 Pipeline 值
+            tag = row.get_name()
+            value = row.compute_value(result)
+            if value is not None:
+                result.measurements[tag] = value
 
     def get_subscriptions(self) -> list[dict]:
         """返回订阅信息, 供 FeedbackPanel 使用"""

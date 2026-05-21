@@ -179,8 +179,7 @@ class MainWindow(QMainWindow):
             result.trigger.trigger_position
         )
 
-        # 3. 更新测量面板 (带时间窗口和原始数据)
-        self.measure_panel.update_from_result(result)
+        # 3. 测量面板已在 _on_frame 中同步更新 (确保 tags 在 dispatch 前就绪)
 
         # 4. 更新状态栏
         self._update_status_bar(result)
