@@ -58,8 +58,8 @@ class Ad9910Target:
     """AD9910 DDS 设备定位"""
     ip: str                           # 服务器 IP
     port: int = 3251                  # rpyc 端口
-    device_id: int = 0x0D11           # AD9910 设备 ID (hex, 如 0x0D11)
-    profile: int = 0x00               # 寄存器 profile (0x00~0x07)
+    device_id: int = 0x0841          # AD9910 设备 ID (hex, 如 0x0D11)
+    profile: int = 0x03              # 寄存器 profile (0x00~0x07)
 
     def __str__(self):
         return f"AD9910({self.ip}:{self.port}, dev=0x{self.device_id:04X}, prof=0x{self.profile:02X})"

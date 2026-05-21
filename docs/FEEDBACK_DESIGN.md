@@ -236,3 +236,96 @@ PidFeedbackSlot ──┘    根据 (ip, port) 分组
 | 4 | 在 `FeedbackPanel` 中接入 `PidFeedbackSlot` 的创建/编辑/删除 | 步骤 3 |
 | 5 | 端到端测试: 示波器 → PID → DDS/RTMQ | 步骤 4 |
 | 6 | 文档: 记录 FeedbackRouter 设计思路 (不实现) | 步骤 5 |
+
+---
+
+## 7. v0.4 反馈数据流重构 (实施中)
+
+### 7.1 目标
+
+1. 反馈闭环优先于 UI 刷新与 Mini Chart。
+2. 订阅模型从“整通道测量”升级为“事件窗口语义值”。
+3. 通过有界队列 + 背压策略避免任务堆积导致卡顿。
+
+### 7.2 新订阅模型
+
+新增结构化订阅键, 避免字符串歧义:
+
+```python
+@dataclass
+class SubscriptionKey:
+    source_type: str   # "event" | "raw" | "meta"
+    key: str           # event tag / raw key / meta key
+```
+
+推荐使用:
+
+- `event:A_power`
+- `event:B_power`
+- `raw:CH1_Vpp` (仅调试/监控)
+- `meta:sequence_num`
+
+说明:
+
+- `event:*` 来自事件窗口处理结果, 用于反馈闭环。
+- `raw:*` 来自整通道测量, 仅保留兼容。
+- `meta:*` 为帧号、时间戳等元信息。
+
+### 7.3 反馈优先数据流
+
+```
+AcqFrame
+  ├─> EventWindowProcessor (高优先级)
+  │     └─> FeedbackSnapshot
+  │            └─> FeedbackQueue (maxsize=1~2, drop_oldest)
+  │                   └─> FeedbackManager.dispatch()
+  │
+  └─> UIQueue (maxsize=1, drop_oldest)
+         ├─> 主波形更新
+         └─> MiniChartQueue (maxsize=1, 触发驱动渲染)
+```
+
+关键点:
+
+- 反馈发送与 UI 渲染彻底解耦。
+- 下游慢时优先丢旧帧, 保持反馈使用最新值。
+- 控制命令 (保存/改参数/启停 slot) 走独立 `ControlQueue`。
+
+### 7.4 队列与背压策略
+
+| 队列 | maxsize | 满队列行为 | 备注 |
+|------|---------|------------|------|
+| `FeedbackQueue` | 1~2 | 丢最旧 (`drop_oldest`) | 闭环实时性优先 |
+| `UIQueue` | 1 | 丢最旧 | UI 可容忍丢帧 |
+| `MiniChartQueue` | 1 | 丢最旧 + 渲染节流 | 低优先级 |
+| `ControlQueue` | 8 (可调) | 阻塞或显式拒绝 | 控制命令不可静默丢失 |
+
+背压定义:
+
+- 当发送/渲染处理能力低于采集速率时, 队列触发“丢旧保新/阻塞”等规则, 阻止延迟无限积累。
+
+### 7.5 并发模型约束
+
+1. `FeedbackSlot.on_data()` 禁止直接执行阻塞 I/O。
+2. 所有 rpyc 同步调用必须通过 `run_in_executor` 执行。
+3. 执行池使用固定 `max_workers` (建议 2~4), 禁止按帧增线程。
+4. `dispatch()` 必须可重入、可限流, 并提供队列深度监控。
+
+### 7.6 一致性规则 (测量面板 vs 反馈面板)
+
+为解决“显示值与订阅值不一致”, 统一使用单一快照源:
+
+```python
+@dataclass
+class MeasurementSnapshot:
+    sequence_num: int
+    raw_measurements: dict[str, float]
+    event_measurements: dict[str, float]   # tag -> value
+    timestamp: float
+```
+
+规则:
+
+- 测量面板显示读取 `MeasurementSnapshot`。
+- 反馈分发读取同一份 `MeasurementSnapshot`。
+- 禁止“UI再算一份、反馈再算一份”的双路径计算。

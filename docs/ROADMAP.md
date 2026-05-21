@@ -257,6 +257,62 @@ docs/FEEDBACK_DESIGN.md      # 设计方案文档
 
 ---
 
+## Phase 6 — 反馈优先重构 (v0.4, 进行中)
+
+### 背景
+
+当前系统在高负载下存在:
+
+- 反馈数据与测量面板显示值不一致
+- Mini Chart 更新影响主 UI 流畅度
+- 保存配置、修改参数时出现明显卡顿
+
+### 目标
+
+1. 反馈闭环延迟优先于渲染延迟。
+2. 测量显示与反馈订阅统一到同一快照源。
+3. 有界队列与背压上线, 消除无界任务堆积。
+4. 控制面操作 (保存/改参数/启停) 不受数据面打断。
+
+### 产出物
+
+```
+scope/
+├── runtime/
+│   ├── event_bus.py              # Acq/UI/Feedback/Control 队列与调度
+│   ├── measurement_snapshot.py   # MeasurementSnapshot 数据模型
+│   └── backpressure.py           # drop_oldest / block 等策略
+├── processing/
+│   └── event_window_pipeline.py  # EventWindowSpec + 事件窗口测量
+├── io/
+│   └── feedback_manager.py       # 消费 FeedbackQueue 的调度入口
+└── ui/
+    └── mini_chart.py             # 触发驱动渲染 + 抽稀 + 只读队列
+```
+
+### 实施步骤
+
+| 步骤 | 内容 | 说明 |
+|------|------|------|
+| 1 | 引入有界队列 | `FeedbackQueue/UIQueue/MiniChartQueue/ControlQueue` |
+| 2 | 反馈链路 executor 化 | `PidFeedbackSlot` 阻塞 RPC 改为 `run_in_executor` |
+| 3 | MeasurementSnapshot 单源化 | 测量面板与反馈面板读同一快照 |
+| 4 | 事件窗口测量 | 支持同通道多时间段多语义 (`A_power/B_power`) |
+| 5 | Mini Chart 触发驱动降级 | 硬件/`mock` 均按“1触发=1更新”, 禁用独立刷新 `QTimer`, 最近 N 点, 丢旧帧 |
+| 6 | 控制面隔离 | 保存/改参数异步化并在帧边界原子生效 |
+
+### 验收指标
+
+| 指标 | 目标 |
+|------|------|
+| 反馈队列堆积 | 长时间运行 `qsize <= 1~2` |
+| 反馈延迟 | 无持续增长 (无“越跑越慢”) |
+| UI 主操作流畅性 | 修改测量项、保存配置无明显卡顿 |
+| 一致性 | 同一 tag 在测量面板与反馈面板读数一致 |
+| Mini Chart 影响 | 开/关 Mini Chart 不影响反馈闭环频率 |
+
+---
+
 ## 各阶段依赖关系图
 
 ```
