@@ -264,6 +264,9 @@ class PidFeedbackSlot(FeedbackSlot):
             return
 
         self._latest_value = float(value)
+        logger.info(
+            f"[{self.slot_id}] 收到 payload['{key}'] = {self._latest_value:.4f}"
+        )
 
         # PID 计算
         out = self._pid.step(self._latest_value)

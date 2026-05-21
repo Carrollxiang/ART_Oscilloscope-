@@ -333,6 +333,11 @@ class MeasurementPanel:
             value = row.compute_value(result)
             if value is not None:
                 result.measurements[tag] = value
+                logger.debug(
+                    f"  写入 result.measurements['{tag}'] = {value:.4f}"
+                )
+            else:
+                logger.debug(f"  跳过 '{tag}': compute_value 返回 None")
 
     def get_subscriptions(self) -> list[dict]:
         """返回订阅信息, 供 FeedbackPanel 使用"""
