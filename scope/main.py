@@ -58,11 +58,12 @@ class ScopeApp:
             channel_max_vals=[10.0] * 16,
         )
 
-        # 信号处理管道 (16 通道)
+        # 信号处理管道 (16 通道, 全测量项)
+        from scope.processing.measurements import MEASUREMENT_FUNCTIONS
         self._pipeline = ProcessingPipeline()
         self._pipeline.add_stage(
             AutoMeasure(
-                measurements=["Vpp", "Vrms", "Vmax", "Vmin", "Freq"],
+                measurements=list(MEASUREMENT_FUNCTIONS.keys()),
                 channels=[f"CH{i+1}" for i in range(16)],
             )
         )
