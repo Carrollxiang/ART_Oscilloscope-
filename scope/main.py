@@ -314,35 +314,34 @@ class ScopeApp:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # v0.4: 保存 Pipeline 全局测量 (用于 raw_measurements)
-            pipeline_keys = set(result.measurements.keys())
-
-            # 更新测量面板 → 标签化窗口值写入 result.measurements
+            # 更新测量面板
             if hasattr(self.main_win, 'measure_panel'):
                 self.main_win.measure_panel.update_from_result(result)
 
-            # 构建 MeasurementSnapshot (单一数据源)
+            # 迷你图: 仅筛选订阅的 key
+            active_subs: set[str] = set()
+            for slot_info in self.feedback_mgr.list_slots():
+                for sub in slot_info.subscriptions:
+                    active_subs.add(sub)
+            filtered = {k: v for k, v in result.measurements.items()
+                        if k in active_subs}
+            if filtered:
+                self.main_win.mini_chart.add_data(filtered)
+
+            # 更新 UI
+            self.main_win.data_received.emit(result)
+
+            # v0.4: FeedbackQueue → dispatch (有界队列 + 背压)
             from scope.runtime import MeasurementSnapshot
+            pipeline_keys = set(result.measurements.keys())
             snap = MeasurementSnapshot(
                 sequence_num=result.sequence_num,
                 raw_measurements={
                     k: v for k, v in result.measurements.items()
                     if k in pipeline_keys
                 },
-                event_measurements={
-                    k: v for k, v in result.measurements.items()
-                    if k not in pipeline_keys
-                },
             )
-
-            # 更新 UI
-            self.main_win.data_received.emit(result)
-
-            # v0.4: 通过有界队列发送反馈 (避免无界堆积)
             self._feedback_queue.put(snap)
-
-            # 迷你图: 从 snapshot 读取
-            self.main_win.mini_chart.add_data(snap.as_dict())
 
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)
@@ -369,24 +368,32 @@ class ScopeApp:
         """消费 FeedbackQueue → dispatch (v0.4 背压保护)"""
         import time
         while True:
-            snap = self._feedback_queue.get(timeout=0.1)
+            # 非阻塞获取, 不阻塞 asyncio 线程
+            snap = self._feedback_queue.get_nowait()
             if snap is not None:
-                # 记录队列延迟
                 latency_ms = (time.monotonic() - snap.timestamp) * 1000
                 if latency_ms > 100:
                     logger.warning(
                         f"反馈延迟 {latency_ms:.0f}ms, "
                         f"队列深度={self._feedback_queue.qsize}"
                     )
-                # 构建临时 AnalysisResult 用于 dispatch
-                from scope.model import AnalysisResult
+                from scope.model import AnalysisResult, TriggerInfo
+                import time as _time
                 proxy = AnalysisResult(
                     sequence_num=snap.sequence_num,
-                    trigger=None,
+                    trigger=TriggerInfo(
+                        trigger_type="immediate", trigger_source=0,
+                        trigger_level=0.0, trigger_slope="rising",
+                        trigger_position=0.5,
+                        trigger_timestamp=_time.monotonic(),
+                    ),
+                    channels={},
                 )
                 proxy.measurements = snap.as_dict()
                 await self.feedback_mgr.dispatch(proxy)
-            await asyncio.sleep(0)  # yield 给其他协程
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(0.05)  # 空队列时稍等
 
 
 def main():
