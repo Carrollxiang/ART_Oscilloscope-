@@ -155,12 +155,28 @@ class PidController:
 # PidFeedbackSlot
 # ═══════════════════════════════════════════════════════════════
 
+# ── 共享线程池 (用于所有 PID slot 的阻塞 rpyc 调用) ────────
+_RPC_EXECUTOR: Optional[Any] = None
+_RPC_EXECUTOR_SIZE = 4
+
+
+def _get_rpc_executor():
+    global _RPC_EXECUTOR
+    if _RPC_EXECUTOR is None:
+        import concurrent.futures
+        _RPC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+            max_workers=_RPC_EXECUTOR_SIZE,
+            thread_name_prefix="rpc",
+        )
+    return _RPC_EXECUTOR
+
+
 class PidFeedbackSlot(FeedbackSlot):
     """
-    PID 反馈插槽。
+    PID 反馈插槽 — v0.4: 阻塞 rpyc 调用通过 ThreadPoolExecutor 执行。
 
     生命周期: 与 FeedbackSlot 相同。
-    每次 on_data() 执行: 提取测量值 → PID 计算 → RPC 发送。
+    每次 on_data() 执行: 提取测量值 → PID 计算 → RPC 发送 (executor)。
     """
 
     protocol = "pid"
@@ -308,44 +324,58 @@ class PidFeedbackSlot(FeedbackSlot):
     # ── RPC 发送 (内部) ────────────────────────────────────────
 
     async def _send_ad9910(self, t: Ad9910Target, delta_amp: float):
-        """通过 rpyc 向 AD9910 推送幅度调整。"""
+        """通过 rpyc 向 AD9910 推送幅度调整 (executor 执行, 不阻塞 asyncio)。"""
+        loop = asyncio.get_running_loop()
         try:
-            conn = self._pool.acquire()
-            try:
-                service = conn.root.get_ad9910_service()
-                service.adjust_amplitude(t.device_id, t.profile, delta_amp)
-                self._count_sent()
-                logger.info(
-                    f"[{self.slot_id}] sent #{self._sent_count}: "
-                    f"adjust(dev=0x{t.device_id:04X}, prof=0x{t.profile:02X}, "
-                    f"delta={delta_amp:.6f})"
-                )
-            finally:
-                self._pool.release(conn)
+            await loop.run_in_executor(
+                _get_rpc_executor(),
+                self._do_send_ad9910, t, delta_amp,
+            )
+            self._count_sent()
+            logger.info(
+                f"[{self.slot_id}] sent #{self._sent_count}: "
+                f"adjust(dev=0x{t.device_id:04X}, prof=0x{t.profile:02X}, "
+                f"delta={delta_amp:.6f})"
+            )
         except Exception as e:
             self._count_error(str(e))
 
-    async def _send_rtmq(self, t: RtmqTarget, delta_amp: float):
-        """通过 rpyc 向 RTMQ 白盒子推送幅度调整。"""
+    def _do_send_ad9910(self, t: Ad9910Target, delta_amp: float):
+        """同步 rpyc 调用 (在 executor 线程中执行)。"""
+        conn = self._pool.acquire()
         try:
-            conn = self._pool.acquire()
-            try:
-                # 获取当前幅度, 计算新幅度
-                rwg = conn.root.get_rwg_info()
-                current_info = rwg[t.card_index]['sbg_freq'][t.sbg_channel]
-                current_amp = float(current_info[1])
-                new_amp = current_amp + delta_amp
-                conn.root.change_rwg_info(
-                    card=t.card_index,
-                    sbg_ch=t.sbg_channel,
-                    amp=new_amp,
-                )
-                self._count_sent()
-                logger.debug(
-                    f"[{self.slot_id}] RTMQ amp: {current_amp:.6f} → {new_amp:.6f} "
-                    f"(delta={delta_amp:.6f})"
-                )
-            finally:
-                self._pool.release(conn)
+            service = conn.root.get_ad9910_service()
+            service.adjust_amplitude(t.device_id, t.profile, delta_amp)
+        finally:
+            self._pool.release(conn)
+
+    async def _send_rtmq(self, t: RtmqTarget, delta_amp: float):
+        """通过 rpyc 向 RTMQ 推送幅度调整 (executor 执行)。"""
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                _get_rpc_executor(),
+                self._do_send_rtmq, t, delta_amp,
+            )
+            self._count_sent()
+            logger.debug(
+                f"[{self.slot_id}] RTMQ sent (delta={delta_amp:.6f})"
+            )
         except Exception as e:
             self._count_error(str(e))
+
+    def _do_send_rtmq(self, t: RtmqTarget, delta_amp: float):
+        """同步 rpyc 调用 (在 executor 线程中执行)。"""
+        conn = self._pool.acquire()
+        try:
+            rwg = conn.root.get_rwg_info()
+            current_info = rwg[t.card_index]['sbg_freq'][t.sbg_channel]
+            current_amp = float(current_info[1])
+            new_amp = current_amp + delta_amp
+            conn.root.change_rwg_info(
+                card=t.card_index,
+                sbg_ch=t.sbg_channel,
+                amp=new_amp,
+            )
+        finally:
+            self._pool.release(conn)

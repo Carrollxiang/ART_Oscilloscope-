@@ -88,6 +88,14 @@ class ScopeApp:
         # asyncio loop 用于 feedback dispatch
         self._async_loop = asyncio.new_event_loop()
 
+        # v0.4: 有界反馈队列 (maxsize=2, drop_oldest)
+        from scope.runtime import BoundedQueue, DropStrategy
+        self._feedback_queue = BoundedQueue(
+            maxsize=2,
+            on_drop=DropStrategy.DROP_OLDEST,
+            name="feedback",
+        )
+
         # 创建设备
         self.device = self._create_device()
 
@@ -306,29 +314,36 @@ class ScopeApp:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # 先同步更新测量面板 → 把标签化窗口值写入 result.measurements
-            #   (确保 dispatch 时能按 tag 名找到对应值, 而非全局 Pipeline 值)
+            # v0.4: 保存 Pipeline 全局测量 (用于 raw_measurements)
+            pipeline_keys = set(result.measurements.keys())
+
+            # 更新测量面板 → 标签化窗口值写入 result.measurements
             if hasattr(self.main_win, 'measure_panel'):
                 self.main_win.measure_panel.update_from_result(result)
 
-            # 迷你图数据 (含 tags)
-            active_subs: set[str] = set()
-            for slot_info in self.feedback_mgr.list_slots():
-                for sub in slot_info.subscriptions:
-                    active_subs.add(sub)
-            filtered = {k: v for k, v in result.measurements.items()
-                        if k in active_subs}
-            if filtered:
-                self.main_win.mini_chart.add_data(filtered)
+            # 构建 MeasurementSnapshot (单一数据源)
+            from scope.runtime import MeasurementSnapshot
+            snap = MeasurementSnapshot(
+                sequence_num=result.sequence_num,
+                raw_measurements={
+                    k: v for k, v in result.measurements.items()
+                    if k in pipeline_keys
+                },
+                event_measurements={
+                    k: v for k, v in result.measurements.items()
+                    if k not in pipeline_keys
+                },
+            )
 
-            # 更新 UI (波形 + 测量面板显示)
+            # 更新 UI
             self.main_win.data_received.emit(result)
 
-            # Dispatch 反馈
-            asyncio.run_coroutine_threadsafe(
-                self.feedback_mgr.dispatch(result),
-                self._async_loop,
-            )
+            # v0.4: 通过有界队列发送反馈 (避免无界堆积)
+            self._feedback_queue.put(snap)
+
+            # 迷你图: 从 snapshot 读取
+            self.main_win.mini_chart.add_data(snap.as_dict())
+
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)
 
@@ -343,9 +358,35 @@ class ScopeApp:
             logger.error(f"采集错误: {e}", exc_info=True)
 
     def _async_worker(self):
-        """在独立线程中运行 asyncio loop, 处理 feedback dispatch"""
+        """在独立线程中运行 asyncio loop, 消费反馈队列 + dispatch"""
         asyncio.set_event_loop(self._async_loop)
-        self._async_loop.run_forever()
+        loop = self._async_loop
+        # 启动队列消费者
+        loop.create_task(self._feedback_consumer())
+        loop.run_forever()
+
+    async def _feedback_consumer(self):
+        """消费 FeedbackQueue → dispatch (v0.4 背压保护)"""
+        import time
+        while True:
+            snap = self._feedback_queue.get(timeout=0.1)
+            if snap is not None:
+                # 记录队列延迟
+                latency_ms = (time.monotonic() - snap.timestamp) * 1000
+                if latency_ms > 100:
+                    logger.warning(
+                        f"反馈延迟 {latency_ms:.0f}ms, "
+                        f"队列深度={self._feedback_queue.qsize}"
+                    )
+                # 构建临时 AnalysisResult 用于 dispatch
+                from scope.model import AnalysisResult
+                proxy = AnalysisResult(
+                    sequence_num=snap.sequence_num,
+                    trigger=None,
+                )
+                proxy.measurements = snap.as_dict()
+                await self.feedback_mgr.dispatch(proxy)
+            await asyncio.sleep(0)  # yield 给其他协程
 
 
 def main():
