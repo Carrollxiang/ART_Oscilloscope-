@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import threading
 from typing import Optional
 
 import numpy as np
@@ -243,12 +244,15 @@ class MeasurementPanel:
         self._parent = parent_widget
         self._rows: list[MeasurementRow] = []
         self._last_result: Optional[AnalysisResult] = None
+        self._spec_lock = threading.Lock()
+        self._spec_cache: list[dict] = []
         self._setup_ui()
 
         # 默认行 (500ms 帧)
         self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=500)
         self.add_row(name="CH1 频率", meas_key="Freq", end_time=500)
         self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=500)
+        self._refresh_spec_cache()
 
     def _setup_ui(self):
         # 获取或创建布局, 清空子控件
@@ -311,6 +315,13 @@ class MeasurementPanel:
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
+        # 任何参数变化都刷新“纯 Python 规格缓存”，供非 UI 线程安全读取
+        row.name_edit.editingFinished.connect(self._refresh_spec_cache)
+        row.channel_combo.currentTextChanged.connect(lambda _: self._refresh_spec_cache())
+        row.meas_combo.currentIndexChanged.connect(lambda _: self._refresh_spec_cache())
+        row.start_spin.valueChanged.connect(lambda _: self._refresh_spec_cache())
+        row.end_spin.valueChanged.connect(lambda _: self._refresh_spec_cache())
+        self._refresh_spec_cache()
         return row
 
     def _on_add(self):
@@ -321,6 +332,67 @@ class MeasurementPanel:
             self._rows.remove(row)
             self._container_layout.removeWidget(row)
             row.deleteLater()
+            self._refresh_spec_cache()
+
+    def _refresh_spec_cache(self):
+        """在 UI 线程刷新测量规格快照，供采集线程读取。"""
+        specs = []
+        for row in self._rows:
+            specs.append(
+                {
+                    "name": row.get_name(),
+                    "channel": row.get_channel(),
+                    "meas_key": row.get_meas_key(),
+                    "start": row.get_start_time(),
+                    "end": row.get_end_time(),
+                }
+            )
+        with self._spec_lock:
+            self._spec_cache = specs
+
+    def _snapshot_specs(self) -> list[dict]:
+        with self._spec_lock:
+            return list(self._spec_cache)
+
+    @staticmethod
+    def _compute_from_spec(result: AnalysisResult, spec: dict) -> Optional[float]:
+        """纯计算版本：按缓存规格从 AnalysisResult 计算单个窗口测量值。"""
+        ch_name = spec["channel"]
+        ch_data = result.channels.get(ch_name)
+        if ch_data is None:
+            return None
+
+        data = ch_data.raw
+        fs = ch_data.sample_rate
+        meas_key = spec["meas_key"]
+
+        start_t = float(spec["start"]) / 1000.0
+        end_t = float(spec["end"]) / 1000.0
+        if end_t <= start_t:
+            return None
+
+        idx_start = max(0, int(start_t * fs))
+        idx_end = min(len(data), int(end_t * fs))
+        if idx_end - idx_start < 2:
+            return None
+
+        func = MEASUREMENT_FUNCTIONS.get(meas_key)
+        if func is None:
+            return None
+        segment = data[idx_start:idx_end]
+        return func(segment, fs)
+
+    def compute_event_measurements(self, result: AnalysisResult) -> dict[str, float]:
+        """
+        线程安全：基于 UI 线程缓存的规格计算事件窗口测量值。
+        返回: {tag/name: value}
+        """
+        out: dict[str, float] = {}
+        for spec in self._snapshot_specs():
+            value = self._compute_from_spec(result, spec)
+            if value is not None and not np.isnan(value):
+                out[spec["name"]] = float(value)
+        return out
 
     def update_from_result(self, result: AnalysisResult):
         """用最新一帧 AnalysisResult 更新所有行, 并把窗口化值写入 result.measurements。"""

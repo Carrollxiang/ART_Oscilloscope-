@@ -221,12 +221,11 @@ class PidFeedbackDialog(QDialog):
         for idx in range(self.subList.count()):
             if self.subList.item(idx).isSelected() and idx < len(self._meas_items):
                 m = self._meas_items[idx]
-                # local_key: 从 AnalysisResult.measurements 取值的 key (如 "CH1_Vpp")
-                local_key = f"{m['channel']}_{m['meas_key']}"
                 # 语义名: 同一通道同一测量项, 不同时间窗口可起不同名 (如 "CH1 幅值" / "CH1 早期幅值")
-                semantic_name = m.get('name', local_key)
+                # local_key 采用语义标签，对齐事件窗口测量值
+                semantic_name = m.get('name') or f"{m['channel']}_{m['meas_key']}"
                 subs.append(DataSubscription(
-                    local_key=local_key,
+                    local_key=semantic_name,
                     remote_key=semantic_name,
                 ))
                 # measurement_key 匹配 payload 中的 key (= remote_key)

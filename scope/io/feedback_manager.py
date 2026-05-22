@@ -17,10 +17,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from scope.model import AnalysisResult
 from scope.model.enums import SlotStatus
+from scope.runtime import MeasurementSnapshot
 from .feedback_slots.base import (
     FeedbackSlot,
     SlotConfig,
@@ -158,7 +159,7 @@ class FeedbackManager:
 
     # ── 核心: 数据分发 ─────────────────────────────────────────
 
-    async def dispatch(self, result: AnalysisResult):
+    async def dispatch(self, result: Union[AnalysisResult, MeasurementSnapshot]):
         """
         将一次采集结果分发给所有活跃 slot。
 
@@ -189,11 +190,11 @@ class FeedbackManager:
 
     def _build_payload(
         self,
-        result: AnalysisResult,
+        result: Union[AnalysisResult, MeasurementSnapshot],
         subscriptions: list[DataSubscription],
     ) -> dict[str, Any]:
         """
-        根据订阅列表从 AnalysisResult 中提取数据。
+        根据订阅列表从数据源中提取数据。
 
         按 remote_key 组织, 每个 key 对应一个 float 值。
         """
@@ -206,16 +207,22 @@ class FeedbackManager:
                 payload[sub.remote_key] = scaled
         return payload
 
-    def _resolve_value(self, result: AnalysisResult, key: str) -> Optional[float]:
+    def _resolve_value(
+        self, result: Union[AnalysisResult, MeasurementSnapshot], key: str
+    ) -> Optional[float]:
         """
-        从 AnalysisResult 中解析单个测量值。
+        从 AnalysisResult 或 MeasurementSnapshot 中解析单个测量值。
 
         支持 key 格式:
           - "CH1_Vpp"       → result.measurements["CH1_Vpp"]
           - "CH1_Freq"      → result.measurements["CH1_Freq"]
           - "sequence_num"  → result.sequence_num (元信息)
         """
-        # 先查 measurements
+        # v0.4: 优先走 MeasurementSnapshot
+        if isinstance(result, MeasurementSnapshot):
+            return result.get(key)
+
+        # 兼容旧路径: AnalysisResult.measurements
         if key in result.measurements:
             return result.measurements[key]
 

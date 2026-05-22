@@ -49,11 +49,13 @@ class MeasurementSnapshot:
             return self.raw_measurements.get(key[4:])
         elif key.startswith("meta:"):
             meta_key = key[5:]
-            if meta_key == "seq":
+            if meta_key in ("seq", "sequence_num"):
                 return float(self.sequence_num)
             return None
         else:
             # 兼容旧 key: 先查 event, 再查 raw
+            if key == "sequence_num":
+                return float(self.sequence_num)
             v = self.event_measurements.get(key)
             if v is not None:
                 return v

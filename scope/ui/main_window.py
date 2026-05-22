@@ -179,9 +179,21 @@ class MainWindow(QMainWindow):
             result.trigger.trigger_position
         )
 
-        # 3. 测量面板已在 _on_frame 中同步更新 (确保 tags 在 dispatch 前就绪)
+        # 3. 更新测量面板 (UI 线程)
+        if hasattr(self, "measure_panel"):
+            self.measure_panel.update_from_result(result)
 
-        # 4. 更新状态栏
+        # 4. 更新 mini chart (与主示波器同节拍: 每帧一次)
+        active_subs: set[str] = set()
+        for slot_info in self._feedback_mgr.list_slots():
+            for sub in slot_info.subscriptions:
+                active_subs.add(sub)
+        filtered = {k: v for k, v in result.measurements.items() if k in active_subs}
+        if filtered:
+            self.mini_chart.add_data(filtered)
+            self.mini_chart.refresh_now()
+
+        # 5. 更新状态栏
         self._update_status_bar(result)
 
     # ── 状态栏 ────────────────────────────────────────────────

@@ -95,6 +95,7 @@ class ScopeApp:
             on_drop=DropStrategy.DROP_OLDEST,
             name="feedback",
         )
+        self._feedback_ready = threading.Event()
 
         # 创建设备
         self.device = self._create_device()
@@ -191,6 +192,7 @@ class ScopeApp:
     def stop(self):
         """停止所有子系统"""
         self._running = False
+        self._feedback_ready.set()
         if hasattr(self, '_timer'):
             self._timer.stop()
 
@@ -314,34 +316,26 @@ class ScopeApp:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # 更新测量面板
-            if hasattr(self.main_win, 'measure_panel'):
-                self.main_win.measure_panel.update_from_result(result)
-
-            # 迷你图: 仅筛选订阅的 key
-            active_subs: set[str] = set()
-            for slot_info in self.feedback_mgr.list_slots():
-                for sub in slot_info.subscriptions:
-                    active_subs.add(sub)
-            filtered = {k: v for k, v in result.measurements.items()
-                        if k in active_subs}
-            if filtered:
-                self.main_win.mini_chart.add_data(filtered)
+            # v0.4: 先保存 pipeline 原始测量值，再计算事件窗口值
+            raw_measurements = dict(result.measurements)
+            event_measurements = {}
+            if hasattr(self.main_win, "measure_panel"):
+                # 注意: 这里调用的是“纯计算+缓存规格”接口，不触碰 UI 控件
+                event_measurements = self.main_win.measure_panel.compute_event_measurements(result)
+                result.measurements.update(event_measurements)
 
             # 更新 UI
             self.main_win.data_received.emit(result)
 
             # v0.4: FeedbackQueue → dispatch (有界队列 + 背压)
             from scope.runtime import MeasurementSnapshot
-            pipeline_keys = set(result.measurements.keys())
             snap = MeasurementSnapshot(
                 sequence_num=result.sequence_num,
-                raw_measurements={
-                    k: v for k, v in result.measurements.items()
-                    if k in pipeline_keys
-                },
+                raw_measurements=raw_measurements,
+                event_measurements=event_measurements,
             )
             self._feedback_queue.put(snap)
+            self._feedback_ready.set()
 
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)
@@ -365,35 +359,26 @@ class ScopeApp:
         loop.run_forever()
 
     async def _feedback_consumer(self):
-        """消费 FeedbackQueue → dispatch (v0.4 背压保护)"""
+        """消费 FeedbackQueue → dispatch (v0.4 背压保护, 事件唤醒)。"""
         import time
         while True:
-            # 非阻塞获取, 不阻塞 asyncio 线程
-            snap = self._feedback_queue.get_nowait()
-            if snap is not None:
-                latency_ms = (time.monotonic() - snap.timestamp) * 1000
-                if latency_ms > 100:
-                    logger.warning(
-                        f"反馈延迟 {latency_ms:.0f}ms, "
-                        f"队列深度={self._feedback_queue.qsize}"
-                    )
-                from scope.model import AnalysisResult, TriggerInfo
-                import time as _time
-                proxy = AnalysisResult(
-                    sequence_num=snap.sequence_num,
-                    trigger=TriggerInfo(
-                        trigger_type="immediate", trigger_source=0,
-                        trigger_level=0.0, trigger_slope="rising",
-                        trigger_position=0.5,
-                        trigger_timestamp=_time.monotonic(),
-                    ),
-                    channels={},
+            # 事件驱动: 无数据时阻塞等待，不做 50ms 轮询
+            await asyncio.to_thread(self._feedback_ready.wait)
+            self._feedback_ready.clear()
+
+            # 一次性取出积压项，只处理最新快照（控制链路优先最新态）
+            pending = self._feedback_queue.dequeue_all()
+            if not pending:
+                continue
+            snap = pending[-1]
+            latency_ms = (time.monotonic() - snap.timestamp) * 1000
+            if latency_ms > 100:
+                logger.warning(
+                    f"反馈延迟 {latency_ms:.0f}ms, "
+                    f"队列深度={self._feedback_queue.qsize}"
                 )
-                proxy.measurements = snap.as_dict()
-                await self.feedback_mgr.dispatch(proxy)
-                await asyncio.sleep(0)
-            else:
-                await asyncio.sleep(0.05)  # 空队列时稍等
+            await self.feedback_mgr.dispatch(snap)
+            await asyncio.sleep(0)
 
 
 def main():

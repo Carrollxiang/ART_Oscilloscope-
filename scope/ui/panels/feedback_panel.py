@@ -206,7 +206,9 @@ class FeedbackDialog(QDialog):
             idx = self.subList.row(item)
             if 0 <= idx < len(self._meas_items):
                 m = self._meas_items[idx]
-                subs.append(DataSubscription(local_key=f"{m['channel']}_{m['meas_key']}", remote_key=m['name']))
+                semantic_name = m.get("name") or f"{m['channel']}_{m['meas_key']}"
+                # local_key 采用语义标签，订阅事件窗口值；兼容模式下旧 key 仍可解析
+                subs.append(DataSubscription(local_key=semantic_name, remote_key=semantic_name))
         return RpycSlotConfig(
             slot_id=self.editId.text(), host=self.editHost.text(), port=self.editPort.value(),
             remote_method=self.editMethod.text(), pool_min=self.spinPoolMin.value(), pool_max=self.spinPoolMax.value(),

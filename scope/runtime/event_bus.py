@@ -175,7 +175,16 @@ class BoundedQueue(Generic[T]):
                 if remaining <= 0:
                     return None
                 self._not_empty.wait(timeout=remaining)
-            return self.get_nowait()
+            # 这里不能调用 get_nowait()（会再次尝试获取同一把非重入锁）
+            item, put_time = self._deque.popleft()
+            self._stats.total_gets += 1
+            self._not_full.notify()
+            latency = (time.monotonic() - put_time) * 1000
+            n = self._stats.total_gets
+            self._stats.avg_latency_ms = (
+                (self._stats.avg_latency_ms * (n - 1) + latency) / n
+            )
+            return item
 
     # ── 快照 ───────────────────────────────────────────────────
 

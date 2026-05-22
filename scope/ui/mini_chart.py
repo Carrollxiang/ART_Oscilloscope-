@@ -13,14 +13,13 @@ from typing import Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from PyQt6.QtGui import QColor
 
 logger = logging.getLogger(__name__)
 
 MAX_POINTS = 3600
-REFRESH_MS = 50  # 20fps 上限
 
 TRACE_COLORS = [
     QColor("#FF6B6B"), QColor("#4ECDC4"), QColor("#45B7D1"),
@@ -114,12 +113,6 @@ class MiniChartWidget(QWidget):
 
         layout.addWidget(self.plot, stretch=1)
 
-        # ── 定时刷新 (仅在脏数据时重绘) ──
-        self._timer = QTimer()
-        self._timer.setInterval(REFRESH_MS)
-        self._timer.timeout.connect(self._refresh)
-        self._timer.start()
-
     # ── 数据接口 ───────────────────────────────────────────────
 
     def add_data(self, filtered: dict[str, float]):
@@ -196,6 +189,10 @@ class MiniChartWidget(QWidget):
             if abs(xr[1] - xr[0] - MAX_POINTS) < 1:
                 win = min(MAX_POINTS, n)
                 self.plot.setXRange(n - win, n)
+
+    def refresh_now(self):
+        """触发驱动刷新：由主显示在每帧数据到达时调用。"""
+        self._refresh()
 
     def clear_all(self):
         self._data = MiniChartData()
