@@ -25,6 +25,7 @@ from scope.hardware.simulator import SimulatorDevice
 from scope.hardware.stm32_device import Stm32Device
 from scope.io import FeedbackManager
 from scope.processing import ProcessingPipeline, AutoMeasure
+from scope.scan import ScanCoordinator, ScanConfig
 from scope.ui import MainWindow
 
 logging.basicConfig(
@@ -83,6 +84,9 @@ class ScopeApp:
             name="feedback",
         )
         self._feedback_ready = threading.Event()
+
+        # 扫频协调器 (全局单例)
+        self.scan_coordinator = ScanCoordinator()
 
         # 创建设备
         self.device = self._create_device()
@@ -161,6 +165,7 @@ class ScopeApp:
             feedback_manager=self.feedback_mgr,
             async_loop=self._async_loop,
             channel_count=1,
+            scan_coordinator=self.scan_coordinator,
         )
         self.main_win.stm32_config_applied.connect(self._on_stm32_config)
         self.main_win.show()
@@ -291,18 +296,39 @@ class ScopeApp:
                 event_measurements = self.main_win.measure_panel.compute_event_measurements(result)
                 result.measurements.update(event_measurements)
 
+            # ── 扫频分析 (始终执行) ──
+            fit_result = None
+            if hasattr(self, "scan_coordinator"):
+                cfg = self.scan_coordinator.snapshot()
+                ch_data = result.channels.get("CH0")
+                if ch_data is not None and len(ch_data.raw) > 2:
+                    from scope.scan.analysis import map_to_frequency_domain, fit_lorentzian
+                    f_axis, v_f = map_to_frequency_domain(
+                        ch_data.raw, ch_data.time_axis,
+                        cfg.base_freq, cfg.scan_freq_amp, cfg.scan_dur,
+                    )
+                    fit_result = fit_lorentzian(f_axis, v_f)
+                    result.measurements["scan_f0"] = fit_result.f0
+                    result.measurements["scan_gamma"] = fit_result.gamma
+                    result.measurements["scan_r2"] = fit_result.r_squared
+
             # 更新 UI
             self.main_win.data_received.emit(result)
 
-            # v0.4: FeedbackQueue → dispatch
-            from scope.runtime import MeasurementSnapshot
-            snap = MeasurementSnapshot(
-                sequence_num=result.sequence_num,
-                raw_measurements=raw_measurements,
-                event_measurements=event_measurements,
-            )
-            self._feedback_queue.put(snap)
-            self._feedback_ready.set()
+            # 更新扫频拟合面板
+            if fit_result is not None:
+                self.main_win.scan_panel_update.emit(fit_result)
+
+            # ── 反馈分支 (开关控制) ──
+            if self.scan_coordinator.feedback_enabled:
+                from scope.runtime import MeasurementSnapshot
+                snap = MeasurementSnapshot(
+                    sequence_num=result.sequence_num,
+                    raw_measurements=raw_measurements,
+                    event_measurements=event_measurements,
+                )
+                self._feedback_queue.put(snap)
+                self._feedback_ready.set()
 
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)

@@ -23,8 +23,10 @@ from PyQt6.QtWidgets import QFileDialog
 
 from .panels.feedback_panel import FeedbackPanel, FeedbackDialog
 from .panels.device_panel import DevicePanel
+from .panels.scan_panel import ScanPanel
 from .mini_chart import MiniChartWidget
 from scope.config.settings import ConfigManager
+from scope.scan import ScanCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +46,15 @@ class MainWindow(QMainWindow):
 
     # 跨线程信号: 采集线程 → UI 线程
     data_received = pyqtSignal(object)
+    # 扫频拟合结果信号: 采集线程 → UI 线程
+    scan_panel_update = pyqtSignal(object)
     # STM32 串口配置变更信号: 设备面板确认 → ScopeApp 重建设备
     stm32_config_applied = pyqtSignal(dict, object)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
                  async_loop=None,
-                 channel_count: int = 1):
+                 channel_count: int = 1,
+                 scan_coordinator: Optional[ScanCoordinator] = None):
         super().__init__()
         self._channel_count = channel_count
         self._async_loop = async_loop
@@ -111,11 +116,23 @@ class MainWindow(QMainWindow):
             async_loop=getattr(self, '_async_loop', None),
         )
 
+        # ── 扫频面板 ──
+        self._scan_coordinator = scan_coordinator or ScanCoordinator()
+        self.scan_panel = ScanPanel(coordinator=self._scan_coordinator)
+        # 找到 tabWidget 并添加扫频 Tab
+        tab_widget = self.tabChannels.parent()
+        from PyQt6.QtWidgets import QTabWidget
+        while tab_widget is not None and not isinstance(tab_widget, QTabWidget):
+            tab_widget = tab_widget.parent()
+        if tab_widget is not None:
+            tab_widget.addTab(self.scan_panel, "扫频")
+
         # ── 初始化 MeasurementBar / StatusBar ──
         self._update_status_bar()
 
         # ── 跨线程数据信号 ──
         self.data_received.connect(self.update_display)
+        self.scan_panel_update.connect(self.scan_panel.update_fit_result)
 
         # ── 信号连接 ──
         self._connect_actions()
