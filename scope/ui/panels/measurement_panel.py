@@ -1,12 +1,12 @@
 """
 动态测量面板 — 每行独立配置: 名称 + 通道 + 测量项 + 时间段
++ 拟合结果累计展示 (f0 / R² / 标准差)
 
 每行:
   [名称___] [CH1 ▼] [Vpp ▼] [起始_0.000s] [结束_0.010s] [2.0000 V] [✕]
 
-- 每行限定时间段 (起始～结束), 只计算该段内的测量值
-- 不同行可对同一通道的不同时间段测量不同物理量
-- 每行有独立名称用于标识和反馈订阅
+拟合结果区:
+  f0 (本次)     R² (拟合误差)     σ(f0) (最近 N 次标准差)
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
+    QFormLayout,
+    QGroupBox,
     QComboBox,
     QLabel,
     QLineEdit,
@@ -52,6 +54,9 @@ MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
     ("RiseTime",  "上升时间", "s"),
     ("FallTime",  "下降时间", "s"),
 ]
+
+# 拟合结果滑动窗口大小
+FIT_WINDOW_SIZE = 20
 
 
 class MeasurementRow(QWidget):
@@ -245,6 +250,8 @@ class MeasurementPanel:
         self._last_result: Optional[AnalysisResult] = None
         self._spec_lock = threading.Lock()
         self._spec_cache: list[dict] = []
+        # 拟合结果累计
+        self._f0_buffer: collections.deque = collections.deque(maxlen=FIT_WINDOW_SIZE)
         self._setup_ui()
 
         # 默认行
@@ -292,6 +299,17 @@ class MeasurementPanel:
         )
         btn_add.clicked.connect(self._on_add)
         layout.addWidget(btn_add)
+
+        # 拟合结果区
+        fit_group = QGroupBox("拟合结果")
+        fit_layout = QFormLayout(fit_group)
+        self._f0_label = QLabel("—")
+        self._r2_label = QLabel("—")
+        self._f0_std_label = QLabel("—")
+        fit_layout.addRow("f₀ (本次):", self._f0_label)
+        fit_layout.addRow("R² (拟合误差):", self._r2_label)
+        fit_layout.addRow("σ(f₀) (近N次标准差):", self._f0_std_label)
+        layout.addWidget(fit_group)
 
     def add_row(self, name: str = "", channel: str = "CH0",
                 meas_key: str = "Vpp",
@@ -407,6 +425,25 @@ class MeasurementPanel:
                 )
             else:
                 logger.debug(f"  跳过 '{tag}': compute_value 返回 None")
+
+    def update_fit_result(self, f0: Optional[float], r2: Optional[float]):
+        """更新拟合结果显示: f0, R², 以及近 N 次 f0 的标准差。"""
+        if f0 is not None and not np.isnan(f0):
+            self._f0_buffer.append(f0)
+            self._f0_label.setText(f"{f0:.6f} Hz")
+        else:
+            self._f0_label.setText("—")
+
+        if r2 is not None and not np.isnan(r2):
+            self._r2_label.setText(f"{r2:.6f}")
+        else:
+            self._r2_label.setText("—")
+
+        if len(self._f0_buffer) >= 2:
+            std = float(np.std(list(self._f0_buffer)))
+            self._f0_std_label.setText(f"{std:.6f} Hz")
+        else:
+            self._f0_std_label.setText("—")
 
     def get_subscriptions(self) -> list[dict]:
         """返回订阅信息, 供 FeedbackPanel 使用"""

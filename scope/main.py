@@ -1,23 +1,24 @@
 """
-数字示波器 — STM32 频率锁定分支
+数字示波器 — STM32 频率锁定分支 (v0.5)
 
 模式:
   - 默认 (无参数)     → 连接 STM32 串口设备 (Stm32Device)
   - --mock / -m       → 模拟数据 (SimulatorDevice, 1 通道)，无硬件也可运行
 
-STM32 门控采集:
-  - 串口 115200, CH0 电压值, CH1 门控信号
-  - 门开 (有数据) → 填入预分配 buffer
-  - 门关 (空行)   → 封帧发射, 更新波形
+v0.5 变更:
+  - EventBus 发布-订阅解耦: 测量 → 拟合 → 反馈 → UI 各自独立消费
+  - _on_frame 瘦身: 只做采集 + 测量 + bus.publish
+  - FitWorker: 独立线程拟合, 不阻塞采集
+  - FeedbackWorker: 独立 async worker, 自持 enabled 开关
+  - UIBridge: 双订阅 frame.measured (波形) + frame.fitted (扫频/趋势图)
 """
 
 import argparse
-import asyncio
 import logging
-import threading
 import time
 
 import numpy as np
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from scope.hardware import DeviceConfig
@@ -25,7 +26,9 @@ from scope.hardware.simulator import SimulatorDevice
 from scope.hardware.stm32_device import Stm32Device
 from scope.io import FeedbackManager
 from scope.processing import ProcessingPipeline, AutoMeasure
-from scope.scan import ScanCoordinator, ScanConfig
+from scope.runtime import EventBus, MeasurementSnapshot
+from scope.runtime.workers import FitWorker, FeedbackWorker, UIBridge
+from scope.scan import ScanCoordinator
 from scope.ui import MainWindow
 
 logging.basicConfig(
@@ -38,7 +41,7 @@ logger = logging.getLogger("scope")
 
 class ScopeApp:
     """
-    示波器应用 — STM32 频锁分支。
+    示波器应用 — STM32 频锁分支 (v0.5 EventBus 解耦)。
     """
 
     def __init__(self, mock: bool = False):
@@ -75,20 +78,16 @@ class ScopeApp:
             "record_length": self._config.record_length,
         }
 
-        # asyncio loop 用于 feedback dispatch
-        self._async_loop = asyncio.new_event_loop()
-
-        # v0.4: 有界反馈队列 (maxsize=2, drop_oldest)
-        from scope.runtime import BoundedQueue, DropStrategy
-        self._feedback_queue = BoundedQueue(
-            maxsize=2,
-            on_drop=DropStrategy.DROP_OLDEST,
-            name="feedback",
-        )
-        self._feedback_ready = threading.Event()
+        # v0.5: EventBus 发布-订阅
+        self._bus = EventBus()
 
         # 扫频协调器 (全局单例)
         self.scan_coordinator = ScanCoordinator()
+
+        # v0.5: Workers
+        self._fit_worker = FitWorker(self._bus, self.scan_coordinator)
+        self._feedback_worker = FeedbackWorker(self._bus, self.feedback_mgr)
+        self._ui_bridge: UIBridge | None = None  # 在 start() 中创建 (依赖 main_win)
 
         # 创建设备
         self.device = self._create_device()
@@ -126,7 +125,7 @@ class ScopeApp:
             try:
                 stm32.configure(self._config)
                 stm32.start_acquisition()
-                logger.info("✅ STM32 串口连接成功")
+                logger.info("STM32 串口连接成功")
                 self._device_type = "stm32"
                 return stm32
             except Exception as e:
@@ -154,25 +153,35 @@ class ScopeApp:
 
     def start(self):
         """启动所有子系统"""
-        # 1. 启动 asyncio 工作线程
-        async_thread = threading.Thread(
-            target=self._async_worker,
-            daemon=True,
-            name="async-worker",
-        )
-        async_thread.start()
-
-        # 2. 创建主窗口 (1 通道)
+        # 1. 创建主窗口 (1 通道)
         self.main_win = MainWindow(
             feedback_manager=self.feedback_mgr,
-            async_loop=self._async_loop,
+            async_loop=None,  # v0.5: 不再需要外部 async loop
             channel_count=1,
             scan_coordinator=self.scan_coordinator,
         )
         self.main_win.stm32_config_applied.connect(self._on_stm32_config)
         self.main_win.show()
 
-        # 3. 注册数据回调 (采集线程 → _on_frame)
+        # 2. 创建 UIBridge (依赖 main_win)
+        self._ui_bridge = UIBridge(
+            bus=self._bus,
+            data_received_signal=self.main_win.data_received,
+            scan_panel_signal=self.main_win.scan_panel_update,
+            trend_update_signal=self.main_win.trend_update,
+        )
+
+        # 3. 绑定反馈开关: FeedbackPanel checkbox → FeedbackWorker.enabled
+        self.main_win.feedback_panel._feedback_toggle_cb = (
+            lambda checked: setattr(self._feedback_worker, 'enabled', checked)
+        )
+
+        # 4. 启动 workers
+        self._fit_worker.start()
+        self._feedback_worker.start()
+        self._ui_bridge.start()
+
+        # 4. 注册数据回调 (采集线程 → _on_frame)
         if hasattr(self.device, 'set_data_callback'):
             self.device.set_data_callback(self._on_frame)
 
@@ -183,7 +192,7 @@ class ScopeApp:
             f"模式={'mock' if self._mock else '硬件'}"
         )
 
-        # 4. SimulatorDevice 降级: 用 QTimer 驱动
+        # 5. SimulatorDevice 降级: 用 QTimer 驱动
         self._running = True
         if not hasattr(self.device, 'set_data_callback'):
             self._timer = QTimer()
@@ -191,14 +200,19 @@ class ScopeApp:
             self._timer.timeout.connect(self._on_timer_tick)
             self._timer.start()
 
-        logger.info("ScopeApp (STM32 频锁) 已启动")
+        logger.info("ScopeApp (STM32 频锁 v0.5) 已启动")
 
     def stop(self):
         """停止所有子系统"""
         self._running = False
-        self._feedback_ready.set()
         if hasattr(self, '_timer'):
             self._timer.stop()
+
+        # v0.5: 停止 workers
+        self._fit_worker.stop()
+        self._feedback_worker.stop()
+        if self._ui_bridge:
+            self._ui_bridge.stop()
 
         self.device.stop_acquisition()
         self.device.close()
@@ -244,7 +258,7 @@ class ScopeApp:
             if hasattr(new_device, 'set_data_callback'):
                 new_device.set_data_callback(self._on_frame)
             logger.info(
-                f"✅ STM32 设备已切换: {params['port']} @ {params['baudrate']}"
+                f"STM32 设备已切换: {params['port']} @ {params['baudrate']}"
             )
 
         except Exception as e:
@@ -288,52 +302,34 @@ class ScopeApp:
 
     def _on_frame(self, chunk: np.ndarray):
         """
-        事件驱动回调: 采集线程在门关闭时调用 (非 UI 线程)。
+        采集线程回调 — 最小工作量 (v0.5)。
+        只做采集 + 测量 + 事件窗口计算 + 发布到 EventBus。
+        拟合、反馈、UI 更新由各自 worker 独立消费。
         """
         try:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # v0.4: 保存原始测量值
-            raw_measurements = dict(result.measurements)
+            # 事件窗口测量 (线程安全: MeasurementPanel._spec_lock 保护)
             event_measurements = {}
             if hasattr(self.main_win, "measure_panel"):
-                event_measurements = self.main_win.measure_panel.compute_event_measurements(result)
-                result.measurements.update(event_measurements)
-
-            # ── 扫频分析 (始终执行) ──
-            fit_result = None
-            if hasattr(self, "scan_coordinator"):
-                cfg = self.scan_coordinator.snapshot()
-                ch_data = result.channels.get("CH0")
-                if ch_data is not None and len(ch_data.raw) > 2:
-                    from scope.scan.analysis import map_to_frequency_domain, fit_lorentzian
-                    f_axis, v_f = map_to_frequency_domain(
-                        ch_data.raw, ch_data.time_axis,
-                        cfg.base_freq, cfg.scan_freq_amp, cfg.scan_dur,
-                    )
-                    fit_result = fit_lorentzian(f_axis, v_f)
-                    result.measurements["scan_f0"] = fit_result.f0
-                    result.measurements["scan_gamma"] = fit_result.gamma
-                    result.measurements["scan_r2"] = fit_result.r_squared
-
-            # 更新 UI
-            self.main_win.data_received.emit(result)
-
-            # 更新扫频拟合面板
-            if fit_result is not None:
-                self.main_win.scan_panel_update.emit(fit_result)
-
-            # ── 反馈分支 (开关控制) ──
-            if self.scan_coordinator.feedback_enabled:
-                from scope.runtime import MeasurementSnapshot
-                snap = MeasurementSnapshot(
-                    sequence_num=result.sequence_num,
-                    raw_measurements=raw_measurements,
-                    event_measurements=event_measurements,
+                event_measurements = (
+                    self.main_win.measure_panel.compute_event_measurements(result)
                 )
-                self._feedback_queue.put(snap)
-                self._feedback_ready.set()
+
+            # 构建 snapshot
+            ch0 = result.channels.get("CH0")
+            snap = MeasurementSnapshot(
+                sequence_num=result.sequence_num,
+                raw_measurements=dict(result.measurements),
+                event_measurements=event_measurements,
+                ch0_raw=ch0.raw if ch0 else None,
+                ch0_time_axis=ch0.time_axis if ch0 else None,
+            )
+            # 传递 AnalysisResult 引用供 UIBridge 直接 emit (用后释放)
+            snap._analysis_result = result
+
+            self._bus.publish("frame.measured", snap)
 
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)
@@ -345,32 +341,6 @@ class ScopeApp:
             self._on_frame(chunk)
         except Exception as e:
             logger.error(f"采集错误: {e}", exc_info=True)
-
-    def _async_worker(self):
-        """在独立线程中运行 asyncio loop, 消费反馈队列 + dispatch。"""
-        asyncio.set_event_loop(self._async_loop)
-        loop = self._async_loop
-        loop.create_task(self._feedback_consumer())
-        loop.run_forever()
-
-    async def _feedback_consumer(self):
-        """消费 FeedbackQueue → dispatch。"""
-        import time as _time
-        while True:
-            await asyncio.to_thread(self._feedback_ready.wait)
-            self._feedback_ready.clear()
-            pending = self._feedback_queue.dequeue_all()
-            if not pending:
-                continue
-            snap = pending[-1]
-            latency_ms = (_time.monotonic() - snap.timestamp) * 1000
-            if latency_ms > 100:
-                logger.warning(
-                    f"反馈延迟 {latency_ms:.0f}ms, "
-                    f"队列深度={self._feedback_queue.qsize}"
-                )
-            await self.feedback_mgr.dispatch(snap)
-            await asyncio.sleep(0)
 
 
 def main():
@@ -385,9 +355,9 @@ def main():
     args = parser.parse_args()
 
     if args.mock:
-        logger.info("🟡 启动模式: mock — 使用模拟数据")
+        logger.info("启动模式: mock — 使用模拟数据")
     else:
-        logger.info("🟢 启动模式: hardware — 连接 STM32 串口 (--mock 使用模拟数据)")
+        logger.info("启动模式: hardware — 连接 STM32 串口 (--mock 使用模拟数据)")
 
     app = QApplication(sys.argv)
 

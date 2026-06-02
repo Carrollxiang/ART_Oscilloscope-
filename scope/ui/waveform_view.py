@@ -130,7 +130,7 @@ class WaveformView:
 
     def update_waveform(self, ch: int, time_axis: np.ndarray, data: np.ndarray,
                         enabled: bool = True, color: Optional[QColor] = None):
-        """更新通道波形数据 (自动降采样至 ~1k 点以提升性能)。"""
+        """更新通道波形数据。"""
         curve = self._curves.get(ch)
         if curve is None:
             return
@@ -138,9 +138,11 @@ class WaveformView:
             curve.hide()
             return
 
-        # 降采样: 每隔一个点画一个 (性能优化)
-        data = data[::2]
-        time_axis = time_axis[::2]
+        # 数据量较大时降采样 (pyqtgraph 也能自动处理, 但主动降采样更可控)
+        if len(data) > 2000:
+            step = len(data) // 1000
+            data = data[::step]
+            time_axis = time_axis[::step]
 
         curve.setData(time_axis, data)
         curve.show()

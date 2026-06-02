@@ -48,6 +48,8 @@ class MainWindow(QMainWindow):
     data_received = pyqtSignal(object)
     # 扫频拟合结果信号: 采集线程 → UI 线程
     scan_panel_update = pyqtSignal(object)
+    # 趋势图数据信号: EventBus → UI 线程 (dict[str, float])
+    trend_update = pyqtSignal(dict)
     # STM32 串口配置变更信号: 设备面板确认 → ScopeApp 重建设备
     stm32_config_applied = pyqtSignal(dict, object)
 
@@ -133,6 +135,8 @@ class MainWindow(QMainWindow):
         # ── 跨线程数据信号 ──
         self.data_received.connect(self.update_display)
         self.scan_panel_update.connect(self.scan_panel.update_fit_result)
+        self.scan_panel_update.connect(self._on_fit_result_for_measurement)
+        self.trend_update.connect(self._on_trend_update)
 
         # ── 信号连接 ──
         self._connect_actions()
@@ -202,15 +206,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "measure_panel"):
             self.measure_panel.update_from_result(result)
 
-        # 4. 更新 mini chart (与主示波器同节拍: 每帧一次)
-        active_subs: set[str] = set()
-        for slot_info in self._feedback_mgr.list_slots():
-            for sub in slot_info.subscriptions:
-                active_subs.add(sub)
-        filtered = {k: v for k, v in result.measurements.items() if k in active_subs}
-        if filtered:
-            self.mini_chart.add_data(filtered)
-            self.mini_chart.refresh_now()
+        # 4. mini chart 由 UIBridge _on_fitted 独立驱动, 此处不再写入
 
         # 5. 更新状态栏
         self._update_status_bar(result)
@@ -263,6 +259,22 @@ class MainWindow(QMainWindow):
             "基于 PyQt6 + pyqtgraph\n"
             "STM32 串口门控采集 · 单通道",
         )
+
+    def _on_trend_update(self, data: dict):
+        """趋势图数据 (主线程, 由 trend_update signal 触发)。"""
+        if data:
+            # 提取内嵌时间戳
+            ts = data.pop("__timestamp__", None)
+            self.mini_chart.add_data(data, timestamp=ts)
+            self.mini_chart.refresh_now()
+
+    def _on_fit_result_for_measurement(self, fit_result):
+        """拟合结果 → MeasurementPanel (展示 f0 / R² / σ)。"""
+        if fit_result is not None:
+            self.measure_panel.update_fit_result(
+                f0=getattr(fit_result, 'f0', None),
+                r2=getattr(fit_result, 'r_squared', None),
+            )
 
     def _on_channel_changed(self, ch: int, key: str, value):
         """通道参数变化回调"""

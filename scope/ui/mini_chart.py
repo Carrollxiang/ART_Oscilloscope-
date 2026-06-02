@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from typing import Optional
 
@@ -30,34 +31,37 @@ TRACE_COLORS = [
 
 
 class MiniChartData:
-    """环形缓冲, 每订阅项一个 deque。"""
+    """环形缓冲, 每订阅项一个 deque, 存储 (timestamp, value) 对。"""
 
     def __init__(self, maxlen: int = MAX_POINTS):
         self._maxlen = maxlen
-        self._buf: dict[str, deque] = {}
+        self._buf: dict[str, deque] = {}   # key → deque of (timestamp, value)
         self._colors: dict[str, QColor] = {}
         self._count = 0
         self._ci = 0
+        self._start_time: float = time.monotonic()  # 启动基准时间
 
-    def add(self, key: str, value: float):
+    def add(self, key: str, value: float, timestamp: float | None = None):
         if key not in self._buf:
             self._buf[key] = deque(maxlen=self._maxlen)
             self._colors[key] = TRACE_COLORS[self._ci % len(TRACE_COLORS)]
             self._ci += 1
-        self._buf[key].append(value)
+        ts = timestamp if timestamp is not None else time.monotonic()
+        self._buf[key].append((ts, value))
         self._count += 1
 
-    def add_batch(self, data: dict[str, float]):
+    def add_batch(self, data: dict[str, float], timestamp: float | None = None):
         for k, v in data.items():
-            self.add(k, v)
+            self.add(k, v, timestamp=timestamp)
 
     def trace(self, key: str) -> tuple[np.ndarray, np.ndarray]:
+        """返回 (x_min, y) — x 为距启动时间的分钟数。"""
         if key not in self._buf or not self._buf[key]:
             return np.array([]), np.array([])
         b = self._buf[key]
-        offset = self._count - len(b)
-        x = np.arange(offset, offset + len(b), dtype=np.float64)
-        return x, np.array(b, dtype=np.float64)
+        arr = np.array(b, dtype=np.float64)   # shape (N, 2): [timestamp, value]
+        x_min = (arr[:, 0] - self._start_time) / 60.0
+        return x_min, arr[:, 1]
 
     def keys(self):
         return list(self._buf.keys())
@@ -68,6 +72,20 @@ class MiniChartData:
     @property
     def count(self):
         return self._count
+
+    @property
+    def latest_time_min(self) -> float:
+        """最近一个数据点的时间 (min), 用于自动滚动 X 轴。"""
+        latest = 0.0
+        for b in self._buf.values():
+            if b:
+                latest = max(latest, b[-1][0])
+        return (latest - self._start_time) / 60.0
+
+    @property
+    def window_min(self) -> float:
+        """X 轴窗口宽度 (min), 对应 MAX_POINTS 个采样点。"""
+        return MAX_POINTS / 60.0   # 假设 ~1 点/s, 可按实际调整
 
 
 class MiniChartWidget(QWidget):
@@ -90,7 +108,7 @@ class MiniChartWidget(QWidget):
         # ── 绘图区 (与主波形相同交互能力) ──
         self.plot = pg.PlotWidget()
         self.plot.setLabel("left", "", units="")
-        self.plot.setLabel("bottom", "", units="")
+        self.plot.setLabel("bottom", "t", units="min")
         self.plot.showGrid(x=True, y=True, alpha=0.15)
         self.plot.setMouseEnabled(x=True, y=True)  # 允许滚轮缩放 + 拖拽
         self.plot.setBackground("#0D0D0D")
@@ -115,9 +133,9 @@ class MiniChartWidget(QWidget):
 
     # ── 数据接口 ───────────────────────────────────────────────
 
-    def add_data(self, filtered: dict[str, float]):
+    def add_data(self, filtered: dict[str, float], timestamp: float | None = None):
         if filtered:
-            self._data.add_batch(filtered)
+            self._data.add_batch(filtered, timestamp=timestamp)
             self._dirty = True
 
     # ── 图例点击切换 ───────────────────────────────────────────
@@ -180,15 +198,15 @@ class MiniChartWidget(QWidget):
             else:
                 self._curves[key].hide()
 
-        # 自动 X 轴 (仅在用户未手动缩放时)
-        n = self._data.count
-        if n > 0:
+        # 自动 X 轴滚动: 跟随最新时间
+        if self._data.count > 0:
+            latest = self._data.latest_time_min
+            win = self._data.window_min
             vb = self.plot.plotItem.vb
-            # 检查用户是否手动拖拽过 (viewRange 变化了就不自动调)
             xr = vb.viewRange()[0]
-            if abs(xr[1] - xr[0] - MAX_POINTS) < 1:
-                win = min(MAX_POINTS, n)
-                self.plot.setXRange(n - win, n)
+            # 仅在当前窗口接近默认窗口时自动滚动 (用户手动缩放后不强制)
+            if abs(xr[1] - xr[0] - win) < win * 0.1:
+                self.plot.setXRange(max(0, latest - win), max(win, latest))
 
     def refresh_now(self):
         """触发驱动刷新：由主显示在每帧数据到达时调用。"""

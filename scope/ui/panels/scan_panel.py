@@ -1,5 +1,5 @@
 """
-扫频控制面板 — 参数设置 + 下发按钮 + 反馈开关 + 拟合结果显示
+扫频控制面板 — 参数设置 + 下发按钮 + 拟合结果显示
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QDoubleSpinBox,
     QPushButton,
-    QCheckBox,
 )
 
 from scope.scan import ScanConfig, ScanState, ScanCoordinator
@@ -33,7 +32,7 @@ class ScanPanel(QWidget):
       ┌─ 扫频参数 ──────────────────────┐
       │  中心频率 / 扫频范围 / 扫频时长  │
       ├─ 控制 ──────────────────────────┤
-      │  [下发扫频配置]  [反馈开关]       │
+      │  [下发扫频配置]                  │
       ├─ 状态 ──────────────────────────┤
       │  状态: IDLE / SCANNING / DONE   │
       ├─ 拟合结果 ──────────────────────┤
@@ -119,11 +118,6 @@ class ScanPanel(QWidget):
         self.btnUpload.clicked.connect(self._on_upload)
         ctrl.addWidget(self.btnUpload)
 
-        self.chkFeedback = QCheckBox("启用反馈链路")
-        self.chkFeedback.setChecked(self._coordinator.feedback_enabled)
-        self.chkFeedback.toggled.connect(self._on_feedback_toggle)
-        ctrl.addWidget(self.chkFeedback)
-
         ctrl.addStretch()
         layout.addLayout(ctrl)
 
@@ -169,10 +163,6 @@ class ScanPanel(QWidget):
     def _update_dur_label(self):
         dur = self.spinScanDur.value()
         self._lbl_dur_s.setText(f"= {dur/1e6:.3f} s")
-
-    def _on_feedback_toggle(self, checked: bool):
-        self._coordinator.feedback_enabled = checked
-        logger.info(f"反馈链路: {'启用' if checked else '关闭'}")
 
     def _on_upload(self):
         """下发扫频配置。"""

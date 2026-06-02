@@ -6,12 +6,12 @@ STM32 串口采集设备 — 门控触发 + 单通道电压采集
     CH0: 实际测量电压
     CH1: 触发电压 (高电平 → 有效数据, 低电平 → 静默)
   - 串口格式: 115200 8N1
-  - 有效数据: b'CH0 Voltage= XX.XXXXXX mV\\r\\n'
+  - 有效数据: b'CH0:120332 \r\n' (原始 ADC 码值, 24 位无符号整数)
+  - 电压转换: V = raw * 5.0 / 2^23
   - 静默数据: b''
-  - 采样周期: 1 ms
 
 门控采集逻辑:
-  1. 收到非空行 → 解析电压值 (mV → V) → 填入预分配数组
+  1. 收到非空行 → 解析原始 ADC 码值 → 换算电压 (V = raw * 5.0 / 2^23) → 填入预分配数组
   2. 收到空行 + 数组非空 → 切片已填充部分 → 封帧 → data_callback → 复位写指针
   3. 收到空行 + 数组为空 → 继续等待
 """
@@ -39,8 +39,13 @@ from scope.model import TriggerInfo
 
 logger = logging.getLogger(__name__)
 
-# 电压解析正则: "CH0 Voltage= XX.XXXXXX mV"
-_VOLTAGE_RE = re.compile(r"CH0 Voltage=\s*([-\d.]+)\s*mV")
+# 电压解析正则: "CH0:120332"
+_RAW_ADC_RE = re.compile(r"CH0:\s*(\d+)")
+
+# ADC 电压转换系数: 24 位 ADC, 5V 参考电压
+_ADC_VREF = 5.0
+_ADC_BITS = 24
+_ADC_SCALE = _ADC_VREF / (1 << _ADC_BITS)   # ≈ 2.98e-7 V/LSB
 
 # 默认缓冲区大小 (运行时由 DeviceConfig.record_length 覆盖)
 DEFAULT_BUFFER_SIZE = 450
@@ -92,7 +97,7 @@ class Stm32Device(AcquisitionDevice):
             product_id=0,
             serial_number="STM32-001",
             channel_count=1,
-            resolution_bits=12,          # STM32 ADC 通常 12 位
+            resolution_bits=24,          # 24 位 ADC (ADS1256 或同类)
             max_sample_rate=149,          # 实测 ~149 Sa/s
             firmware_version="stm32-1.0",
         )
@@ -276,10 +281,11 @@ class Stm32Device(AcquisitionDevice):
 
     # 空数据超时 (秒): 超过此时间无数据视为门关闭
     GATE_CLOSE_TIMEOUT = 0.15
-    # 最大帧时长 (秒): 即使数据不间断, 超过此时长也强制封帧
-    MAX_FRAME_DURATION = 1.0
     # 轮询间隔 (秒)
     POLL_INTERVAL = 0.0005
+
+    # 最大帧时长 (秒): 等待缓冲区填满再封帧
+    MAX_FRAME_DURATION = 3.0
 
     def _acquire_worker(self):
         """
@@ -366,13 +372,13 @@ class Stm32Device(AcquisitionDevice):
             self._emit_frame()
 
     def _parse_voltage(self, line: bytes) -> Optional[float]:
-        """解析 'CH0 Voltage= XX.XXXXXX mV' → 伏特 (float), 失败返回 None。"""
+        """解析 'CH0:120332' → 伏特 (raw * 5.0 / 2^23), 失败返回 None。"""
         try:
             text = line.decode('utf-8', errors='replace').strip()
-            m = _VOLTAGE_RE.search(text)
+            m = _RAW_ADC_RE.search(text)
             if m:
-                mv = float(m.group(1))
-                return mv / 1000.0       # mV → V
+                raw = int(m.group(1))
+                return raw * _ADC_SCALE
         except (ValueError, UnicodeDecodeError):
             pass
         return None
