@@ -55,7 +55,7 @@ class ChannelPanel(QWidget):
     # 信号: (channel_index, 属性名, 新值)
     channel_changed = pyqtSignal(int, str, object)
 
-    def __init__(self, parent=None, channel_count: int = 16):
+    def __init__(self, parent=None, channel_count: int = 1):
         super().__init__(parent)
 
         self._channel_count = channel_count
@@ -109,7 +109,7 @@ class ChannelPanel(QWidget):
         color = CHANNEL_COLORS[ch % len(CHANNEL_COLORS)]
 
         # 启用复选框
-        cb = QCheckBox(f"CH{ch + 1}")
+        cb = QCheckBox(f"CH{ch}")
         cb.setChecked(True)  # 默认全部通道开启
         cb.setStyleSheet(f"color: {color.name()}; font-weight: bold;")
         cb.toggled.connect(lambda checked, c=ch: self._on_change(c, "enabled", checked))
@@ -152,7 +152,7 @@ class ChannelPanel(QWidget):
 
     def _on_change(self, ch: int, key: str, value):
         self.channel_changed.emit(ch, key, value)
-        logger.debug(f"CH{ch + 1}.{key} = {value}")
+        logger.debug(f"CH{ch}.{key} = {value}")
 
     # ── 公开查询接口 ───────────────────────────────────────────
 

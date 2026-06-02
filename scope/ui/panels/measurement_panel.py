@@ -35,8 +35,7 @@ from scope.processing.measurements import MEASUREMENT_FUNCTIONS
 
 logger = logging.getLogger(__name__)
 
-CHANNELS = ["CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8",
-             "CH9", "CH10", "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
+CHANNELS = ["CH0"]
 
 # (key, label, unit)
 MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
@@ -60,7 +59,7 @@ class MeasurementRow(QWidget):
 
     def __init__(self, parent=None,
                  name: str = "",
-                 channel: str = "CH1",
+                 channel: str = "CH0",
                  meas_key: str = "Vpp",
                  start_time: float = 0.0,
                  end_time: float = 500.0,
@@ -248,10 +247,8 @@ class MeasurementPanel:
         self._spec_cache: list[dict] = []
         self._setup_ui()
 
-        # 默认行 (500ms 帧)
-        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=500)
-        self.add_row(name="CH1 频率", meas_key="Freq", end_time=500)
-        self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=500)
+        # 默认行
+        self.add_row(name="CH0 电压", meas_key="Vpp")
         self._refresh_spec_cache()
 
     def _setup_ui(self):
@@ -296,7 +293,7 @@ class MeasurementPanel:
         btn_add.clicked.connect(self._on_add)
         layout.addWidget(btn_add)
 
-    def add_row(self, name: str = "", channel: str = "CH1",
+    def add_row(self, name: str = "", channel: str = "CH0",
                 meas_key: str = "Vpp",
                 start_time: float = 0.0, end_time: float = 500.0):
         frame_dur = 500.0

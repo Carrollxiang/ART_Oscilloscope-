@@ -41,7 +41,7 @@ CHANNEL_COLORS = [
     QColor("#FFB6C1"),  # CH16: 浅粉
 ]
 
-CHANNEL_NAMES = [f"CH{i+1}" for i in range(32)]
+CHANNEL_NAMES = [f"CH{i}" for i in range(32)]
 
 
 class WaveformView:
@@ -49,7 +49,7 @@ class WaveformView:
     波形视图控件 — 带图例的 pyqtgraph PlotWidget。
     """
 
-    def __init__(self, parent_widget, channel_count: int = 16):
+    def __init__(self, parent_widget, channel_count: int = 1):
         self._channel_count = channel_count
         self._curves: dict[int, pg.PlotDataItem] = {}
         self._trigger_line: Optional[pg.InfiniteLine] = None
@@ -124,7 +124,7 @@ class WaveformView:
         # 图例点击: 使用 pyqtgraph 内置回调
         self._legend.sigSampleClicked.connect(self._on_legend_sample_clicked)
 
-        logger.info("WaveformView 已创建 (2列图例)")
+        logger.info(f"WaveformView 已创建 ({channel_count}ch, 2列图例)")
 
     # ── 波形数据 ───────────────────────────────────────────────
 

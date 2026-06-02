@@ -44,28 +44,29 @@ class MainWindow(QMainWindow):
 
     # 跨线程信号: 采集线程 → UI 线程
     data_received = pyqtSignal(object)
-    # ART 配置变更信号: 对话框确认 → ScopeApp 重建设备
-    # ART 配置变更信号: 设备面板确认 → ScopeApp 重建设备
-    art_config_applied = pyqtSignal(dict, object)
+    # STM32 串口配置变更信号: 设备面板确认 → ScopeApp 重建设备
+    stm32_config_applied = pyqtSignal(dict, object)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
-                 async_loop=None):
+                 async_loop=None,
+                 channel_count: int = 1):
         super().__init__()
+        self._channel_count = channel_count
         self._async_loop = async_loop
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
 
         # ── 波形视图 (替换 waveformContainer) ──
-        self.waveform = WaveformView(self.waveformContainer, channel_count=16)
+        self.waveform = WaveformView(self.waveformContainer, channel_count=channel_count)
 
         # ── 通道面板 (替换 channelList) ──
-        self.channel_panel = ChannelPanel(channel_count=16)
+        self.channel_panel = ChannelPanel(channel_count=channel_count)
         self._embed_widget(self.tabChannels.layout(), self.channel_panel)
         self.channel_panel.channel_changed.connect(self._on_channel_changed)
 
         # 初始可见性: 默认打开全部通道 (由 ChannelPanel 的复选框控制)
-        for ch in range(16):
+        for ch in range(channel_count):
             visible = self.channel_panel.is_channel_enabled(ch)
             self.waveform.set_channel_visible(ch, visible)
 
@@ -95,7 +96,7 @@ class MainWindow(QMainWindow):
         # ── 设备面板 (替换触发) ──
         self.device_panel = DevicePanel()
         self._embed_widget(self.tabDevice.layout(), self.device_panel)
-        self.device_panel.config_applied.connect(self._on_device_config)
+        self.device_panel.stm32_config_applied.connect(self._on_device_config)
 
         # ── 测量面板 (动态行) ──
         self.measure_panel = MeasurementPanel(self.tabMeasurements)
@@ -141,8 +142,8 @@ class MainWindow(QMainWindow):
 
     def _on_device_config(self, params: dict, config: DeviceConfig):
         """设备面板 → 转发配置到 ScopeApp。"""
-        logger.info(f"设备配置已应用: {params}")
-        self.art_config_applied.emit(params, config)
+        logger.info(f"串口配置已应用: {params}")
+        self.stm32_config_applied.emit(params, config)
 
     def _on_legend_toggle(self, ch: int, visible: bool):
         """图例点击切换时, 同步通道面板的复选框。"""
@@ -162,7 +163,8 @@ class MainWindow(QMainWindow):
         """
         # 1. 更新波形 (可见性由 ChannelPanel 复选框控制)
         for ch_name, ch_data in result.channels.items():
-            ch_idx = int(ch_name.replace("CH", "")) - 1
+            # 通道名 CH0/CH1/... → 0-based index
+            ch_idx = int(ch_name.replace("CH", ""))
             visible = self.waveform.is_channel_visible(ch_idx)
             color = self.channel_panel.get_channel_color(ch_idx)
 
@@ -239,10 +241,10 @@ class MainWindow(QMainWindow):
     def _show_about(self):
         QMessageBox.about(
             self,
-            "关于 数字示波器",
-            "数字示波器 v0.1\n"
-            "基于 PyQt6 + pyqtgraph + rpyc\n"
-            "驱动 ART 多通道 USB 采集卡",
+            "关于 频率锁定示波器",
+            "频率锁定示波器 (STM32 分支)\n"
+            "基于 PyQt6 + pyqtgraph\n"
+            "STM32 串口门控采集 · 单通道",
         )
 
     def _on_channel_changed(self, ch: int, key: str, value):

@@ -1,8 +1,7 @@
 """
-设备设置面板 — 替换"触发"Tab
+设备设置面板 — STM32 串口配置
 
-包含 ART 采集卡所有配置项 + 通讯测试 + 应用按钮
-(由原来的 ArtConfigDialog 改为内嵌 QWidget)
+包含串口参数 + 通讯测试 + 应用按钮
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QSpinBox,
     QDoubleSpinBox,
-    QCheckBox,
     QPushButton,
 )
 
@@ -31,26 +29,19 @@ from scope.hardware import DeviceConfig
 
 logger = logging.getLogger(__name__)
 
+# 常用波特率
+BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
+
 
 class DevicePanel(QWidget):
     """
-    设备设置面板 (替换原来的"触发"Tab)。
+    STM32 串口设备设置面板。
 
-    所有 ART 采集卡配置在此完成 + 通讯测试按钮。
-    配置确认后发射 config_applied 信号。
+    配置项: COM 口 + 波特率 + 通讯测试。
+    配置确认后发射 stm32_config_applied 信号。
     """
 
-    config_applied = pyqtSignal(dict, object)  # (params, DeviceConfig)
-
-    TERMINAL_MODES = [
-        ("NRSE", "NRSE"),
-        ("RSE", "RSE"),
-        ("DIFFERENTIAL", "Differential"),
-        ("PSEUDODIFFERENTIAL", "Pseudo Diff"),
-        ("DEFAULT", "Default"),
-    ]
-    SAMPLE_MODES = [("FINITE", "有限"), ("CONTINUOUS", "连续")]
-    SLOPES = [("rising", "上升沿"), ("falling", "下降沿")]
+    stm32_config_applied = pyqtSignal(dict, object)  # (params, DeviceConfig)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -72,84 +63,42 @@ class DevicePanel(QWidget):
         c1 = QVBoxLayout()
         c2 = QVBoxLayout()
         c3 = QVBoxLayout()
-        c4 = QVBoxLayout()
 
-        # ── 列1: 设备标识 ──
-        g1 = QGroupBox("设备")
+        # ── 列1: 串口设置 ──
+        g1 = QGroupBox("串口设置")
         f1 = QFormLayout(g1)
-        self.editDeviceName = QLineEdit("Dev42")
-        self.editAiChannels = QLineEdit("ai0:15")
-        f1.addRow("设备名", self.editDeviceName)
-        f1.addRow("AI 通道", self.editAiChannels)
-        c1.addWidget(g1)
+        self.editPort = QLineEdit("COM11")
+        self.editPort.setPlaceholderText("如 COM11 / /dev/ttyUSB0")
+        f1.addRow("COM 口", self.editPort)
 
-        # ── 列2: 硬件触发 ──
-        g3 = QGroupBox("硬件触发")
-        f3 = QFormLayout(g3)
-        self.chkTrig = QCheckBox("启用")
-        f3.addRow("", self.chkTrig)
-        self.editTrigSrc = QLineEdit()
-        self.editTrigSrc.setPlaceholderText("如 ai1")
-        f3.addRow("触发源", self.editTrigSrc)
-        self.cmbTrigSlope = QComboBox()
-        for code, label in self.SLOPES:
-            self.cmbTrigSlope.addItem(label, code)
-        f3.addRow("斜率", self.cmbTrigSlope)
-        self.spinTrigLevel = QDoubleSpinBox()
-        self.spinTrigLevel.setRange(-10, 10)
-        self.spinTrigLevel.setValue(0.0)
-        self.spinTrigLevel.setSuffix(" V")
-        f3.addRow("电平", self.spinTrigLevel)
-        self.chkTrig.toggled.connect(
-            lambda on: (self.editTrigSrc.setEnabled(on),
-                        self.cmbTrigSlope.setEnabled(on),
-                        self.spinTrigLevel.setEnabled(on))
-        )
-        self.chkTrig.setChecked(True)
-        self.editTrigSrc.setText("ai12")
-        self.spinTrigLevel.setValue(1.0)
-        c2.addWidget(g3)
+        self.cmbBaudrate = QComboBox()
+        for rate in BAUD_RATES:
+            self.cmbBaudrate.addItem(str(rate), rate)
+        self.cmbBaudrate.setCurrentText("115200")
+        self.cmbBaudrate.setEditable(True)
+        f1.addRow("波特率", self.cmbBaudrate)
+        c1.addWidget(g1)
+        c1.addStretch()
+
+        # ── 列2: 采集参数 (只读) ──
+        g2 = QGroupBox("采集参数 (固定)")
+        f2 = QFormLayout(g2)
+        lblRate = QLabel("~149 Sa/s (实测)")
+        lblRate.setStyleSheet("color: #888;")
+        f2.addRow("采样率", lblRate)
+        lblBuf = QLabel("300 点 / 1.0s 窗口")
+        lblBuf.setStyleSheet("color: #888;")
+        f2.addRow("缓冲区", lblBuf)
+        lblMode = QLabel("门控触发 (CH1 电平)")
+        lblMode.setStyleSheet("color: #888;")
+        f2.addRow("触发模式", lblMode)
+        c2.addWidget(g2)
         c2.addStretch()
 
-        # ── 列3: 采集参数 ──
-        g2 = QGroupBox("采集参数")
-        f2 = QFormLayout(g2)
-        self.cmbTerminal = QComboBox()
-        for code, label in self.TERMINAL_MODES:
-            self.cmbTerminal.addItem(label, code)
-        f2.addRow("接地方式", self.cmbTerminal)
-        self.spinTimeout = QDoubleSpinBox()
-        self.spinTimeout.setRange(0.1, 60.0)
-        self.spinTimeout.setValue(5.0)
-        self.spinTimeout.setSuffix(" s")
-        f2.addRow("读取超时", self.spinTimeout)
-        self.spinSampleRate = QSpinBox()
-        self.spinSampleRate.setRange(100, 250_000)
-        self.spinSampleRate.setValue(30_000)
-        self.spinSampleRate.setSuffix(" Sa/s")
-        f2.addRow("采样率", self.spinSampleRate)
-        dur = QHBoxLayout()
-        self.spinDuration = QDoubleSpinBox()
-        self.spinDuration.setRange(0.001, 60.0)
-        self.spinDuration.setValue(0.5)
-        self.spinDuration.setSuffix(" s")
-        self.spinDuration.setDecimals(3)
-        self.spinDuration.setSingleStep(0.1)
-        self.lblSamples = QLabel("= 5000 样本")
-        self.spinDuration.valueChanged.connect(self._update_samples)
-        dur.addWidget(self.spinDuration)
-        dur.addWidget(self.lblSamples)
-        f2.addRow("采样时长", dur)
-        self.cmbSampleMode = QComboBox()
-        for code, label in self.SAMPLE_MODES:
-            self.cmbSampleMode.addItem(label, code)
-        f2.addRow("采样模式", self.cmbSampleMode)
-        c3.addWidget(g2)
-
-        # ── 列4: 通讯测试 ──
+        # ── 列3: 通讯测试 ──
         g4 = QGroupBox("通讯测试")
         t4 = QVBoxLayout(g4)
-        self.btnTest = QPushButton("🧪 测试硬件通讯")
+        self.btnTest = QPushButton("🧪 测试串口通讯")
         self.btnTest.clicked.connect(self._run_test)
         t4.addWidget(self.btnTest)
         self.testStatus = QLabel("就绪")
@@ -158,13 +107,12 @@ class DevicePanel(QWidget):
             "padding: 4px; background: #1a1a2e; border: 1px solid #333; "
             "font-family: Consolas; font-size: 11px;")
         t4.addWidget(self.testStatus)
-        c4.addWidget(g4)
-        c4.addStretch()
+        c3.addWidget(g4)
+        c3.addStretch()
 
         grid.addLayout(c1)
         grid.addLayout(c2)
         grid.addLayout(c3)
-        grid.addLayout(c4)
 
         scroll.setWidget(container)
         layout.addWidget(scroll)
@@ -183,17 +131,10 @@ class DevicePanel(QWidget):
         self.btnApply.clicked.connect(self._apply)
         layout.addWidget(self.btnApply)
 
-        self._update_samples()
-
     # ── 内部 ───────────────────────────────────────────────────
 
-    def _update_samples(self):
-        rate = self.spinSampleRate.value()
-        dur = self.spinDuration.value()
-        self.lblSamples.setText(f"= {int(rate * dur)} 样本")
-
     def _run_test(self):
-        """DLL 预检 + ArtDevice 全链路测试。"""
+        """测试串口通讯。"""
         self.btnTest.setEnabled(False)
         self.testStatus.setText("⏳ 测试中...")
         self.testStatus.setStyleSheet(
@@ -202,12 +143,12 @@ class DevicePanel(QWidget):
         from PyQt6.QtCore import QCoreApplication
         QCoreApplication.processEvents()
 
-        import ctypes
+        port = self.editPort.text().strip()
+
         try:
-            ctypes.windll.LoadLibrary("Art_DAQ")
-        except Exception:
-            self.testStatus.setText(
-                "❌ 未找到 Art_DAQ.dll — 请安装 ART 驱动")
+            import serial
+        except ImportError:
+            self.testStatus.setText("❌ pyserial 未安装 — 请执行: pip install pyserial")
             self.testStatus.setStyleSheet(
                 "padding:4px;background:#1a0a0a;border:1px solid #a00;"
                 "font-family:Consolas;font-size:11px;color:#f44;")
@@ -215,24 +156,34 @@ class DevicePanel(QWidget):
             return
 
         try:
-            p = self.get_params()
-            cfg = self.get_config()
-            from scope.hardware.art_device import ArtDevice
-            dev = ArtDevice(**p)
-            dev._read_timeout = p["read_timeout"]
+            baudrate = int(self.cmbBaudrate.currentText())
+            ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.1)
 
-            lines = [f"🟡 设备: {p['device_name']}/{p['ai_channels']}"]
-            dev.open()
-            lines.append("✅ open()")
-            dev.configure(cfg)
-            lines.append("✅ configure()")
-            dev.start_acquisition()
-            lines.append("✅ start_acquisition()")
-            chunk = dev.read_chunk()
-            lines.append(f"✅ read_chunk()  {chunk.shape[0]}ch×{chunk.shape[1]}samples")
-            dev.stop_acquisition()
-            dev.close()
-            lines.append("✅ stop/close")
+            lines = [
+                f"🟡 串口: {port} @ {baudrate}",
+                "✅ 串口已打开",
+            ]
+
+            # 尝试读取几行看是否有数据
+            import time
+            start = time.time()
+            data_lines = 0
+            while time.time() - start < 2.0:
+                line = ser.readline()
+                if line:
+                    data_lines += 1
+                    if data_lines <= 3:
+                        lines.append(f"📥 {line.decode('utf-8', errors='replace').strip()[:60]}")
+                if data_lines >= 5:
+                    break
+
+            if data_lines > 0:
+                lines.append(f"✅ 收到 {data_lines} 行数据")
+            else:
+                lines.append("⚠️ 2秒内未收到数据 (可能触发信号未激活)")
+
+            ser.close()
+            lines.append("✅ 串口已关闭")
 
             self.testStatus.setText("\n".join(lines))
             self.testStatus.setStyleSheet(
@@ -247,64 +198,28 @@ class DevicePanel(QWidget):
             self.btnTest.setEnabled(True)
 
     def _apply(self):
-        """发射 config_applied 信号。"""
-        self.config_applied.emit(self.get_params(), self.get_config())
+        """发射 stm32_config_applied 信号。"""
+        self.stm32_config_applied.emit(self.get_params(), self.get_config())
 
     # ── 公开接口 ───────────────────────────────────────────────
 
     def get_params(self) -> dict:
         return {
-            "device_name": self.editDeviceName.text(),
-            "ai_channels": self.editAiChannels.text(),
-            "terminal_config": self.cmbTerminal.currentData(),
-            "read_timeout": self.spinTimeout.value(),
-            "trigger_source": self.editTrigSrc.text()
-                              if self.chkTrig.isChecked() else "",
-            "trigger_slope": self.cmbTrigSlope.currentData(),
-            "trigger_level": self.spinTrigLevel.value(),
+            "port": self.editPort.text().strip(),
+            "baudrate": int(self.cmbBaudrate.currentText()),
         }
 
     def get_config(self) -> DeviceConfig:
-        rate = self.spinSampleRate.value()
-        samples = int(rate * self.spinDuration.value())
-        # 从 ai_channels 解析实际通道数
-        ch_str = self.editAiChannels.text()
-        if ":" in ch_str:
-            parts = ch_str.split(":")[-1]
-            try:
-                end = int(parts)
-                start_str = ch_str.split(":")[0]
-                start = int(''.join(c for c in start_str if c.isdigit()) or 0)
-                n_ch = end - start + 1
-            except ValueError:
-                n_ch = 4
-        else:
-            n_ch = 4
         return DeviceConfig(
-            sample_rate=rate,
-            record_length=max(samples, 10),
-            channels_enabled=list(range(n_ch)),
+            sample_rate=149,
+            record_length=300,
+            channels_enabled=[0],
+            channel_min_vals=[0.0],
+            channel_max_vals=[1.0],
         )
 
     def load_params(self, params: dict):
         """从现有设备参数回填。"""
-        self.editDeviceName.setText(params.get("device_name", "Dev42"))
-        self.editAiChannels.setText(params.get("ai_channels", "ai0:15"))
-
-        term = params.get("terminal_config", "NRSE")
-        for i in range(self.cmbTerminal.count()):
-            if self.cmbTerminal.itemData(i) == term:
-                self.cmbTerminal.setCurrentIndex(i)
-                break
-
-        self.spinTimeout.setValue(params.get("read_timeout", 5.0))
-        self.spinSampleRate.setValue(params.get("sample_rate", 30_000))
-        self.spinDuration.setValue(params.get("duration", 0.5))
-        self._update_samples()
-
-        src = params.get("trigger_source", "")
-        if src:
-            self.chkTrig.setChecked(True)
-            self.editTrigSrc.setText(src)
-        else:
-            self.chkTrig.setChecked(False)
+        self.editPort.setText(params.get("port", "COM11"))
+        baud = str(params.get("baudrate", 115200))
+        self.cmbBaudrate.setCurrentText(baud)
