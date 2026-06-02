@@ -106,15 +106,21 @@ class FeedbackWorker:
     """
     反馈工作线程。
 
-    订阅 frame.fitted, 检查自身 enabled 开关,
-    基于 fit_result.f0 执行 PID step → RPC 发送。
+    订阅指定 topic (默认 frame.fitted), 检查自身 enabled 开关,
+    执行 PID step → RPC 发送。
+
+    Parameters:
+        subscribe_topic: 订阅的 EventBus topic。
+            - master 分支: "frame.measured" (无拟合中间层)
+            - freq_lock 分支: "frame.fitted" (消费拟合结果)
     """
 
-    def __init__(self, bus: EventBus, feedback_manager):
+    def __init__(self, bus: EventBus, feedback_manager,
+                 subscribe_topic: str = "frame.fitted"):
         self._bus = bus
         self._mgr = feedback_manager
         self._q: BoundedQueue = bus.subscribe(
-            "frame.fitted",
+            subscribe_topic,
             maxsize=2,
             on_drop=DropStrategy.DROP_OLDEST,
             name="feedback",
@@ -192,14 +198,19 @@ class UIBridge:
     回调内 emit Qt signal (线程安全), 主线程接收后刷新 UI。
 
     保证主波形和趋势图与数据发布完全同步, 无额外计时器。
+
+    Parameters:
+        scan_panel_signal / trend_update_signal: 可选。
+            - freq_lock 分支: 都传入, 订阅 frame.fitted
+            - master 分支: 传 None, 仅订阅 frame.measured
     """
 
     def __init__(
         self,
         bus: EventBus,
         data_received_signal,        # MainWindow.data_received (pyqtSignal)
-        scan_panel_signal,           # MainWindow.scan_panel_update (pyqtSignal)
-        trend_update_signal,         # MainWindow.trend_update (pyqtSignal)
+        scan_panel_signal=None,      # MainWindow.scan_panel_update (pyqtSignal, optional)
+        trend_update_signal=None,    # MainWindow.trend_update (pyqtSignal, optional)
     ):
         self._bus = bus
         self._data_sig = data_received_signal
@@ -212,11 +223,12 @@ class UIBridge:
             self._on_measured,
             name="ui-waveform",
         )
-        bus.subscribe_callback(
-            "frame.fitted",
-            self._on_fitted,
-            name="ui-trend",
-        )
+        if scan_panel_signal is not None or trend_update_signal is not None:
+            bus.subscribe_callback(
+                "frame.fitted",
+                self._on_fitted,
+                name="ui-trend",
+            )
 
     def start(self):
         # 无线程启动, 回调由 EventBus.publish 触发
@@ -235,11 +247,11 @@ class UIBridge:
         """
         frame.fitted 回调:
         - fit_result → scan_panel signal (扫频面板)
-        - f0        → trend_update signal (迷你趋势图, 仅画 f0)
+        - f0        → trend_update signal (迷你趋势图)
         """
         fitted: FittedSnapshot = item
-        if fitted.fit_result is not None:
+        if self._scan_sig is not None and fitted.fit_result is not None:
             self._scan_sig.emit(fitted.fit_result)
-        trend_data = {"f0": fitted.f0 if fitted.f0 is not None else 0.0,
-                      "__timestamp__": fitted.timestamp}
-        self._trend_sig.emit(trend_data)
+        if self._trend_sig is not None:
+            f0_val = fitted.f0 if fitted.f0 is not None else 0.0
+            self._trend_sig.emit({"f0": f0_val, "__timestamp__": fitted.timestamp})
