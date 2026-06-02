@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
     QPushButton, QScrollArea, QFrame, QComboBox,
-    QAbstractItemView, QListWidget,
+    QAbstractItemView, QListWidget, QCheckBox,
     QDialog, QFormLayout, QGroupBox, QDialogButtonBox,
     QMessageBox,
 )
@@ -405,9 +405,11 @@ class FeedbackPanel:
                  feedback_manager: FeedbackManager,
                  measurement_panel=None,
                  status_callback: Optional[Callable[[], None]] = None,
-                 async_loop=None):
+                 async_loop=None,
+                 feedback_toggle_callback: Optional[Callable[[bool], None]] = None):
         """
         async_loop: asyncio 事件循环 (用于避免 asyncio.run 闪窗)。
+        feedback_toggle_callback: 反馈启用/关闭时的回调 (设置 FeedbackWorker.enabled)。
         """
         self._parent = parent_widget
         self._mgr = feedback_manager
@@ -416,6 +418,7 @@ class FeedbackPanel:
         self._cards: dict[str, FeedbackCard] = {}
         self._notified_auto_pause: set[str] = set()
         self._async_loop = async_loop
+        self._feedback_toggle_cb = feedback_toggle_callback
         self._build_ui()
         self._timer = QTimer()
         self._timer.setInterval(2000)
@@ -438,6 +441,12 @@ class FeedbackPanel:
         btn_add.setStyleSheet("color: #CC6600; font-weight: bold;")
         btn_add.clicked.connect(self._on_add_pid)
         top.addWidget(btn_add)
+
+        self.chkFeedback = QCheckBox("启用反馈链路")
+        self.chkFeedback.setChecked(False)
+        self.chkFeedback.toggled.connect(self._on_feedback_toggle)
+        top.addWidget(self.chkFeedback)
+
         top.addStretch()
         layout.addLayout(top)
         scroll = QScrollArea()
@@ -450,6 +459,11 @@ class FeedbackPanel:
         self._card_layout.addStretch()
         scroll.setWidget(self._container)
         layout.addWidget(scroll, stretch=1)
+
+    def _on_feedback_toggle(self, checked: bool):
+        if self._feedback_toggle_cb:
+            self._feedback_toggle_cb(checked)
+        logger.info(f"反馈链路: {'启用' if checked else '关闭'}")
 
     def _add_card(self, info):
         card = FeedbackCard(info, on_pause=self._on_pause, on_edit=self._on_edit, on_remove=self._on_remove)

@@ -1,22 +1,19 @@
 """
-数字示波器 — 主入口
+数字示波器 — 主入口 (v0.5 EventBus 解耦)
 
 模式:
   - 默认 (无参数)     → 连接 ART 硬件 (ArtDevice)
   - --mock / -m       → 模拟数据 (SimulatorDevice)，无硬件也可运行
 
-架构 (事件驱动):
-  - ArtDevice: register_done_event → 硬件触发 → DONE 回调 → 采集线程读取
-  - SimulatorDevice: QTimer 驱动 (保持兼容)
-  - 采集线程调用 _on_frame() → pyqtSignal → UI 线程处理
-  - 跨线程通过 pyqtSignal 通信
+v0.5 变更:
+  - EventBus 发布-订阅解耦: 采集 → 测量 → UIBridge / FeedbackWorker 独立消费
+  - _on_frame 瘦身: 只做采集 + 测量 + bus.publish
+  - FeedbackWorker: 独立 async worker, 自持 enabled 开关
+  - UIBridge: 回调订阅 frame.measured → 主波形刷新
 """
 
 import argparse
-import asyncio
 import logging
-import threading
-import time
 
 import numpy as np
 from PyQt6.QtCore import QTimer
@@ -27,6 +24,8 @@ from scope.hardware.simulator import SimulatorDevice
 from scope.hardware.art_device import ArtDevice
 from scope.io import FeedbackManager
 from scope.processing import ProcessingPipeline, AutoMeasure, MathOp, FFTAnalyze
+from scope.runtime import EventBus, MeasurementSnapshot
+from scope.runtime.workers import FeedbackWorker, UIBridge
 from scope.ui import MainWindow
 
 logging.basicConfig(
@@ -39,7 +38,7 @@ logger = logging.getLogger("scope")
 
 class ScopeApp:
     """
-    示波器应用 — 整合采集、分析、反馈、UI。
+    示波器应用 — ART 多通道采集 (v0.5 EventBus 解耦)。
     """
 
     def __init__(self, mock: bool = False):
@@ -51,8 +50,8 @@ class ScopeApp:
 
         # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧, ±10V)
         self._config = DeviceConfig(
-            sample_rate=30_000,      # 上限 31250 Sa/s
-            record_length=15000,     # 30k × 0.5s = 15000
+            sample_rate=30_000,
+            record_length=15000,
             channels_enabled=list(range(16)),
             channel_min_vals=[-10.0] * 16,
             channel_max_vals=[10.0] * 16,
@@ -85,17 +84,15 @@ class ScopeApp:
             "trigger_level": 1.0,
         }
 
-        # asyncio loop 用于 feedback dispatch
-        self._async_loop = asyncio.new_event_loop()
+        # v0.5: EventBus 发布-订阅
+        self._bus = EventBus()
 
-        # v0.4: 有界反馈队列 (maxsize=2, drop_oldest)
-        from scope.runtime import BoundedQueue, DropStrategy
-        self._feedback_queue = BoundedQueue(
-            maxsize=2,
-            on_drop=DropStrategy.DROP_OLDEST,
-            name="feedback",
+        # v0.5: Workers (UIBridge 在 start() 中创建, 依赖 main_win)
+        self._feedback_worker = FeedbackWorker(
+            self._bus, self.feedback_mgr,
+            subscribe_topic="frame.measured",  # master: 无拟合层, 直接消费测量值
         )
-        self._feedback_ready = threading.Event()
+        self._ui_bridge: UIBridge | None = None
 
         # 创建设备
         self.device = self._create_device()
@@ -130,7 +127,7 @@ class ScopeApp:
             try:
                 art.configure(self._config)
                 art.start_acquisition()
-                logger.info("✅ ART 硬件连接成功")
+                logger.info("ART 硬件连接成功")
                 self._device_type = "art"
                 return art
             except Exception as e:
@@ -152,21 +149,29 @@ class ScopeApp:
 
     def start(self):
         """启动所有子系统"""
-        # 1. 启动 asyncio 工作线程
-        async_thread = threading.Thread(
-            target=self._async_worker,
-            daemon=True,
-            name="async-worker",
-        )
-        async_thread.start()
-
-        # 2. 创建主窗口 (必须在注册回调之前, 否则第一帧到达时 main_win 为 None)
-        self.main_win = MainWindow(feedback_manager=self.feedback_mgr,
-                                    async_loop=self._async_loop)
+        # 1. 创建主窗口
+        self.main_win = MainWindow(feedback_manager=self.feedback_mgr)
         self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()
 
-        # 3. 注册数据回调 (事件驱动: ArtDevice DONE → 采集线程 → _on_frame)
+        # 2. 创建 UIBridge (依赖 main_win)
+        self._ui_bridge = UIBridge(
+            bus=self._bus,
+            data_received_signal=self.main_win.data_received,
+            # master 无扫频/拟合层, 不传 scan_panel_signal / trend_update_signal
+        )
+
+        # 3. 绑定反馈开关: FeedbackPanel checkbox → FeedbackWorker.enabled
+        if hasattr(self.main_win.feedback_panel, '_feedback_toggle_cb'):
+            self.main_win.feedback_panel._feedback_toggle_cb = (
+                lambda checked: setattr(self._feedback_worker, 'enabled', checked)
+            )
+
+        # 4. 启动 workers
+        self._feedback_worker.start()
+        self._ui_bridge.start()
+
+        # 5. 注册数据回调 (事件驱动: ArtDevice DONE → 采集线程 → _on_frame)
         if hasattr(self.device, 'set_data_callback'):
             self.device.set_data_callback(self._on_frame)
 
@@ -178,23 +183,26 @@ class ScopeApp:
             f"模式={'mock' if self._mock else '硬件'}"
         )
 
-        # 4. SimulatorDevice 降级: 用 QTimer 驱动
+        # 6. SimulatorDevice 降级: 用 QTimer 驱动
         self._running = True
         if not hasattr(self.device, 'set_data_callback'):
-            from PyQt6.QtCore import QTimer
             self._timer = QTimer()
             self._timer.setInterval(500)
             self._timer.timeout.connect(self._on_timer_tick)
             self._timer.start()
 
-        logger.info("ScopeApp 已启动")
+        logger.info("ScopeApp (ART v0.5 EventBus) 已启动")
 
     def stop(self):
         """停止所有子系统"""
         self._running = False
-        self._feedback_ready.set()
         if hasattr(self, '_timer'):
             self._timer.stop()
+
+        # v0.5: 停止 workers
+        self._feedback_worker.stop()
+        if self._ui_bridge:
+            self._ui_bridge.stop()
 
         self.device.stop_acquisition()
         self.device.close()
@@ -203,32 +211,23 @@ class ScopeApp:
     def _on_art_config(self, params: dict, config: DeviceConfig):
         """
         收到 ART 配置变更 → 重建设备。
-
-        策略:
-          1. 停掉旧设备 (释放硬件资源)
-          2. 创建新设备
-          3. 如果新设备失败 → 恢复旧设备继续运行
-          4. 如果旧设备也恢复失败 → 终极回退到模拟器
         """
         self._art_params = params
         old_device = self.device
         old_config = self._config
 
-        # 1. 停掉旧设备 + 关闭 Task 句柄 (释放硬件, 让新设备能创建 Task)
         if hasattr(self, '_timer'):
             self._timer.stop()
         try:
             old_device.stop_acquisition()
         except Exception:
             pass
-        # 必须关闭 Task 句柄, 否则 NI-DAQmx 仍视设备为 reserved
         if hasattr(old_device, '_close_task'):
             try:
                 old_device._close_task()
             except Exception:
                 pass
 
-        # 2. 创建并启动新设备
         new_device = None
         try:
             new_device = ArtDevice(
@@ -246,10 +245,7 @@ class ScopeApp:
 
             new_device.configure(config)
             new_device.start_acquisition()
-            # 不在此处读数据验证 — 硬件触发模式下会阻塞
-            # 让第一个 QTimer tick 自然读取
 
-            # 成功 → 关掉旧设备, 换入新设备, 注册回调
             try:
                 old_device.close()
             except Exception:
@@ -260,7 +256,7 @@ class ScopeApp:
             if hasattr(new_device, 'set_data_callback'):
                 new_device.set_data_callback(self._on_frame)
             logger.info(
-                f"✅ ART 设备已切换: {params['device_name']}/"
+                f"ART 设备已切换: {params['device_name']}/"
                 f"{params['ai_channels']}, "
                 f"{config.sample_rate}Sa/s, "
                 f"{config.record_length}samples"
@@ -274,21 +270,15 @@ class ScopeApp:
                     new_device.close()
                 except Exception:
                     pass
-
-            # 3. 恢复旧设备
             try:
                 old_device.configure(old_config)
                 old_device.start_acquisition()
                 self.device = old_device
                 self._config = old_config
-                if hasattr(old_device, '_device_type') and old_device._device_type:
-                    self._device_type = old_device._device_type
-                else:
-                    self._device_type = "simulator"
+                self._device_type = getattr(old_device, '_device_type', None) or "simulator"
                 logger.info("已恢复旧设备继续运行")
             except Exception as restore_err:
                 logger.error(f"恢复旧设备也失败: {restore_err}")
-                # 4. 终极回退到模拟器
                 fallback = SimulatorDevice()
                 fallback.open()
                 fallback.configure(old_config)
@@ -298,7 +288,6 @@ class ScopeApp:
                 self._device_type = "simulator"
                 logger.info("已回退到模拟设备")
 
-        # 5. 寄存器回调 (事件驱动) 或重启 QTimer (模拟器降级)
         if hasattr(self.device, 'set_data_callback'):
             self.device.set_data_callback(self._on_frame)
         else:
@@ -308,40 +297,38 @@ class ScopeApp:
 
     def _on_frame(self, chunk: np.ndarray):
         """
-        事件驱动回调: ArtDevice 采集线程读取到数据后调用 (非 UI 线程)。
-
-        使用 pyqtSignal.emit() 是线程安全的 — Qt 自动将调用排入接收者线程。
+        采集线程回调 — 最小工作量 (v0.5)。
+        只做采集 + 测量 + 事件窗口计算 + 发布到 EventBus。
+        反馈、UI 更新由各自 worker 独立消费。
         """
         try:
             result = self.device.make_analysis_result(chunk)
             result = self._pipeline.process(result)
 
-            # v0.4: 先保存 pipeline 原始测量值，再计算事件窗口值
+            # 事件窗口测量
             raw_measurements = dict(result.measurements)
             event_measurements = {}
             if hasattr(self.main_win, "measure_panel"):
-                # 注意: 这里调用的是“纯计算+缓存规格”接口，不触碰 UI 控件
-                event_measurements = self.main_win.measure_panel.compute_event_measurements(result)
+                event_measurements = (
+                    self.main_win.measure_panel.compute_event_measurements(result)
+                )
                 result.measurements.update(event_measurements)
 
-            # 更新 UI
-            self.main_win.data_received.emit(result)
-
-            # v0.4: FeedbackQueue → dispatch (有界队列 + 背压)
-            from scope.runtime import MeasurementSnapshot
+            # 构建 snapshot
             snap = MeasurementSnapshot(
                 sequence_num=result.sequence_num,
                 raw_measurements=raw_measurements,
                 event_measurements=event_measurements,
             )
-            self._feedback_queue.put(snap)
-            self._feedback_ready.set()
+            snap._analysis_result = result
+
+            self._bus.publish("frame.measured", snap)
 
         except Exception as e:
             logger.error(f"数据处理错误: {e}", exc_info=True)
 
     def _on_timer_tick(self):
-        """QTimer 回调 (仅 SimulatorDevice 降级模式 — 保留兼容)"""
+        """QTimer 回调 (仅 SimulatorDevice 降级模式 — 保留兼容)。"""
         try:
             chunk = self.device.read_chunk()
             self._on_frame(chunk)
@@ -349,36 +336,6 @@ class ScopeApp:
                 self.device.rearm()
         except Exception as e:
             logger.error(f"采集错误: {e}", exc_info=True)
-
-    def _async_worker(self):
-        """在独立线程中运行 asyncio loop, 消费反馈队列 + dispatch"""
-        asyncio.set_event_loop(self._async_loop)
-        loop = self._async_loop
-        # 启动队列消费者
-        loop.create_task(self._feedback_consumer())
-        loop.run_forever()
-
-    async def _feedback_consumer(self):
-        """消费 FeedbackQueue → dispatch (v0.4 背压保护, 事件唤醒)。"""
-        import time
-        while True:
-            # 事件驱动: 无数据时阻塞等待，不做 50ms 轮询
-            await asyncio.to_thread(self._feedback_ready.wait)
-            self._feedback_ready.clear()
-
-            # 一次性取出积压项，只处理最新快照（控制链路优先最新态）
-            pending = self._feedback_queue.dequeue_all()
-            if not pending:
-                continue
-            snap = pending[-1]
-            latency_ms = (time.monotonic() - snap.timestamp) * 1000
-            if latency_ms > 100:
-                logger.warning(
-                    f"反馈延迟 {latency_ms:.0f}ms, "
-                    f"队列深度={self._feedback_queue.qsize}"
-                )
-            await self.feedback_mgr.dispatch(snap)
-            await asyncio.sleep(0)
 
 
 def main():
@@ -393,18 +350,15 @@ def main():
     args = parser.parse_args()
 
     if args.mock:
-        logger.info("🟡 启动模式: mock — 使用模拟数据，不连接硬件")
+        logger.info("启动模式: mock — 使用模拟数据，不连接硬件")
     else:
-        logger.info("🟢 启动模式: hardware — 连接 ART 采集卡 (添加 --mock 使用模拟数据)")
+        logger.info("启动模式: hardware — 连接 ART 采集卡 (添加 --mock 使用模拟数据)")
 
     app = QApplication(sys.argv)
 
     scope_app = ScopeApp(mock=args.mock)
-
-    # start() 会在 __init__ 中自动完成，此处显式调用确保 timer 等就绪
     scope_app.start()
 
-    # 进入 Qt 事件循环
     try:
         app.exec()
     finally:
