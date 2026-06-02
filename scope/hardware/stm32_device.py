@@ -39,11 +39,11 @@ from scope.model import TriggerInfo
 
 logger = logging.getLogger(__name__)
 
-# 预分配缓冲区大小 (实测 ~149 行/s, 1 秒 ≈ 150 点)
-BUFFER_SIZE = 300
-
 # 电压解析正则: "CH0 Voltage= XX.XXXXXX mV"
 _VOLTAGE_RE = re.compile(r"CH0 Voltage=\s*([-\d.]+)\s*mV")
+
+# 默认缓冲区大小 (运行时由 DeviceConfig.record_length 覆盖)
+DEFAULT_BUFFER_SIZE = 450
 
 
 @contextmanager
@@ -100,7 +100,8 @@ class Stm32Device(AcquisitionDevice):
         self._seq = 0
 
         # 预分配缓冲区 + 写指针
-        self._buffer: np.ndarray = np.zeros(BUFFER_SIZE, dtype=np.float32)
+        self._buf_size: int = DEFAULT_BUFFER_SIZE
+        self._buffer: np.ndarray = np.zeros(self._buf_size, dtype=np.float32)
         self._write_idx: int = 0
 
         # 采集线程
@@ -160,7 +161,8 @@ class Stm32Device(AcquisitionDevice):
 
         self._running = True
         self._write_idx = 0
-        self._buffer = np.zeros(BUFFER_SIZE, dtype=np.float32)
+        self._buf_size = cfg.record_length
+        self._buffer = np.zeros(self._buf_size, dtype=np.float32)
         self._seq = 0
 
         if self._acquire_thread is None or not self._acquire_thread.is_alive():
@@ -236,7 +238,7 @@ class Stm32Device(AcquisitionDevice):
     def get_config(self) -> DeviceConfig:
         return self._config or DeviceConfig(
             sample_rate=149,
-            record_length=BUFFER_SIZE,
+            record_length=DEFAULT_BUFFER_SIZE,
             channels_enabled=[0],
         )
 
@@ -266,7 +268,8 @@ class Stm32Device(AcquisitionDevice):
     def restore_state(self, config: DeviceConfig):
         self._config = config
         self._write_idx = 0
-        self._buffer = np.zeros(BUFFER_SIZE, dtype=np.float32)
+        self._buf_size = config.record_length
+        self._buffer = np.zeros(self._buf_size, dtype=np.float32)
         logger.info("STM32 状态已恢复")
 
     # ── 内部: 采集工作线程 ─────────────────────────────────────
@@ -349,7 +352,7 @@ class Stm32Device(AcquisitionDevice):
                 if line:
                     voltage = self._parse_voltage(line)
                     if voltage is not None:
-                        if self._write_idx < BUFFER_SIZE:
+                        if self._write_idx < self._buf_size:
                             self._buffer[self._write_idx] = voltage
                             self._write_idx += 1
                         else:

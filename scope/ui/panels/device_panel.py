@@ -80,15 +80,27 @@ class DevicePanel(QWidget):
         c1.addWidget(g1)
         c1.addStretch()
 
-        # ── 列2: 采集参数 (只读) ──
-        g2 = QGroupBox("采集参数 (固定)")
+        # ── 列2: 采集参数 ──
+        g2 = QGroupBox("采集参数")
         f2 = QFormLayout(g2)
-        lblRate = QLabel("~149 Sa/s (实测)")
-        lblRate.setStyleSheet("color: #888;")
-        f2.addRow("采样率", lblRate)
-        lblBuf = QLabel("300 点 / 1.0s 窗口")
-        lblBuf.setStyleSheet("color: #888;")
-        f2.addRow("缓冲区", lblBuf)
+        self.spinSampleRate = QSpinBox()
+        self.spinSampleRate.setRange(1, 10000)
+        self.spinSampleRate.setValue(149)
+        self.spinSampleRate.setSuffix(" Sa/s")
+        f2.addRow("采样率", self.spinSampleRate)
+        self.spinBufSize = QSpinBox()
+        self.spinBufSize.setRange(10, 10000)
+        self.spinBufSize.setValue(450)
+        self.spinBufSize.setSuffix(" 点")
+        f2.addRow("缓存长度", self.spinBufSize)
+        dur_row = QHBoxLayout()
+        self._lblDur = QLabel("≈ 3.0 s")
+        self._lblDur.setStyleSheet("color: #888; font-size: 10px;")
+        dur_row.addWidget(self._lblDur)
+        dur_row.addStretch()
+        f2.addRow("", dur_row)
+        self.spinSampleRate.valueChanged.connect(self._update_dur)
+        self.spinBufSize.valueChanged.connect(self._update_dur)
         lblMode = QLabel("门控触发 (CH1 电平)")
         lblMode.setStyleSheet("color: #888;")
         f2.addRow("触发模式", lblMode)
@@ -130,6 +142,8 @@ class DevicePanel(QWidget):
         )
         self.btnApply.clicked.connect(self._apply)
         layout.addWidget(self.btnApply)
+
+        self._update_dur()
 
     # ── 内部 ───────────────────────────────────────────────────
 
@@ -201,18 +215,26 @@ class DevicePanel(QWidget):
         """发射 stm32_config_applied 信号。"""
         self.stm32_config_applied.emit(self.get_params(), self.get_config())
 
+    def _update_dur(self):
+        rate = self.spinSampleRate.value()
+        buf = self.spinBufSize.value()
+        if rate > 0:
+            self._lblDur.setText(f"≈ {buf/rate:.1f} s")
+
     # ── 公开接口 ───────────────────────────────────────────────
 
     def get_params(self) -> dict:
         return {
             "port": self.editPort.text().strip(),
             "baudrate": int(self.cmbBaudrate.currentText()),
+            "sample_rate": self.spinSampleRate.value(),
+            "record_length": self.spinBufSize.value(),
         }
 
     def get_config(self) -> DeviceConfig:
         return DeviceConfig(
-            sample_rate=149,
-            record_length=300,
+            sample_rate=self.spinSampleRate.value(),
+            record_length=self.spinBufSize.value(),
             channels_enabled=[0],
             channel_min_vals=[0.0],
             channel_max_vals=[1.0],
@@ -223,3 +245,8 @@ class DevicePanel(QWidget):
         self.editPort.setText(params.get("port", "COM11"))
         baud = str(params.get("baudrate", 115200))
         self.cmbBaudrate.setCurrentText(baud)
+        if "sample_rate" in params:
+            self.spinSampleRate.setValue(params["sample_rate"])
+        if "record_length" in params:
+            self.spinBufSize.setValue(params["record_length"])
+        self._update_dur()

@@ -48,10 +48,10 @@ class ScopeApp:
         self._running = False
         self._device_type = "unknown"
 
-        # 设备配置 (1 通道, ~149 Sa/s 实测, 1 秒 ≈ 150 点, 300 有余量)
+        # 设备配置 (1 通道, ~149 Sa/s 实测, 450 点 ≈ 3s)
         self._config = DeviceConfig(
             sample_rate=149,
-            record_length=300,
+            record_length=450,
             channels_enabled=[0],
             channel_min_vals=[0.0],
             channel_max_vals=[1.0],
@@ -71,6 +71,8 @@ class ScopeApp:
         self._stm32_params = {
             "port": "COM11",
             "baudrate": 115200,
+            "sample_rate": self._config.sample_rate,
+            "record_length": self._config.record_length,
         }
 
         # asyncio loop 用于 feedback dispatch
@@ -205,8 +207,11 @@ class ScopeApp:
     def _on_stm32_config(self, params: dict, config: DeviceConfig):
         """
         收到串口配置变更 → 重建 STM32 设备。
+        params 包含: port, baudrate, sample_rate, record_length
+        config 为完整的 DeviceConfig
         """
         self._stm32_params = params
+        self._config = config  # 更新当前配置 (含采样率/缓存长度)
         old_device = self.device
 
         # 1. 停掉旧设备
