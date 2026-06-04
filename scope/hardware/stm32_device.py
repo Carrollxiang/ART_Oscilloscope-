@@ -98,7 +98,7 @@ class Stm32Device(AcquisitionDevice):
             serial_number="STM32-001",
             channel_count=1,
             resolution_bits=24,          # 24 位 ADC (ADS1256 或同类)
-            max_sample_rate=149,          # 实测 ~149 Sa/s
+            max_sample_rate=180,          # 实测 ~149 Sa/s
             firmware_version="stm32-1.0",
         )
         self._running = False
