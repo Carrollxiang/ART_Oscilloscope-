@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 UI_PATH = "scope/ui/main_window.ui"
 
-
 class MainWindow(QMainWindow):
     """
     示波器主窗口。
@@ -42,9 +41,7 @@ class MainWindow(QMainWindow):
       - 数据流: AnalysisResult → update_display()
     """
 
-    # 跨线程信号: 采集线程 → UI 线程
-    data_received = pyqtSignal(object)
-    # ART 配置变更信号: 对话框确认 → ScopeApp 重建设备
+    # 跨线程信号 (旧 data_received 已移除, 统一走 UIBridge)
     # ART 配置变更信号: 设备面板确认 → ScopeApp 重建设备
     art_config_applied = pyqtSignal(dict, object)
 
@@ -113,9 +110,6 @@ class MainWindow(QMainWindow):
         # ── 初始化 MeasurementBar / StatusBar ──
         self._update_status_bar()
 
-        # ── 跨线程数据信号 ──
-        self.data_received.connect(self.update_display)
-
         # ── 信号连接 ──
         self._connect_actions()
 
@@ -152,51 +146,55 @@ class MainWindow(QMainWindow):
         self.channel_panel._controls[ch]["enable"].setChecked(visible)
         self.channel_panel._controls[ch]["enable"].blockSignals(block)
 
-    # ── 数据更新接口 (由采集循环调用) ─────────────────────────
+    # ── UIBridge 连接 (v0.4 数据面桥接) ─────────────────────
 
-    def update_display(self, result: AnalysisResult):
+    def connect_ui_bridge(self, ui_bridge):
         """
-        用一次采集结果更新所有显示。
+        连接 UIBridge 的信号到 UI 更新槽函数。
 
-        采集线程安全调用 (通过 Signal/Slot 桥接)。
+        取代旧的 data_received → update_display 路径。
         """
-        # 1. 更新波形 (可见性由 ChannelPanel 复选框控制)
-        for ch_name, ch_data in result.channels.items():
-            ch_idx = int(ch_name.replace("CH", "")) - 1
-            visible = self.waveform.is_channel_visible(ch_idx)
-            color = self.channel_panel.get_channel_color(ch_idx)
+        ui_bridge.signal_raw_frame.connect(self._on_ui_raw_frame)
+        ui_bridge.signal_fitted.connect(self._on_ui_fitted)
 
-            self.waveform.update_waveform(
-                ch=ch_idx,
-                time_axis=ch_data.time_axis,
-                data=ch_data.raw,
-                enabled=visible,
-                color=color,
+    def _on_ui_raw_frame(self, result: AnalysisResult):
+        """原始帧更新 → 主波形。"""
+        try:
+            for ch_name, ch_data in result.channels.items():
+                ch_idx = int(ch_name.replace("CH", "")) - 1
+                visible = self.waveform.is_channel_visible(ch_idx)
+                color = self.channel_panel.get_channel_color(ch_idx)
+
+                self.waveform.update_waveform(
+                    ch=ch_idx,
+                    time_axis=ch_data.time_axis,
+                    data=ch_data.raw,
+                    enabled=visible,
+                    color=color,
+                )
+
+            # 触发标记
+            self.waveform.set_trigger_position(
+                result.trigger.trigger_position
             )
 
-        # 2. 更新触发标记
-        self.waveform.set_trigger_position(
-            result.trigger.trigger_position
-        )
+            # 状态栏
+            self._update_status_bar(result)
 
-        # 3. 更新测量面板 (UI 线程)
-        if hasattr(self, "measure_panel"):
-            self.measure_panel.update_from_result(result)
+        fitted_snapshot: FittedSnapshot 实例
+        """
+        try:
+            # 测量面板
+            if hasattr(self, 'measure_panel'):
+                self.measure_panel.update_from_fitted(fitted_snapshot)
 
-        # 4. 更新 mini chart (与主示波器同节拍: 每帧一次)
-        active_subs: set[str] = set()
-        for slot_info in self._feedback_mgr.list_slots():
-            for sub in slot_info.subscriptions:
-                active_subs.add(sub)
-        filtered = {k: v for k, v in result.measurements.items() if k in active_subs}
-        if filtered:
-            self.mini_chart.add_data(filtered)
-            self.mini_chart.refresh_now()
-
-        # 5. 更新状态栏
-        self._update_status_bar(result)
-
-    # ── 状态栏 ────────────────────────────────────────────────
+            # MiniChart
+            flat = fitted_snapshot.as_flat_dict()
+            if flat:
+                if hasattr(self, 'mini_chart'):
+                    self.mini_chart.add_data(flat)
+        except Exception as e:
+            logger.error(f"拟合结果更新异常: {e}", exc_info=True)
 
     def _update_status_bar(self, result: Optional[AnalysisResult] = None):
         """更新底部信息条"""

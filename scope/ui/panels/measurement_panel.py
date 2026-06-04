@@ -202,6 +202,22 @@ class MeasurementRow(QWidget):
 
         return func(segment, fs)
 
+    def update_display_value(self, value: Optional[float]):
+        """用已算好的值直接更新显示（无需再次计算）。"""
+        unit = self._unit_of(self.get_meas_key())
+        if value is not None and not np.isnan(value):
+            self._value_buffer.append(value)
+            if len(self._value_buffer) >= 5:
+                vals = np.array(list(self._value_buffer))
+                std = np.std(vals)
+                self.value_label.setText(
+                    f"{self._fmt(value)}  ±{self._fmt(std)} {unit}"
+                )
+            else:
+                self.value_label.setText(f"{self._fmt(value)} {unit}")
+        else:
+            self.value_label.setText(f"— {unit}")
+
     def update_value(self, result: AnalysisResult):
         """用一帧数据计算并显示当前值 ± 标准差"""
         value = self.compute_value(result)
@@ -394,22 +410,29 @@ class MeasurementPanel:
                 out[spec["name"]] = float(value)
         return out
 
+    def update_from_fitted(self, fitted_snapshot):
+        """用 FittedSnapshot 更新所有行的显示值。"""
+        self._last_fitted = fitted_snapshot
+        for row in self._rows:
+            tag = row.get_name()
+            # 优先查 event_measurements (事件窗口值)
+            value = fitted_snapshot.event_measurements.get(tag)
+            if value is None:
+                # 回退: 用 channel + meas_key 组合在 channel_measurements 中查找
+                ch_key = f"{row.get_channel()}_{row.get_meas_key()}"
+                value = fitted_snapshot.channel_measurements.get(ch_key)
+            row.update_display_value(value)
+
     def update_from_result(self, result: AnalysisResult):
-        """用最新一帧 AnalysisResult 更新所有行, 并把窗口化值写入 result.measurements。"""
+        """[遗留] 用最新一帧 AnalysisResult 更新所有行, 并把窗口化值写入 result.measurements。"""
         self._last_result = result
         for row in self._rows:
             row.update_value(result)
             # 把每行的窗口化值以标签名为 key 写入 result.measurements
-            #   → 反馈系统通过标签名订阅窗口化值, 而非全局 Pipeline 值
             tag = row.get_name()
             value = row.compute_value(result)
             if value is not None:
                 result.measurements[tag] = value
-                logger.debug(
-                    f"  写入 result.measurements['{tag}'] = {value:.4f}"
-                )
-            else:
-                logger.debug(f"  跳过 '{tag}': compute_value 返回 None")
 
     def get_subscriptions(self) -> list[dict]:
         """返回订阅信息, 供 FeedbackPanel 使用"""

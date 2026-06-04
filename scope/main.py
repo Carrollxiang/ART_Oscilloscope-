@@ -26,8 +26,12 @@ from scope.hardware import DeviceConfig
 from scope.hardware.simulator import SimulatorDevice
 from scope.hardware.art_device import ArtDevice
 from scope.io import FeedbackManager
-from scope.processing import ProcessingPipeline, AutoMeasure, MathOp, FFTAnalyze
 from scope.ui import MainWindow
+from scope.runtime import EventBus, DropStrategy
+from scope.runtime.fit_worker import FitWorker
+from scope.ui.ui_bridge import UIBridge
+from scope.io.feedback_worker import FeedbackWorker
+from scope.runtime.config_worker import ConfigWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +39,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("scope")
-
 
 class ScopeApp:
     """
@@ -58,21 +61,25 @@ class ScopeApp:
             channel_max_vals=[10.0] * 16,
         )
 
-        # 信号处理管道 (16 通道, 全测量项)
-        from scope.processing.measurements import MEASUREMENT_FUNCTIONS
-        self._pipeline = ProcessingPipeline()
-        self._pipeline.add_stage(
-            AutoMeasure(
-                measurements=list(MEASUREMENT_FUNCTIONS.keys()),
-                channels=[f"CH{i+1}" for i in range(16)],
-            )
+        # EventBus — 数据面/控制面分离路由器
+        self._event_bus = EventBus()
+        self._event_bus.register_topic("frame.measured", maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
+        self._event_bus.register_topic("frame.fitted", maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
+        self._event_bus.register_topic("config.change", maxsize=8, on_drop=DropStrategy.BLOCK)
+
+        # FitWorker — 独立线程接管全部 Pipeline 计算
+        self._fit_worker = FitWorker(self._event_bus, channel_count=16)
+
+        # FeedbackWorker — asyncio 消费 frame.fitted
+        self._feedback_worker = FeedbackWorker(self._event_bus, self.feedback_mgr)
+
+        # ConfigWorker — asyncio 消费 config.change
+        self._config_worker = ConfigWorker(
+            self._event_bus, apply_fn=self._on_art_config
         )
-        self._pipeline.add_stage(
-            MathOp("CH1 + CH2", output="MATH1")
-        )
-        self._pipeline.add_stage(
-            FFTAnalyze(channels=["CH1", "CH2"])
-        )
+
+        # UIBridge — 采集线程 → Qt 主线程桥接
+        self._ui_bridge = None  # 在 start() 中创建（需 MainWindow 已存在）
 
         # ART 设备参数 (用于配置对话框 → 设备重建)
         self._art_params = {
@@ -86,16 +93,6 @@ class ScopeApp:
         }
 
         # asyncio loop 用于 feedback dispatch
-        self._async_loop = asyncio.new_event_loop()
-
-        # v0.4: 有界反馈队列 (maxsize=2, drop_oldest)
-        from scope.runtime import BoundedQueue, DropStrategy
-        self._feedback_queue = BoundedQueue(
-            maxsize=2,
-            on_drop=DropStrategy.DROP_OLDEST,
-            name="feedback",
-        )
-        self._feedback_ready = threading.Event()
 
         # 创建设备
         self.device = self._create_device()
@@ -166,9 +163,16 @@ class ScopeApp:
         self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()
 
-        # 3. 注册数据回调 (事件驱动: ArtDevice DONE → 采集线程 → _on_frame)
+        # 3. 创建 UIBridge 并连接信号到 MainWindow
+        self._ui_bridge = UIBridge(self._event_bus)
+        self.main_win.connect_ui_bridge(self._ui_bridge)
+
+        # 4. 注册数据回调 (事件驱动: ArtDevice DONE → 采集线程 → _on_frame)
         if hasattr(self.device, 'set_data_callback'):
             self.device.set_data_callback(self._on_frame)
+
+        # 5. 启动 FitWorker (独立线程)
+        self._fit_worker.start()
 
         device_label = "模拟设备" if self._device_type == "simulator" else "ART 采集卡"
         logger.info(
@@ -178,7 +182,7 @@ class ScopeApp:
             f"模式={'mock' if self._mock else '硬件'}"
         )
 
-        # 4. SimulatorDevice 降级: 用 QTimer 驱动
+        # 5. SimulatorDevice 降级: 用 QTimer 驱动
         self._running = True
         if not hasattr(self.device, 'set_data_callback'):
             from PyQt6.QtCore import QTimer
@@ -195,6 +199,10 @@ class ScopeApp:
         self._feedback_ready.set()
         if hasattr(self, '_timer'):
             self._timer.stop()
+
+        # 停止 FitWorker (等待当前帧处理完)
+        if hasattr(self, '_fit_worker'):
+            self._fit_worker.stop()
 
         self.device.stop_acquisition()
         self.device.close()
@@ -308,37 +316,23 @@ class ScopeApp:
 
     def _on_frame(self, chunk: np.ndarray):
         """
-        事件驱动回调: ArtDevice 采集线程读取到数据后调用 (非 UI 线程)。
+        事件驱动回调: 采集线程每收到一帧原始数据后调用。
 
-        使用 pyqtSignal.emit() 是线程安全的 — Qt 自动将调用排入接收者线程。
+        职责（仅此两项）:
+          1. 组装 AnalysisResult（原始数据 + 元信息）
+          2. 发布到 EventBus frame.measured topic
+
+        不在此处执行：Pipeline 计算、UI 更新、反馈发送。
+        这些由各 Worker 独立完成。
         """
         try:
             result = self.device.make_analysis_result(chunk)
-            result = self._pipeline.process(result)
 
-            # v0.4: 先保存 pipeline 原始测量值，再计算事件窗口值
-            raw_measurements = dict(result.measurements)
-            event_measurements = {}
-            if hasattr(self.main_win, "measure_panel"):
-                # 注意: 这里调用的是“纯计算+缓存规格”接口，不触碰 UI 控件
-                event_measurements = self.main_win.measure_panel.compute_event_measurements(result)
-                result.measurements.update(event_measurements)
-
-            # 更新 UI
-            self.main_win.data_received.emit(result)
-
-            # v0.4: FeedbackQueue → dispatch (有界队列 + 背压)
-            from scope.runtime import MeasurementSnapshot
-            snap = MeasurementSnapshot(
-                sequence_num=result.sequence_num,
-                raw_measurements=raw_measurements,
-                event_measurements=event_measurements,
-            )
-            self._feedback_queue.put(snap)
-            self._feedback_ready.set()
-
+            # 非阻塞轮询 UIBridge 队列 → emit QSignal → UI 主线程
+            if self._ui_bridge is not None:
+                self._ui_bridge.poll()
         except Exception as e:
-            logger.error(f"数据处理错误: {e}", exc_info=True)
+            logger.error(f"帧发布错误: {e}", exc_info=True)
 
     def _on_timer_tick(self):
         """QTimer 回调 (仅 SimulatorDevice 降级模式 — 保留兼容)"""
@@ -351,35 +345,13 @@ class ScopeApp:
             logger.error(f"采集错误: {e}", exc_info=True)
 
     def _async_worker(self):
-        """在独立线程中运行 asyncio loop, 消费反馈队列 + dispatch"""
+        """在独立线程中运行 asyncio loop, 驱动 FeedbackWorker。"""
         asyncio.set_event_loop(self._async_loop)
         loop = self._async_loop
-        # 启动队列消费者
-        loop.create_task(self._feedback_consumer())
+        # 启动 FeedbackWorker + ConfigWorker (asyncio)
+        loop.create_task(self._feedback_worker.run())
+        loop.create_task(self._config_worker.run())
         loop.run_forever()
-
-    async def _feedback_consumer(self):
-        """消费 FeedbackQueue → dispatch (v0.4 背压保护, 事件唤醒)。"""
-        import time
-        while True:
-            # 事件驱动: 无数据时阻塞等待，不做 50ms 轮询
-            await asyncio.to_thread(self._feedback_ready.wait)
-            self._feedback_ready.clear()
-
-            # 一次性取出积压项，只处理最新快照（控制链路优先最新态）
-            pending = self._feedback_queue.dequeue_all()
-            if not pending:
-                continue
-            snap = pending[-1]
-            latency_ms = (time.monotonic() - snap.timestamp) * 1000
-            if latency_ms > 100:
-                logger.warning(
-                    f"反馈延迟 {latency_ms:.0f}ms, "
-                    f"队列深度={self._feedback_queue.qsize}"
-                )
-            await self.feedback_mgr.dispatch(snap)
-            await asyncio.sleep(0)
-
 
 def main():
     import sys
@@ -409,7 +381,6 @@ def main():
         app.exec()
     finally:
         scope_app.stop()
-
 
 if __name__ == "__main__":
     main()
