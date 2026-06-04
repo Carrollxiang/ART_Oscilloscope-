@@ -1,30 +1,32 @@
 """
-有界队列 + 背压策略 + 发布订阅事件总线 (v0.5)
+有界队列 + 背压策略 + EventBus 数据路由 (v0.4)
 
 提供:
   - BoundedQueue[T]: 有界 FIFO 队列, 支持 drop_oldest / drop_newest / block
   - DropStrategy 枚举
-  - EventBus: 1:N 发布-订阅, 各 subscriber 独立 BoundedQueue 背压隔离
+  - EventBus: 多 topic 数据分发路由器, 每个 subscriber 独立队列
 
 用法:
+    # 有界队列
     q = BoundedQueue(maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
     q.put(item)
     item = q.get()  # 或 q.get_nowait()
 
+    # EventBus 路由
     bus = EventBus()
-    sub_q = bus.subscribe("frame.measured", maxsize=2, name="fit")
-    bus.publish("frame.measured", snapshot)
-    item = sub_q.get()
+    bus.register_topic("frame.measured", maxsize=2)
+    sub_q = bus.subscribe("frame.measured")
+    bus.publish("frame.measured", data)
+    data = sub_q.get_nowait()
 """
 
 from __future__ import annotations
 
-import logging
 import threading
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Generic, TypeVar, Optional, Callable
+from typing import Generic, TypeVar, Optional, Callable, Any
 
 T = TypeVar("T")
 
@@ -222,110 +224,127 @@ class BoundedQueue(Generic[T]):
         )
 
 
-# ──────────────────────────────────────────────────────────────
-# EventBus — 发布-订阅事件总线
-# ──────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# EventBus — 多 topic 数据分发路由器
+# ═══════════════════════════════════════════════════════════════
 
-_evbus_logger = logging.getLogger(f"{__name__}.EventBus")
+
+@dataclass
+class TopicConfig:
+    """Topic 队列参数"""
+    maxsize: int = 2
+    on_drop: DropStrategy = DropStrategy.DROP_OLDEST
+    name: str = ""
 
 
 class EventBus:
     """
-    发布-订阅事件总线。
+    多 topic 数据分发路由器。
 
-    两种订阅模式:
-      - subscribe():       队列订阅, 返回 BoundedQueue, 供 worker 线程消费
-      - subscribe_callback(): 回调订阅, publish 时直接调用回调 (无队列延迟)
+    每个 topic 下维护多个 subscriber 队列（独立消费进度）。
+    publish() 遍历所有 subscriber 队列依次写入。
 
     用法:
         bus = EventBus()
-        q = bus.subscribe("frame.measured", maxsize=2, name="fit")
-        bus.subscribe_callback("frame.measured", my_handler, name="ui")
-        bus.publish("frame.measured", snapshot)
-        item = q.get()
+        bus.register_topic("frame.measured", maxsize=2)
+
+        # Worker A
+        q_a = bus.subscribe("frame.measured")
+        # Worker B
+        q_b = bus.subscribe("frame.measured")
+
+        # 生产者
+        bus.publish("frame.measured", some_data)
+
+        # 各 worker 独立消费
+        data_a = q_a.get_nowait()
+        data_b = q_b.get_nowait()
     """
 
     def __init__(self):
-        self._subs: dict[str, list[BoundedQueue]] = {}
-        self._cbs: dict[str, list[tuple[Callable, str]]] = {}   # topic → [(callback, name)]
         self._lock = threading.Lock()
+        # topic → list[(BoundedQueue, TopicConfig)]
+        self._topics: dict[str, list[tuple[BoundedQueue, TopicConfig]]] = {}
+        self._topic_configs: dict[str, TopicConfig] = {}
 
-    def subscribe(
+    def register_topic(
         self,
         topic: str,
         maxsize: int = 2,
         on_drop: DropStrategy = DropStrategy.DROP_OLDEST,
-        name: str = "",
-    ) -> BoundedQueue:
+    ):
         """
-        队列订阅: 返回 subscriber 专用的 BoundedQueue。
-        subscriber 在自己的线程中从此 queue 消费。
-        """
-        q = BoundedQueue(maxsize=maxsize, on_drop=on_drop, name=name or topic)
-        with self._lock:
-            if topic not in self._subs:
-                self._subs[topic] = []
-            self._subs[topic].append(q)
-        _evbus_logger.debug(f"subscribe: topic={topic!r} name={name!r} total={len(self._subs[topic])}")
-        return q
-
-    def subscribe_callback(
-        self,
-        topic: str,
-        callback: Callable[[Any], None],
-        name: str = "",
-    ) -> None:
-        """
-        回调订阅: publish 时直接调用 callback(item), 无队列延迟。
-        适用于 Qt signal emit 等线程安全桥接场景。
+        注册一个 topic（幂等：重复注册用同一配置）。
+        创建 topic 的有界队列参数模板，首次 subscribe 时创建实际队列。
         """
         with self._lock:
-            if topic not in self._cbs:
-                self._cbs[topic] = []
-            self._cbs[topic].append((callback, name or topic))
-        _evbus_logger.debug(f"subscribe_callback: topic={topic!r} name={name!r}")
+            if topic not in self._topic_configs:
+                self._topic_configs[topic] = TopicConfig(
+                    maxsize=maxsize, on_drop=on_drop, name=topic
+                )
+                self._topics[topic] = []
 
-    def publish(self, topic: str, item: Any) -> None:
+    def subscribe(self, topic: str) -> BoundedQueue:
         """
-        向 topic 所有 subscriber 发布数据。
-        - 队列 subscriber: put 到各自 BoundedQueue
-        - 回调 subscriber: 直接调用 callback(item)
+        订阅一个 topic。
+        返回一个独立的新 BoundedQueue，调用方自行轮询。
+
+        Raises:
+            KeyError: topic 未注册
         """
         with self._lock:
-            subscribers = list(self._subs.get(topic, []))
-            callbacks = list(self._cbs.get(topic, []))
+            if topic not in self._topic_configs:
+                raise KeyError(
+                    f'topic "{topic}" 未注册, 请先调用 register_topic()'
+                )
+            cfg = self._topic_configs[topic]
+            q = BoundedQueue(maxsize=cfg.maxsize, on_drop=cfg.on_drop, name=f"{topic}-sub#{len(self._topics[topic])}")
+            self._topics[topic].append((q, cfg))
+            return q
 
-        for q in subscribers:
+    def publish(self, topic: str, item: Any):
+        """
+        向 topic 的所有 subscriber 队列写入数据。
+
+        线程安全。满队列时按各队列自身策略处理。
+        单个队列的丢弃不影响其他队列。
+        """
+        with self._lock:
+            subscribers = self._topics.get(topic)
+            if not subscribers:
+                return  # 无 subscriber → 静默丢弃
+            # 在锁外依次写入 (put 内部有自己的锁)
+            queues = [q for q, _ in subscribers]
+
+        for q in queues:
             q.put(item)
-        for cb, cb_name in callbacks:
-            try:
-                cb(item)
-            except Exception as e:
-                _evbus_logger.error(f"callback error: topic={topic!r} name={cb_name!r}: {e}")
 
-        _evbus_logger.debug(
-            f"publish: topic={topic!r} queues={len(subscribers)} callbacks={len(callbacks)}"
-        )
-
-    def unsubscribe(self, topic: str, queue: BoundedQueue) -> None:
-        """取消订阅，移除对应 queue。"""
+    @property
+    def topics(self) -> list[str]:
+        """返回已注册的所有 topic 名称。"""
         with self._lock:
-            subs = self._subs.get(topic)
-            if subs is None:
-                return
-            try:
-                subs.remove(queue)
-            except ValueError:
-                pass
-            if not subs:
-                del self._subs[topic]
-        _evbus_logger.debug(f"unsubscribe: topic={topic!r}")
+            return list(self._topic_configs.keys())
 
-    def topic_stats(self, topic: str) -> list[dict]:
-        """返回 topic 下所有 subscriber 的运行指标 (调试用)。"""
+    def metrics(self) -> dict[str, list[QueueStats]]:
+        """
+        所有 topic 的运行时指标快照。
+
+        Returns:
+            {"frame.measured": [QueueStats(sub0), QueueStats(sub1), ...], ...}
+        """
+        result: dict[str, list[QueueStats]] = {}
         with self._lock:
-            subs = list(self._subs.get(topic, []))
-        return [
-            {"name": q._name, **q.stats.__dict__}
-            for q in subs
-        ]
+            for topic, subscribers in self._topics.items():
+                result[topic] = [q.stats for q, _ in subscribers]
+        return result
+
+    def topic_metrics_text(self, topic: str) -> str:
+        """单个 topic 的指标文本（用于日志/UI）。"""
+        lines: list[str] = []
+        with self._lock:
+            subscribers = self._topics.get(topic, [])
+            for i, (q, _) in enumerate(subscribers):
+                lines.append(f"  [#{i}] {q.stats_text()}")
+        if not lines:
+            return f"Topic[{topic}]: (无 subscriber)"
+        return f"Topic[{topic}]:\n" + "\n".join(lines)

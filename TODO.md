@@ -1,32 +1,50 @@
-# TODO
+# TODO — EventBus v0.4 重构状态
 
-## P0 - 反馈优先与卡顿修复
+> 更新于 Phase 1~5 代码实施完成后。见 docs/EVENTBUS_SPEC.md 架构设计。
 
-- [ ] 为反馈链路引入有界队列 (`FeedbackQueue`, `maxsize=1~2`, `drop_oldest`)
-- [ ] 为 UI 渲染引入有界队列 (`UIQueue`, `maxsize=1`, `drop_oldest`)
-- [ ] 为 Mini Chart 引入有界队列 (`MiniChartQueue`, `maxsize=1`, `drop_oldest`)
-- [ ] 将 `PidFeedbackSlot` 的阻塞 rpyc 调用改为 `run_in_executor`
-- [ ] 给 `dispatch` 增加背压保护，避免 `run_coroutine_threadsafe` 无界堆积
+## ✅ 已完成 — EventBus 数据路由重构
 
-## P1 - 数据一致性
+### Phase 1 — EventBus 基础设施 + 新数据类型 ✅
+- [x] `BoundedQueue` → 扩展为 `EventBus` 类（多 topic / 多 subscriber 独立队列 / publish / metrics）
+- [x] `FittedSnapshot` — FitWorker 产出物（channel_measurements + event_measurements）
+- [x] `ConfigChange` — 控制面配置变更指令
+- [x] EventBus 注册 3 个 topic：`frame.measured`/`frame.fitted`/`config.change`
 
-- [ ] 引入 `MeasurementSnapshot` 作为测量与反馈的单一数据源
-- [ ] 统一测量面板与反馈面板读取同一份 snapshot
-- [ ] 订阅模型升级为结构化 key (`event:*`, `raw:*`, `meta:*`)
-- [ ] 新增事件窗口测量模型 (`EventWindowSpec`)
+### Phase 2 — FitWorker（接管全部计算） ✅
+- [x] 独立线程运行 `ProcessingPipeline`（AutoMeasure / MathOp / FFT）
+- [x] `EventWindowSpec` 时间窗切片计算（Vpp/Vrms/Mean/Integral 等特征）
+- [x] `_on_frame()` 精简为仅 `make_analysis_result` + `publish("frame.measured")`
+- [x] 采集线程不再执行 Pipeline / 直接 UI 调用
 
-## P2 - 交互流畅度
+### Phase 3 — UIBridge（统一 Qt 桥接） ✅
+- [x] `UIBridge(QObject)` — `signal_raw_frame` + `signal_fitted`，非阻塞 `poll()`
+- [x] `MainWindow.connect_ui_bridge()` — 连接信号到波形/测量面板/MiniChart
+- [x] 移除旧 `data_received` 信号和 `update_display` 方法
+- [x] MiniChart QTimer 仅作为渲染节流（20fps），数据由 signal_fitted 驱动
 
-- [ ] Mini Chart 改为触发驱动更新（每次硬件触发最多更新一次）
-- [ ] Mini Chart 在硬件/`mock` 模式均保持与主示波器同节拍（1触发=1更新）
-- [ ] 去除 Mini Chart 独立刷新节拍 `QTimer`（仅保留采集事件驱动）
-- [ ] Mini Chart 每次仅绘制最近 N 点（建议 300~1000）
-- [ ] 参数修改/保存走 `ControlQueue`，在帧边界原子生效
-- [ ] 错误弹窗限流（同类错误短时间内只提示一次）
+### Phase 4 — FeedbackWorker（新数据路径） ✅
+- [x] 在 asyncio loop 中订阅 `frame.fitted` → 消费 `FittedSnapshot`
+- [x] `FeedbackManager.dispatch_raw(flat_dict)` — 不再重建 AnalysisResult
+- [x] `_resolve_value_from_dict` 支持 `event:` / `raw:` / `meta:` 结构化 key
+- [x] 删除旧 `_feedback_consumer` 中的 AnalysisResult proxy 重建 hack
 
-## 验收指标
+### Phase 5 — ConfigWorker + 控制面隔离 ✅
+- [x] `ConfigWorker` — 订阅 `config.change`，`change_id` 去重，`run_in_executor` 调用
+- [x] 在 asyncio loop 中与 FeedbackWorker 并行运行
 
-- [ ] 长时间运行反馈队列不持续堆积
+---
+
+## 遗留项
+
+### P2 - 交互流畅度（低优先级，可后续补充）
+
+- [ ] **错误弹窗限流**（同类错误 N 秒内只提示一次） — `FeedbackPanel._notified_auto_pause` 已有去重思路，可强化
+- [ ] **UI 面板操作 → config.change 发布** — 当前 DevicePanel 仍直接 emit `art_config_applied`，未走 ConfigWorker publish 路径
+- [ ] **ControlQueue 帧边界原子生效** — ConfigWorker 可用，但 UI 端未改为异步发送
+
+### 验收指标（待长跑验证）
+
+- [ ] 长时间运行反馈队列 qsize 不持续堆积
 - [ ] 反馈延迟不随时间增长
 - [ ] 修改测量类型/时间参数流畅
 - [ ] 保存配置无明显卡顿

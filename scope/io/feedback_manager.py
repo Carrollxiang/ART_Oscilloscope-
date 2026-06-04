@@ -157,6 +157,71 @@ class FeedbackManager:
             for s in self._slots.values()
         ]
 
+    # ── v0.4: dispatch_raw (从扁平 dict 分发) ──────────────
+
+    async def dispatch_raw(self, measurements: dict[str, float]):
+        """
+        将扁平测量字典分发给所有活跃 slot（v0.4 新路径）。
+
+        measurements 来自 FittedSnapshot.as_flat_dict()，包含
+        channel_measurements + event_measurements 的合并结果。
+        """
+        if not self._slots:
+            return
+
+        active_slots = [
+            s for s in list(self._slots.values())
+            if s.status == SlotStatus.RUNNING
+        ]
+        if not active_slots:
+            return
+
+        tasks = []
+        for slot in active_slots:
+            payload = self._build_payload_from_dict(
+                measurements, slot._config.subscriptions
+            )
+            if payload:
+                tasks.append(self._safe_on_data(slot, payload))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _build_payload_from_dict(
+        self,
+        measurements: dict[str, float],
+        subscriptions: list[DataSubscription],
+    ) -> dict[str, Any]:
+        """从扁平测量字典中根据订阅列表提取数据。"""
+        payload: dict[str, Any] = {}
+        for sub in subscriptions:
+            value = self._resolve_value_from_dict(measurements, sub.local_key)
+            if value is not None:
+                scaled = value * sub.scale + sub.offset
+                payload[sub.remote_key] = scaled
+        return payload
+
+    def _resolve_value_from_dict(
+        self, measurements: dict[str, float], key: str
+    ) -> Optional[float]:
+        """
+        从扁平测量字典中解析单个值。
+
+        支持结构化 key:
+          - "event:tag"   → 直查 measurements
+          - "raw:CH1_Vpp" → 直查 measurements
+          - "meta:seq"    → None (元信息不在此处)
+          - "CH1_Vpp"     → 直查 measurements (兼容旧订阅)
+        """
+        if key.startswith("event:"):
+            return measurements.get(key[6:])
+        elif key.startswith("raw:"):
+            return measurements.get(key[4:])
+        elif key.startswith("meta:"):
+            return None
+        else:
+            return measurements.get(key)
+
     # ── 核心: 数据分发 ─────────────────────────────────────────
 
     async def dispatch(self, result: Union[AnalysisResult, MeasurementSnapshot]):
