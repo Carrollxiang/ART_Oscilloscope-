@@ -185,6 +185,9 @@ class MainWindow(QMainWindow):
             flat = fitted_snapshot.as_flat_dict()
             if flat and hasattr(self, 'mini_chart'):
                 self.mini_chart.add_data(flat)
+                self.mini_chart.refresh_now()
+                if fitted_snapshot.sequence_num % 10 == 1:
+                    logger.debug(f"MiniChart updated: {len(flat)} items, seq={fitted_snapshot.sequence_num}")
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
 
