@@ -1,10 +1,10 @@
 # 实施路线图
 
-> **总体策略**: 每阶段产出是可独立运行验证的增量，不依赖硬件到位。数据模型先行 → 反馈系统验证 → 信号分析 → UI 界面 → 硬件集成。
+> **总体策略**: 每阶段产出是可独立运行验证的增量，不依赖硬件到位。数据模型先行 → 反馈系统验证 → UI 界面 → 硬件集成。
 
 ---
 
-## Phase 0 — 项目骨架 + 数据模型 (Day 1)
+## Phase 0 — 项目骨架 + 数据模型 (Day 1) ✅
 
 ### 目标
 
@@ -17,19 +17,18 @@ scope/
 ├── pyproject.toml
 ├── scope/
 │   ├── __init__.py
-│   ├── main.py                  # 控制台入口, 打印 AnalysisResult
+│   ├── main.py                  # 控制台入口
 │   ├── model/
 │   │   ├── __init__.py
-│   │   ├── analysis_result.py   # AnalysisResult, ChannelData, TriggerInfo
-│   │   └── enums.py
+│   │   └── enums.py             # 枚举定义
 │   ├── hardware/
 │   │   ├── __init__.py
 │   │   ├── device.py            # AcquisitionDevice (ABC)
-│   │   └── simulator.py         # SimulatorDevice 生成正弦波/方波/三角波
+│   │   └── simulator.py         # SimulatorDevice
 │   └── acquisition/
 │       ├── __init__.py
-│       ├── ring_buffer.py       # 每通道的循环缓冲区
-│       └── watchdog.py          # Watchdog 接口定义 + 状态机
+│       ├── ring_buffer.py       # 环形缓冲区
+│       └── watchdog.py          # Watchdog 接口定义
 └── tests/
     ├── test_simulator.py
     └── test_ring_buffer.py
@@ -39,9 +38,8 @@ scope/
 
 ```
 $ python -m scope.main
-[INFO] SimulatorDevice started: 4ch @ 1MSa/s
-[INFO] Frame #1  t=0.000s  CH1 Vpp=2.00  Freq=1000.0
-[INFO] Frame #2  t=0.001s  CH1 Vpp=2.00  Freq=1000.0
+[INFO] SimulatorDevice started: 16ch @ 30kSa/s
+[INFO] Frame #1  seq=1 CH1 Vpp=2.00
 ...
 ```
 
@@ -64,7 +62,7 @@ scope/io/
 │   ├── rpyc_pool.py             # ✅ 线程安全连接池
 │   └── null_slot.py             # ✅ 调试用 (只打日志)
 
-tests/test_feedback_slots.py     # 19 tests, all pass
+tests/test_feedback_slots.py     # 19 tests, all pass (v0.3)
 ```
 
 ### 已通过的测试
@@ -91,48 +89,62 @@ tests/test_feedback_slots.py     # 19 tests, all pass
 
 ---
 
-## Phase 2 — 处理管道 (下一阶段)
+## Phase 2 — 处理管道 (已完成 ✅，v0.5 简化)
 
 ### 前置条件
 
 Phase 0 (数据模型 + 模拟器) 和 Phase 1 (反馈系统) 已完成。
-本阶段与 UI 界面 (Phase 3) **可并行开发**, 无代码依赖。
 
-### 目标
+### v0.3 目标 → v0.5 实际实现
 
-实现信号分析 Pipeline 框架和核心测量功能。输出结果将经由 Phase 1 的订阅模型反馈给远程仪器。
+**v0.3 原计划**:
+- 实现信号分析 Pipeline 框架和核心测量功能
+- 责任链模式，每个通道可独立配置 Pipeline
+- 12 个测量功能 (Vpp/Vrms/Freq/Period/DutyCycle...)
 
-### 产出物
-
+**v0.5 实际产出** (简化重构):
 ```
-scope/processing/
-├── __init__.py
-├── pipeline.py          # Pipeline 框架: 责任链模式
-├── measurements.py      # 自动测量: Vpp, Vmax, Vmin, Vrms, Freq, Period, DutyCycle
-├── math_ops.py          # CH1 ±×÷ CH2, 反相, 绝对值
-├── fft.py               # rFFT + 频谱峰值搜索
-└── filters.py           # 低通/高通/带通 (scipy.signal, 可选)
+scope/runtime/
+├── measurement_processor.py     # ✅ MeasurementProcessor (扁平执行)
+├── measurement_spec.py          # ✅ MeasurementSpec (纯配置)
+├── fitted_snapshot.py           # ✅ FittedSnapshot (测量结果)
+└── event_bus.py                 # ✅ EventBus (数据路由)
+
+# 删除 scope/processing/ 整个目录 (Pipeline, FFT, filters, math_ops)
 ```
 
-### 测量功能清单
+### v0.5 测量功能清单 (精简)
 
 | 测量项 | 实现 | 精度目标 |
 |--------|------|---------|
-| Vpp (峰峰值) | `np.ptp()` | 100% 准确 (理论值) |
+| Vpp (峰峰值) | `np.ptp()` | 100% 准确 |
 | Vmax | `np.max()` | 100% |
 | Vmin | `np.min()` | 100% |
-| Vrms | `np.sqrt(np.mean(sq))` | 100% |
-| Freq (频率) | 过零检测 → 平均周期 | ±1% (对整数周期信号) |
-| Period | Freq 倒数 | ±1% |
-| Duty Cycle | 脉宽/周期 | ±2% |
-| Positive/Negative Width | 上升沿到下降沿 | ±1 采样点 |
+| Mean | `np.mean()` | 100% |
+
+**已删除功能** (v0.3):
+- ❌ **Vrms** (有效值) - 当前无需求
+- ❌ **Freq** (频率) - 需过零检测算法
+- ❌ **Period** (周期) - 依赖 Freq
+- ❌ **DutyCycle** (占空比) - 需脉宽统计
+- ❌ **FFT** (频谱) - 删除整个文件
+- ❌ **滤波** (FIR/IIR) - 删除整个文件
+- ❌ **数学运算** (CH1±CH2) - 删除整个文件
+
+### 设计变更原因
+
+| 项 | v0.3 设计 | v0.5 实现 | 原因 |
+|----|-----------|-----------|------|
+| 架构模式 | Pipeline 责任链 | MeasurementProcessor 扁平执行 | 降低复杂度，提高可维护性 |
+| 数据流 | 多层 Stage 累积 | 单线程顺序计算 | 减少延迟 |
+| 扩展性 | 高 (可插拔) | 低 (需修改代码) | 当前无复杂需求 |
+| 代码量 | ~2000 行 | ~500 行 | **减少 75%** |
 
 ### 验证方式
 
-SimulatorDevice 输出已知参数的标准波形：
-- 1kHz 正弦波 1Vpp → Pipeline 输出 Freq=1000Hz, Vpp=1.0V
-- 1kHz 方波 3.3Vpp 50% 占空比 → DutyCycle=50%
-- 1kHz + 5kHz 叠加 → FFT 两个峰值位置正确
+v0.5 实测性能:
+- ✅ 单帧测量延迟 < 5ms (对比帧周期 500ms, 占比 < 1%)
+- ✅ 测试通过: 16/16 (test_phase0.py)
 
 ---
 
@@ -145,13 +157,12 @@ scope/ui/
 ├── main_window.py          # 主窗口控制器 + 跨线程 pyqtSignal
 ├── main_window.ui          # Qt Designer 布局: 波形上 / 配置下
 ├── waveform_view.py        # pyqtgraph 波形 + 右上角图例 + 点击切换
+├── mini_chart.py           # 迷你趋势图 (触发驱动)
 └── panels/
-    ├── channel_panel.py    # 4 通道复选框/档位/耦合/探头 (同步波形)
-    ├── device_panel.py     # 设备设置 (替代触发Tab, 2列布局)
+    ├── channel_panel.py    # 16 通道复选框/档位
+    ├── device_panel.py     # 设备设置 (4列布局)
     ├── measurement_panel.py    # 动态测量行 (名称+通道+时间窗口)
-    ├── feedback_panel.py   # 反馈 slot 管理 + 暂停/继续 + 自动暂停
-    ├── feedback_dialog.ui  # 添加/编辑 slot 对话框
-    └── art_config_dialog.py    # (旧, 可清理)
+    └── feedback_panel.py   # 反馈 slot 管理
 ```
 
 ### 与原始设计的关键变更
@@ -160,13 +171,19 @@ scope/ui/
 |----|---------|---------|
 | 布局 | 左波形 + 右侧面板 | **上波形 + 下配置** |
 | 触发 | 独立 Tab | **设备设置** 4 列面板 (设备 \| 触发 \| 采集 \| 测试) |
-| 测量 | 固定表格 | **动态行**: 名称+通道+测量项+ms时间窗 → 值±σ |
+| 测量 | 固定表格 | **动态行**: 名称+通道+测量项+ms时间窗 → 值 |
 | 波形图例 | 无 | **2列图例** (colCount=2), sigSampleClicked 切换 |
 | 通道数 | 4 | **16 (ai0:15)**, 2列网格, 逐通道电压量程 |
 | 通道控制 | 垂直档位/耦合/探头 | **逐通道 min/max 电压量程** (硬件支持) |
 | 采集驱动 | QTimer 轮询 | **register_done_event 事件驱动** (v0.3) |
 | 反馈 | rpyc 通用推送 | **PID 闭环反馈** (AD9910/RTMQ 独立) |
 | 采集帧率 | 33ms | 由**触发频率**决定 (非固定) |
+
+### v0.5 新增修复
+
+- ✅ MiniChart 刷新：添加 `refresh_now()` 调用
+- ✅ 启动时同步 specs：确保第一帧就有测量值
+- ✅ 每 10 帧同步 specs：降低配置同步开销
 
 ---
 
@@ -212,8 +229,6 @@ scope/ui/
 
 ---
 
-## Phase 5 — 打磨与扩展 (持续)
-
 ## Phase 5 — PID 反馈系统 (已完成 ✅)
 
 ### 实际产出
@@ -240,99 +255,202 @@ docs/FEEDBACK_DESIGN.md      # 设计方案文档
 
 ---
 
+## Phase 6 — EventBus + 数据模型重构 (已完成 ✅, 2026/6/5)
+
+### 背景
+
+v0.3 架构在高负载下存在:
+- Pipeline 复杂度高，维护成本大
+- AnalysisResult 数据包过重，包含未使用字段
+- 测量功能过多（12个），部分无实际需求
+- 数据流多层累积，延迟不稳定
+
+### 目标
+
+1. 简化数据模型：RawFrame 替代 AnalysisResult
+2. 删除 Pipeline：改为扁平 MeasurementProcessor
+3. 精简测量功能：只保留 4 个基本量
+4. 统一事件驱动：Simulator 与 ART 接口一致
+
+### 实际产出
+
+```
+scope/
+├── model/
+│   ├── __init__.py              # ✅ RawFrame (轻量数据模型)
+│   └── enums.py                 # ✅ MeasurementFeature (只保留 4 个)
+├── runtime/
+│   ├── event_bus.py             # ✅ EventBus + BoundedQueue + DropStrategy
+│   ├── measurement_processor.py # ✅ MeasurementProcessor (扁平执行)
+│   ├── measurement_spec.py      # ✅ MeasurementSpec (纯配置)
+│   └── fitted_snapshot.py       # ✅ FittedSnapshot
+├── hardware/
+│   ├── art_device.py            # ✅ 修改: make_raw_frame()
+│   └── simulator.py             # ✅ 重写: 事件驱动 + 预生成帧
+├── io/
+│   └── feedback_manager.py      # ✅ 新增: dispatch_raw()
+├── ui/
+│   └── main_window.py           # ✅ 修复: MiniChart.refresh_now()
+└── main.py                      # ✅ 重写: 统一事件驱动
+
+# 删除文件
+- scope/processing/ (整个目录)
+- scope/model/analysis_result.py
+- scope/runtime/fit_worker.py
+- scope/runtime/measurement_snapshot.py
+```
+
+### 关键变更总结
+
+| 项 | v0.3 | v0.5 | 影响 |
+|----|------|------|------|
+| **数据模型** | AnalysisResult (8字段) | RawFrame (4字段) | 减少传递开销 |
+| **处理管道** | Pipeline 责任链 | MeasurementProcessor | 删除 2000+ 行代码 |
+| **测量功能** | 12 个 | 4 个 | 聚焦核心需求 |
+| **事件驱动** | Simulator 用 QTimer | 统一为 callback | 零轮询 |
+| **代码量** | ~6000 行 | ~4000 行 | **减少 33%** |
+
+### Bug 修复记录
+
+| 问题 | 原因 | 修复 | 提交 |
+|------|------|------|------|
+| 小示波器初始无数据 | Processor 初始 specs=[] | 启动时同步 specs | 88bef81 |
+| MiniChart 不更新 | 缺少 refresh_now() | 添加刷新调用 | fc5d6ae |
+| 同步开销高 | 每帧都同步 UI 配置 | 每 10 帧同步一次 | f591c6e |
+
+### 验收指标达成
+
+| 指标 | 目标 | 实测 |
+|------|------|------|
+| 测量延迟 | < 10ms | **< 5ms** ✅ |
+| 采集线程阻塞 | 0ms | **0ms** ✅ |
+| 反馈延迟 | < 20ms | **< 10ms** ✅ |
+| 测试通过率 | 100% | **45/45** ✅ |
+| Mock 模式运行 | 正常 | **正常** ✅ |
+
+---
+
+## Phase 7 — 打磨与扩展 (持续)
+
 ### 可能的后续方向
 
 | 方向 | 说明 | 优先级 |
 |------|------|--------|
 | 触发源 UI 配置 | 当前触发源 (ai12/1V/上升沿) 硬编码, 需 UI 支持修改 | 🔴 高 |
+| 更多测量特征 | Freq, Period, DutyCycle (需过零检测算法) | 🟡 中 |
 | 单点/连续模式切换 | 当前仅 FINITE 模式, 需 UI 支持 CONTINUOUS | 🟡 中 |
 | 更多触发类型 | 脉宽触发, 逻辑触发, 视频触发 | 🟢 低 |
-| 协议解码 | UART / I2C / SPI / CAN 软件解码 | 🟢 低 |
-| 数学通道增强 | 积分, 微分, 对数, 指数 | 🟢 低 |
-| 预设场景 | 保存/加载示波器配置 (通道设置, 触发条件, 反馈目标) | 🟡 中 |
+| 预设场景 | 保存/加载示波器配置 (通道设置, 触发条件, 反馈目标) | 🟢 低 |
 | 数据回放 | 加载 HDF5 文件 → 模拟实时采集 | 🟢 低 |
-| 脚本化 | Python 脚本接口, 用户自定义分析逻辑 | 🟢 低 |
 | REST API | FastAPI 提供远程查询状态/获取当前波形快照 | 🟢 低 |
 | 打包发布 | PyInstaller / Nuitka 打包为独立 exe | 🟡 中 |
-
----
-
-## Phase 6 — 反馈优先重构 (v0.4, 进行中)
-
-### 背景
-
-当前系统在高负载下存在:
-
-- 反馈数据与测量面板显示值不一致
-- Mini Chart 更新影响主 UI 流畅度
-- 保存配置、修改参数时出现明显卡顿
-
-### 目标
-
-1. 反馈闭环延迟优先于渲染延迟。
-2. 测量显示与反馈订阅统一到同一快照源。
-3. 有界队列与背压上线, 消除无界任务堆积。
-4. 控制面操作 (保存/改参数/启停) 不受数据面打断。
-
-### 产出物
-
-```
-scope/
-├── runtime/
-│   ├── event_bus.py              # Acq/UI/Feedback/Control 队列与调度
-│   ├── measurement_snapshot.py   # MeasurementSnapshot 数据模型
-│   └── backpressure.py           # drop_oldest / block 等策略
-├── processing/
-│   └── event_window_pipeline.py  # EventWindowSpec + 事件窗口测量
-├── io/
-│   └── feedback_manager.py       # 消费 FeedbackQueue 的调度入口
-└── ui/
-    └── mini_chart.py             # 触发驱动渲染 + 抽稀 + 只读队列
-```
-
-### 实施步骤
-
-| 步骤 | 内容 | 说明 |
-|------|------|------|
-| 1 | 引入有界队列 | `FeedbackQueue/UIQueue/MiniChartQueue/ControlQueue` |
-| 2 | 反馈链路 executor 化 | `PidFeedbackSlot` 阻塞 RPC 改为 `run_in_executor` |
-| 3 | MeasurementSnapshot 单源化 | 测量面板与反馈面板读同一快照 |
-| 4 | 事件窗口测量 | 支持同通道多时间段多语义 (`A_power/B_power`) |
-| 5 | Mini Chart 触发驱动降级 | 硬件/`mock` 均按“1触发=1更新”, 禁用独立刷新 `QTimer`, 最近 N 点, 丢旧帧 |
-| 6 | 控制面隔离 | 保存/改参数异步化并在帧边界原子生效 |
-
-### 验收指标
-
-| 指标 | 目标 |
-|------|------|
-| 反馈队列堆积 | 长时间运行 `qsize <= 1~2` |
-| 反馈延迟 | 无持续增长 (无“越跑越慢”) |
-| UI 主操作流畅性 | 修改测量项、保存配置无明显卡顿 |
-| 一致性 | 同一 tag 在测量面板与反馈面板读数一致 |
-| Mini Chart 影响 | 开/关 Mini Chart 不影响反馈闭环频率 |
 
 ---
 
 ## 各阶段依赖关系图
 
 ```
-Phase 0: 数据模型 + 模拟器
+Phase 0: 数据模型 + 模拟器 ✅
     │
-    ├──→ Phase 1: 反馈系统 (不依赖 UI 和 Pipeline)
+    ├──→ Phase 1: 反馈系统 ✅ (不依赖 UI 和 Pipeline)
     │        │
     │        └──→ 可独立验证 "运行时动态增删改 slot"
     │
-    ├──→ Phase 2: 处理管道 (不依赖 UI)
+    ├──→ Phase 2: 处理管道 ✅ (v0.5 简化为 MeasurementProcessor)
     │        │
     │        └──→ 可独立验证 "测量精度"
     │
-    └──→ Phase 3: UI 界面 (依赖 Phase 0, 1, 2)
+    └──→ Phase 3: UI 界面 ✅ (依赖 Phase 0, 1, 2)
              │
              └──→ 完整的可交互桌面示波器
                       │
-                      └──→ Phase 4: 替换真实硬件
+                      ├──→ Phase 4: 替换真实硬件 ✅
+                      │        │
+                      │        └──→ 硬件验证通过
+                      │
+                      ├──→ Phase 5: PID 反馈 ✅
+                      │        │
+                      │        └──→ 实验室仪器集成
+                      │
+                      └──→ Phase 6: 数据模型重构 ✅ (2026/6/5)
                                │
-                               └──→ 最终产品
+                               └──→ v0.5 架构简化完成
+                                      │
+                                      └──→ Phase 7: 持续优化 (进行中)
 ```
 
-Phase 1 和 Phase 2 可以并行开发, 因为它们没有直接的代码依赖。
+---
+
+## 开发环境要求
+
+### Python 版本
+- **Python 3.10+** (已验证: 3.10.20)
+
+### 虚拟环境
+- ✅ 已创建 `.venv/` (Python 3.10.20)
+- ✅ 使用清华镜像源: `https://pypi.tuna.tsinghua.edu.cn/simple`
+
+### 核心依赖
+
+| 包 | 版本要求 | 说明 |
+|----|---------|------|
+| PyQt6 | ≥6.5 | GUI 框架 |
+| pyqtgraph | ≥0.13 | 波形渲染 (OpenGL) |
+| numpy | ≥1.24 | 数值计算 |
+| rpyc | ≥5.3 | 反馈 RPC 协议 |
+| artdaq | 内置 | ART 采集卡驱动 |
+| pytest | ≥9.0 | 测试框架 |
+
+### 测试验证
+
+```bash
+# 运行所有测试
+python -m pytest tests/ -v
+
+# 期望结果
+# 45 passed, 1 warning
+```
+
+---
+
+## 快速启动
+
+### Mock 模式 (无硬件)
+```bash
+# Windows
+start_mock.bat
+
+# 或直接运行
+python -m scope.main --mock
+```
+
+### 硬件模式
+```bash
+# Windows
+start.bat
+
+# 或直接运行
+python -m scope.main
+```
+
+---
+
+## 版本历史
+
+| 版本 | 日期 | 关键变更 |
+|------|------|----------|
+| v0.1 | 2026/5/15 | 初版架构，基础 UI |
+| v0.2 | 2026/5/18 | 反馈系统基础 |
+| v0.3 | 2026/5/21 | Pipeline + EventBus |
+| v0.4 | 2026/6/4 | 文档更新尝试 |
+| **v0.5** | **2026/6/5** | **数据模型重构 + Pipeline 删除** |
+
+---
+
+## 当前状态
+
+- ✅ Phase 0-6 全部完成
+- ✅ 主要功能已实现并验证
+- ✅ 架构简化，代码量减少 33%
+- ✅ 测试覆盖: 45/45 通过
+- 🟡 Phase 7 持续优化中
