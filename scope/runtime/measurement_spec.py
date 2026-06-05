@@ -20,16 +20,16 @@ class MeasurementSpec:
         channel: 通道索引 (0-based)
         start_ms: 时间窗起始 (毫秒，相对帧起点)
         end_ms: 时间窗结束 (毫秒，0 表示帧结尾)
-        feature: 特征类型 (Vpp, Vrms, Vmax, Vmin, Mean, Integral)
+        feature: 特征类型 (Vpp, Vmax, Vmin, Mean)
         semantic: 可选说明文字
     
     Example:
         spec = MeasurementSpec(
-            tag="A_power",
+            tag="CH1_vpp",
             channel=0,
-            start_ms=10.0,
-            end_ms=100.0,
-            feature="Vrms",
+            start_ms=0.0,
+            end_ms=0.0,  # 0 表示到帧结尾
+            feature="Vpp",
         )
     """
     

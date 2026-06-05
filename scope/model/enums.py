@@ -14,16 +14,11 @@ class SlotStatus(Enum):
 
 
 class MeasurementFeature(Enum):
-    """测量特征类型"""
+    """测量特征类型 - 只保留 4 个基本测量量"""
     Vpp = "Vpp"
     Vmax = "Vmax"
     Vmin = "Vmin"
-    Vrms = "Vrms"
     Mean = "Mean"
-    Integral = "Integral"
-    Freq = "Freq"
-    Period = "Period"
-    DutyCycle = "DutyCycle"
 
 
 class ChannelCoupling(Enum):
@@ -34,19 +29,11 @@ class ChannelCoupling(Enum):
 
 
 class MeasurementId(Enum):
-    """测量项 ID"""
+    """测量项 ID - 与 MeasurementFeature 保持一致"""
     Vpp = "Vpp"
     Vmax = "Vmax"
     Vmin = "Vmin"
-    Vrms = "Vrms"
-    Vavg = "Vavg"
-    Freq = "Freq"
-    Period = "Period"
-    DutyCycle = "DutyCycle"
-    PosWidth = "PosWidth"
-    NegWidth = "NegWidth"
-    RiseTime = "RiseTime"
-    FallTime = "FallTime"
+    Mean = "Mean"
 
 
 # 支持的测量特征列表

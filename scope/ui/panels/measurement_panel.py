@@ -39,20 +39,12 @@ logger = logging.getLogger(__name__)
 CHANNELS = ["CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8",
              "CH9", "CH10", "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
 
-# (key, label, unit)
+# (key, label, unit) - 只保留 4 个基本测量量
 MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
-    ("Vpp",       "峰峰值",   "V"),
-    ("Vmax",      "最大值",   "V"),
-    ("Vmin",      "最小值",   "V"),
-    ("Vrms",      "有效值",   "V"),
-    ("Vavg",      "平均值",   "V"),
-    ("Freq",      "频率",     "Hz"),
-    ("Period",    "周期",     "s"),
-    ("DutyCycle", "占空比",   "%"),
-    ("PosWidth",  "正脉宽",   "s"),
-    ("NegWidth",  "负脉宽",   "s"),
-    ("RiseTime",  "上升时间", "s"),
-    ("FallTime",  "下降时间", "s"),
+    ("Vpp",  "峰峰值", "V"),
+    ("Vmax", "最大值", "V"),
+    ("Vmin", "最小值", "V"),
+    ("Mean", "平均值", "V"),
 ]
 
 
@@ -206,7 +198,7 @@ class MeasurementPanel:
 
         # 默认行
         self.add_row(name="CH1_vpp", channel="CH1", meas_key="Vpp", end_time=500)
-        self.add_row(name="CH1_vrms", channel="CH1", meas_key="Vrms", end_time=500)
+        self.add_row(name="CH1_mean", channel="CH1", meas_key="Mean", end_time=500)
         self.add_row(name="CH2_vpp", channel="CH2", meas_key="Vpp", end_time=500)
 
     def _setup_ui(self):

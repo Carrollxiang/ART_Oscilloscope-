@@ -180,7 +180,7 @@ class MeasurementProcessor:
         if len(segment) == 0:
             return None
         
-        # 特征计算
+        # 特征计算 - 只支持 Vpp, Vmax, Vmin, Mean
         feature = spec.feature.lower()
         
         if feature == "vpp":
@@ -189,12 +189,8 @@ class MeasurementProcessor:
             return float(np.max(segment))
         elif feature == "vmin":
             return float(np.min(segment))
-        elif feature == "vrms":
-            return float(np.sqrt(np.mean(np.square(segment))))
         elif feature == "mean":
             return float(np.mean(segment))
-        elif feature == "integral":
-            return float(np.trapz(segment)) / fs
         else:
             logger.warning(f"未知特征类型: {spec.feature}")
             return None
