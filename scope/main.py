@@ -54,6 +54,7 @@ class ScopeApp:
         self._running = False
         self._device_type = "unknown"
         self._async_loop = asyncio.new_event_loop()
+        self._frame_count = 0  # 帧计数器，用于降低同步频率
 
         # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧, ±10V)
         self._config = DeviceConfig(
@@ -169,13 +170,16 @@ class ScopeApp:
         self._ui_bridge = UIBridge(self._event_bus)
         self.main_win.connect_ui_bridge(self._ui_bridge)
 
-        # 4. 注册数据回调 (统一事件驱动)
-        self.device.set_data_callback(self._on_frame)
+        # 4. 初始化测量规格（确保第一帧就有 specs）
+        self._sync_measurement_specs()
 
         # 5. 启动 MeasurementProcessor
         self._processor.start()
 
-        # 6. 启动设备采集
+        # 6. 注册数据回调 (统一事件驱动)
+        self.device.set_data_callback(self._on_frame)
+
+        # 7. 启动设备采集
         self.device.start_acquisition()
 
         self._running = True
@@ -210,14 +214,16 @@ class ScopeApp:
         事件驱动回调: 每收到一帧原始数据后调用。
         
         职责:
-          1. 同步测量规格
+          1. 低频同步测量规格 (每 10 帧)
           2. 组装 RawFrame
           3. 发布到 EventBus
           4. 轮询 UIBridge
         """
         try:
-            # 1. 同步测量规格（每帧同步一次）
-            self._sync_measurement_specs()
+            # 1. 每 10 帧同步一次测量规格（降低开销）
+            self._frame_count += 1
+            if self._frame_count % 10 == 1:  # 第 1, 11, 21... 帧
+                self._sync_measurement_specs()
 
             # 2. 组装并发布
             frame = self.device.make_raw_frame(chunk)
