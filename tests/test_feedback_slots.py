@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 
-from scope.model import AnalysisResult, ChannelData, TriggerInfo
+from scope.runtime import FittedSnapshot
 from scope.model.enums import SlotStatus
 from scope.io.feedback_slots.base import SlotConfig, DataSubscription
 from scope.io.feedback_slots.null_slot import NullFeedbackSlot
@@ -19,22 +19,11 @@ from scope.io.feedback_manager import FeedbackManager
 
 # ── Helper ─────────────────────────────────────────────────────
 
-def make_sample_result(**meas) -> AnalysisResult:
-    """生成一个带测量值的测试用 AnalysisResult"""
-    t = np.linspace(0, 0.01, 1000)
-    ch1 = ChannelData(
-        raw=np.sin(2 * np.pi * 1000 * t),
-        time_axis=t,
-        sample_rate=100_000,
-        resolution=12,
-        vertical_scale=1.0,
-        vertical_offset=0.0,
-    )
-    return AnalysisResult(
+def make_sample_snapshot(**meas) -> FittedSnapshot:
+    """生成一个带测量值的测试用 FittedSnapshot"""
+    return FittedSnapshot(
         sequence_num=1,
-        trigger=TriggerInfo.immediate(),
-        channels={"CH1": ch1},
-        measurements=meas,
+        event_measurements=meas,
     )
 
 

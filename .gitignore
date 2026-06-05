@@ -29,3 +29,10 @@ config/*.json
 
 # Test artifact
 test_hardware.py
+
+# OpenCode config
+.opencode/
+
+# Temporary files
+*.tmp
+1.24

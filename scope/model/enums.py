@@ -1,67 +1,53 @@
 """
-枚举类型定义
+枚举定义
 """
 
-from enum import Enum, auto
+from enum import Enum
+
+
+class SlotStatus(Enum):
+    """反馈插槽状态"""
+    IDLE = "idle"
+    PAUSED = "paused"
+    RUNNING = "running"
+    ERROR = "error"
+
+
+class MeasurementFeature(Enum):
+    """测量特征类型"""
+    Vpp = "Vpp"
+    Vmax = "Vmax"
+    Vmin = "Vmin"
+    Vrms = "Vrms"
+    Mean = "Mean"
+    Integral = "Integral"
+    Freq = "Freq"
+    Period = "Period"
+    DutyCycle = "DutyCycle"
 
 
 class ChannelCoupling(Enum):
+    """通道耦合方式"""
     DC = "dc"
     AC = "ac"
     GND = "gnd"
 
 
-class TriggerType(Enum):
-    EDGE = "edge"
-    IMMEDIATE = "immediate"
-    PULSE = "pulse"  # 扩展
-
-
-class TriggerSlope(Enum):
-    RISING = "rising"
-    FALLING = "falling"
-
-
-class SlotStatus(Enum):
-    """反馈通道的运行状态"""
-    IDLE = "idle"
-    RUNNING = "running"
-    PAUSED = "paused"
-    ERROR = "error"
-
-
-class SlotProtocol(Enum):
-    """支持的反馈协议类型"""
-    RPYC = "rpyc"        # 主要: 实验室仪器标准
-    UDP = "udp"          # 备选
-    SERIAL = "serial"    # 备选
-    MODBUS_TCP = "modbus_tcp"
-    MODBUS_RTU = "modbus_rtu"
-    MQTT = "mqtt"
-    HTTP = "http"
-    NULL = "null"  # 调试用
-
-
-class DeviceHealthState(Enum):
-    """硬件健康状态"""
-    HEALTHY = "healthy"
-    PINGING = "pinging"
-    RESETTING = "resetting"
-    REINITIALIZING = "reinitializing"
-    OFFLINE = "offline"
-
-
 class MeasurementId(Enum):
-    """标准测量项标识符"""
-    VPP = "Vpp"
-    VMAX = "Vmax"
-    VMIN = "Vmin"
-    VRMS = "Vrms"
-    VAVG = "Vavg"
-    FREQ = "Freq"
-    PERIOD = "Period"
-    DUTY_CYCLE = "DutyCycle"
-    POS_WIDTH = "PosWidth"
-    NEG_WIDTH = "NegWidth"
-    RISE_TIME = "RiseTime"
-    FALL_TIME = "FallTime"
+    """测量项 ID"""
+    Vpp = "Vpp"
+    Vmax = "Vmax"
+    Vmin = "Vmin"
+    Vrms = "Vrms"
+    Vavg = "Vavg"
+    Freq = "Freq"
+    Period = "Period"
+    DutyCycle = "DutyCycle"
+    PosWidth = "PosWidth"
+    NegWidth = "NegWidth"
+    RiseTime = "RiseTime"
+    FallTime = "FallTime"
+
+
+# 支持的测量特征列表
+MEASUREMENT_FEATURES = [f.value for f in MeasurementFeature]

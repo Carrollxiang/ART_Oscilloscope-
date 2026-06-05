@@ -20,7 +20,7 @@ from scope.hardware.device import (
     DeviceInfo,
     DeviceHealthEvent,
 )
-from scope.model import TriggerInfo
+from scope.model import RawFrame
 
 logger = logging.getLogger(__name__)
 
@@ -271,42 +271,12 @@ class ArtDevice(AcquisitionDevice):
         self._seq += 1
         return data
 
-    def make_analysis_result(self, chunk: np.ndarray) -> "AnalysisResult":
-        """将原始数据组装成 AnalysisResult。"""
-        from scope.model import AnalysisResult, ChannelData
-
-        cfg = self._config
-        n_ch = chunk.shape[0]
-        n_samples = chunk.shape[1]
-        fs = cfg.sample_rate
-        now = time.monotonic()
-
-        t = np.arange(n_samples, dtype=np.float64) / fs
-        channels = {}
-        for ch_idx in range(n_ch):
-            name = f"CH{ch_idx + 1}"
-            max_val = cfg.channel_max_vals[ch_idx] if ch_idx < len(cfg.channel_max_vals) else 10.0
-            channels[name] = ChannelData(
-                raw=chunk[ch_idx].copy(),
-                time_axis=t.copy(),
-                sample_rate=fs,
-                resolution=self._info.resolution_bits,
-                vertical_scale=max_val,
-                vertical_offset=0.0,
-                enabled=ch_idx in cfg.channels_enabled,
-            )
-
-        return AnalysisResult(
+    def make_raw_frame(self, chunk: np.ndarray) -> RawFrame:
+        """将原始数据组装成 RawFrame。"""
+        return RawFrame(
             sequence_num=self._seq,
-            trigger=TriggerInfo(
-                trigger_type="edge",
-                trigger_source=0,
-                trigger_level=self._trigger_level,
-                trigger_slope=self._trigger_slope,
-                trigger_position=0.5,
-                trigger_timestamp=now,
-            ),
-            channels=channels,
+            data=chunk.copy(),
+            sample_rate=self._config.sample_rate,
         )
 
     def rearm(self):

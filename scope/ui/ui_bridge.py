@@ -1,7 +1,7 @@
 """
 UIBridge — 采集线程 → Qt 主线程的桥接层 (v0.4)
 
-消费 EventBus 中的 frame.measured 和 frame.fitted 队列，
+消费 EventBus 中的 frame.raw 和 frame.fitted 队列，
 通过 pyqtSignal 桥接到 Qt 主线程更新 UI。
 
 UIBridge 自身运行在采集线程（不创建额外线程），
@@ -24,7 +24,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from scope.model import AnalysisResult
+from scope.model import RawFrame
 from scope.runtime import EventBus, FittedSnapshot
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class UIBridge(QObject):
     """
 
     # 原始帧 — 用于主波形渲染
-    signal_raw_frame = pyqtSignal(object)  # AnalysisResult
+    signal_raw_frame = pyqtSignal(object)  # RawFrame
 
     # 拟合结果 — 用于测量面板 + MiniChart
     signal_fitted = pyqtSignal(object)     # FittedSnapshot
@@ -49,7 +49,7 @@ class UIBridge(QObject):
         self._event_bus = event_bus
 
         # 订阅两个 topic
-        self._raw_queue = event_bus.subscribe("frame.measured")
+        self._raw_queue = event_bus.subscribe("frame.raw")
         self._fitted_queue = event_bus.subscribe("frame.fitted")
 
         # 统计

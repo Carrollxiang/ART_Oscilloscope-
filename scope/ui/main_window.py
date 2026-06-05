@@ -14,7 +14,8 @@ from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem
 
-from scope.model import AnalysisResult
+from scope.model import RawFrame
+from scope.runtime import FittedSnapshot
 from scope.io import FeedbackManager
 from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
@@ -157,59 +158,43 @@ class MainWindow(QMainWindow):
         ui_bridge.signal_raw_frame.connect(self._on_ui_raw_frame)
         ui_bridge.signal_fitted.connect(self._on_ui_fitted)
 
-    def _on_ui_raw_frame(self, result: AnalysisResult):
+    def _on_ui_raw_frame(self, frame: RawFrame):
         """原始帧更新 → 主波形。"""
         try:
-            for ch_name, ch_data in result.channels.items():
-                ch_idx = int(ch_name.replace("CH", "")) - 1
-                visible = self.waveform.is_channel_visible(ch_idx)
-                color = self.channel_panel.get_channel_color(ch_idx)
-
+            t = frame.time_axis()
+            for ch in range(frame.n_channels):
+                visible = self.waveform.is_channel_visible(ch)
+                color = self.channel_panel.get_channel_color(ch)
                 self.waveform.update_waveform(
-                    ch=ch_idx,
-                    time_axis=ch_data.time_axis,
-                    data=ch_data.raw,
+                    ch=ch,
+                    time_axis=t,
+                    data=frame.data[ch],
                     enabled=visible,
                     color=color,
                 )
+            self._update_status_bar(frame)
+        except Exception as e:
+            logger.error(f"原始帧更新异常: {e}", exc_info=True)
 
-            # 触发标记
-            self.waveform.set_trigger_position(
-                result.trigger.trigger_position
-            )
-
-            # 状态栏
-            self._update_status_bar(result)
-
-        fitted_snapshot: FittedSnapshot 实例
-        """
+    def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
+        """拟合结果更新 → 测量面板 + MiniChart。"""
         try:
-            # 测量面板
             if hasattr(self, 'measure_panel'):
                 self.measure_panel.update_from_fitted(fitted_snapshot)
 
-            # MiniChart
             flat = fitted_snapshot.as_flat_dict()
-            if flat:
-                if hasattr(self, 'mini_chart'):
-                    self.mini_chart.add_data(flat)
+            if flat and hasattr(self, 'mini_chart'):
+                self.mini_chart.add_data(flat)
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
 
-    def _update_status_bar(self, result: Optional[AnalysisResult] = None):
+    def _update_status_bar(self, frame: RawFrame = None):
         """更新底部信息条"""
-        if result:
-            # 取第一个通道的采样率
-            sample_rate = "—"
-            for ch_data in result.channels.values():
-                sample_rate = self._format_sample_rate(ch_data.sample_rate)
-                break
+        if frame:
+            sample_rate = self._format_sample_rate(frame.sample_rate)
             self.statusSampling.setText(f"采样率: {sample_rate}")
-            self.statusFrames.setText(f"帧 #: {result.sequence_num}")
-            self.statusTrigger.setText(
-                f"触发: {result.trigger.trigger_type}"
-                f" @ {result.trigger.trigger_level:.2f}V"
-            )
+            self.statusFrames.setText(f"帧 #: {frame.sequence_num}")
+            self.statusTrigger.setText(f"触发: {frame.n_channels}ch")
 
         # 反馈状态
         running, paused, total = self.feedback_panel.get_active_count()

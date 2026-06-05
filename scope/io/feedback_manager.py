@@ -7,7 +7,7 @@ FeedbackManager — 反馈调度器核心
   3. 保持运行时动态操作的能力 (add/remove/reconfigure 不阻塞采集)
 
 关键设计:
-  - dispatch() 并发执行所有 active slot 的 on_data()
+  - dispatch_raw() 并发执行所有 active slot 的 on_data()
   - 单个 slot 的失败不影响其他 slot
   - add/remove 操作线程安全, 可在 dispatch 间隙调用
 """
@@ -16,12 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
-from scope.model import AnalysisResult
 from scope.model.enums import SlotStatus
-from scope.runtime import MeasurementSnapshot
 from .feedback_slots.base import (
     FeedbackSlot,
     SlotConfig,
@@ -157,14 +154,13 @@ class FeedbackManager:
             for s in self._slots.values()
         ]
 
-    # ── v0.4: dispatch_raw (从扁平 dict 分发) ──────────────
+    # ── 核心: 数据分发 ─────────────────────────────────────────
 
     async def dispatch_raw(self, measurements: dict[str, float]):
         """
-        将扁平测量字典分发给所有活跃 slot（v0.4 新路径）。
+        将扁平测量字典分发给所有活跃 slot。
 
-        measurements 来自 FittedSnapshot.as_flat_dict()，包含
-        channel_measurements + event_measurements 的合并结果。
+        measurements 来自 FittedSnapshot.as_flat_dict()。
         """
         if not self._slots:
             return
@@ -222,80 +218,7 @@ class FeedbackManager:
         else:
             return measurements.get(key)
 
-    # ── 核心: 数据分发 ─────────────────────────────────────────
-
-    async def dispatch(self, result: Union[AnalysisResult, MeasurementSnapshot]):
-        """
-        将一次采集结果分发给所有活跃 slot。
-
-        每个 slot 只收到它订阅的数据项。
-        全部 slot 并发发送, 互不阻塞。
-        """
-        if not self._slots:
-            return
-
-        # 快照当前 slot 列表 (避免迭代中增删问题)
-        active_slots = [
-            s for s in list(self._slots.values())
-            if s.status == SlotStatus.RUNNING
-        ]
-        if not active_slots:
-            return
-
-        tasks = []
-        for slot in active_slots:
-            payload = self._build_payload(result, slot._config.subscriptions)
-            if payload:
-                tasks.append(self._safe_on_data(slot, payload))
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
     # ── 内部方法 ───────────────────────────────────────────────
-
-    def _build_payload(
-        self,
-        result: Union[AnalysisResult, MeasurementSnapshot],
-        subscriptions: list[DataSubscription],
-    ) -> dict[str, Any]:
-        """
-        根据订阅列表从数据源中提取数据。
-
-        按 remote_key 组织, 每个 key 对应一个 float 值。
-        """
-        payload: dict[str, Any] = {}
-        for sub in subscriptions:
-            value = self._resolve_value(result, sub.local_key)
-            if value is not None:
-                # 应用缩放和偏移
-                scaled = value * sub.scale + sub.offset
-                payload[sub.remote_key] = scaled
-        return payload
-
-    def _resolve_value(
-        self, result: Union[AnalysisResult, MeasurementSnapshot], key: str
-    ) -> Optional[float]:
-        """
-        从 AnalysisResult 或 MeasurementSnapshot 中解析单个测量值。
-
-        支持 key 格式:
-          - "CH1_Vpp"       → result.measurements["CH1_Vpp"]
-          - "CH1_Freq"      → result.measurements["CH1_Freq"]
-          - "sequence_num"  → result.sequence_num (元信息)
-        """
-        # v0.4: 优先走 MeasurementSnapshot
-        if isinstance(result, MeasurementSnapshot):
-            return result.get(key)
-
-        # 兼容旧路径: AnalysisResult.measurements
-        if key in result.measurements:
-            return result.measurements[key]
-
-        # 元信息
-        if key == "sequence_num":
-            return float(result.sequence_num)
-
-        return None
 
     async def _safe_start(self, slot: FeedbackSlot):
         """安全启动, 捕获异常"""

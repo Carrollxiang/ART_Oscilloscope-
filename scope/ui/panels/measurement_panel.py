@@ -7,13 +7,15 @@
 - 每行限定时间段 (起始～结束), 只计算该段内的测量值
 - 不同行可对同一通道的不同时间段测量不同物理量
 - 每行有独立名称用于标识和反馈订阅
+
+注意: 测量计算由 MeasurementProcessor 完成，本面板只负责:
+  1. 配置 UI
+  2. 从 FittedSnapshot 显示结果
 """
 
 from __future__ import annotations
 
-import collections
 import logging
-import threading
 from typing import Optional
 
 import numpy as np
@@ -30,8 +32,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
 )
 
-from scope.model import AnalysisResult
-from scope.processing.measurements import MEASUREMENT_FUNCTIONS
+from scope.runtime import FittedSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,6 @@ class MeasurementRow(QWidget):
         self._meas_key = meas_key
         self._on_remove = on_remove
         self._frame_duration = frame_duration
-        self._value_buffer = collections.deque(maxlen=200)  # ~100s @ 2 Hz
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 3, 0, 3)
@@ -156,82 +156,23 @@ class MeasurementRow(QWidget):
     def get_meas_key(self) -> str:
         return self.meas_combo.currentData()
 
+    def get_channel_index(self) -> int:
+        """返回 0-based 通道索引"""
+        return self.channel_combo.currentIndex()
+
     def get_start_time(self) -> float:
         return self.start_spin.value()
 
     def get_end_time(self) -> float:
         return self.end_spin.value()
 
-    # ── 计算值 ─────────────────────────────────────────────────
+    # ── 显示值 ─────────────────────────────────────────────────
 
-    def compute_value(self, result: AnalysisResult) -> Optional[float]:
-        """
-        从 AnalysisResult 中提取通道数据, 按时间窗口切片, 计算测量值。
-        """
-        ch_name = self.get_channel()
-        ch_data = result.channels.get(ch_name)
-        if ch_data is None:
-            return None
-
-        data = ch_data.raw
-        time_axis = ch_data.time_axis
-        fs = ch_data.sample_rate
-        meas_key = self.get_meas_key()
-
-        # 时间窗口 (ms → s) → 样本范围
-        start_t = self.get_start_time() / 1000.0
-        end_t = self.get_end_time() / 1000.0
-        if end_t <= start_t:
-            return None
-
-        # 找到对应样本索引
-        idx_start = int(start_t * fs)
-        idx_end = int(end_t * fs)
-        idx_start = max(0, idx_start)
-        idx_end = min(len(data), idx_end)
-
-        if idx_end - idx_start < 2:
-            return None
-
-        segment = data[idx_start:idx_end]
-
-        # 调用测量函数
-        func = MEASUREMENT_FUNCTIONS.get(meas_key)
-        if func is None:
-            return None
-
-        return func(segment, fs)
-
-    def update_display_value(self, value: Optional[float]):
-        """用已算好的值直接更新显示（无需再次计算）。"""
+    def set_value(self, value: Optional[float]):
+        """用已算好的值直接更新显示。从 FittedSnapshot 获取。"""
         unit = self._unit_of(self.get_meas_key())
         if value is not None and not np.isnan(value):
-            self._value_buffer.append(value)
-            if len(self._value_buffer) >= 5:
-                vals = np.array(list(self._value_buffer))
-                std = np.std(vals)
-                self.value_label.setText(
-                    f"{self._fmt(value)}  ±{self._fmt(std)} {unit}"
-                )
-            else:
-                self.value_label.setText(f"{self._fmt(value)} {unit}")
-        else:
-            self.value_label.setText(f"— {unit}")
-
-    def update_value(self, result: AnalysisResult):
-        """用一帧数据计算并显示当前值 ± 标准差"""
-        value = self.compute_value(result)
-        unit = self._unit_of(self.get_meas_key())
-        if value is not None and not np.isnan(value):
-            self._value_buffer.append(value)
-            if len(self._value_buffer) >= 5:
-                vals = np.array(list(self._value_buffer))
-                std = np.std(vals)
-                self.value_label.setText(
-                    f"{self._fmt(value)}  ±{self._fmt(std)} {unit}"
-                )
-            else:
-                self.value_label.setText(f"{self._fmt(value)} {unit}")
+            self.value_label.setText(f"{self._fmt(value)} {unit}")
         else:
             self.value_label.setText(f"— {unit}")
 
@@ -254,21 +195,19 @@ class MeasurementPanel:
     动态测量面板控制器。
 
     每行: 名称 + 通道 + 测量项 + 起始时间 + 结束时间 → 值
+
+    注意: 本面板不执行计算，只显示 MeasurementProcessor 的结果。
     """
 
     def __init__(self, parent_widget: QWidget):
         self._parent = parent_widget
         self._rows: list[MeasurementRow] = []
-        self._last_result: Optional[AnalysisResult] = None
-        self._spec_lock = threading.Lock()
-        self._spec_cache: list[dict] = []
         self._setup_ui()
 
-        # 默认行 (500ms 帧)
-        self.add_row(name="CH1 幅值", meas_key="Vpp", end_time=500)
-        self.add_row(name="CH1 频率", meas_key="Freq", end_time=500)
-        self.add_row(name="CH2 幅值", channel="CH2", meas_key="Vpp", end_time=500)
-        self._refresh_spec_cache()
+        # 默认行
+        self.add_row(name="CH1_vpp", channel="CH1", meas_key="Vpp", end_time=500)
+        self.add_row(name="CH1_vrms", channel="CH1", meas_key="Vrms", end_time=500)
+        self.add_row(name="CH2_vpp", channel="CH2", meas_key="Vpp", end_time=500)
 
     def _setup_ui(self):
         # 获取或创建布局, 清空子控件
@@ -315,29 +254,16 @@ class MeasurementPanel:
     def add_row(self, name: str = "", channel: str = "CH1",
                 meas_key: str = "Vpp",
                 start_time: float = 0.0, end_time: float = 500.0):
-        frame_dur = 500.0
-        if self._last_result:
-            ch = self._last_result.channels.get(channel)
-            if ch:
-                frame_dur = ch.time_axis[-1] * 1000 if len(ch.time_axis) > 0 else 500.0
-
         row = MeasurementRow(
             name=name, channel=channel, meas_key=meas_key,
-            start_time=start_time, end_time=end_time or frame_dur,
-            frame_duration=frame_dur,
+            start_time=start_time, end_time=end_time,
+            frame_duration=500.0,
             on_remove=self._on_remove,
         )
         self._rows.append(row)
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
-        # 任何参数变化都刷新“纯 Python 规格缓存”，供非 UI 线程安全读取
-        row.name_edit.editingFinished.connect(self._refresh_spec_cache)
-        row.channel_combo.currentTextChanged.connect(lambda _: self._refresh_spec_cache())
-        row.meas_combo.currentIndexChanged.connect(lambda _: self._refresh_spec_cache())
-        row.start_spin.valueChanged.connect(lambda _: self._refresh_spec_cache())
-        row.end_spin.valueChanged.connect(lambda _: self._refresh_spec_cache())
-        self._refresh_spec_cache()
         return row
 
     def _on_add(self):
@@ -348,104 +274,30 @@ class MeasurementPanel:
             self._rows.remove(row)
             self._container_layout.removeWidget(row)
             row.deleteLater()
-            self._refresh_spec_cache()
 
-    def _refresh_spec_cache(self):
-        """在 UI 线程刷新测量规格快照，供采集线程读取。"""
-        specs = []
-        for row in self._rows:
-            specs.append(
-                {
-                    "name": row.get_name(),
-                    "channel": row.get_channel(),
-                    "meas_key": row.get_meas_key(),
-                    "start": row.get_start_time(),
-                    "end": row.get_end_time(),
-                }
-            )
-        with self._spec_lock:
-            self._spec_cache = specs
-
-    def _snapshot_specs(self) -> list[dict]:
-        with self._spec_lock:
-            return list(self._spec_cache)
-
-    @staticmethod
-    def _compute_from_spec(result: AnalysisResult, spec: dict) -> Optional[float]:
-        """纯计算版本：按缓存规格从 AnalysisResult 计算单个窗口测量值。"""
-        ch_name = spec["channel"]
-        ch_data = result.channels.get(ch_name)
-        if ch_data is None:
-            return None
-
-        data = ch_data.raw
-        fs = ch_data.sample_rate
-        meas_key = spec["meas_key"]
-
-        start_t = float(spec["start"]) / 1000.0
-        end_t = float(spec["end"]) / 1000.0
-        if end_t <= start_t:
-            return None
-
-        idx_start = max(0, int(start_t * fs))
-        idx_end = min(len(data), int(end_t * fs))
-        if idx_end - idx_start < 2:
-            return None
-
-        func = MEASUREMENT_FUNCTIONS.get(meas_key)
-        if func is None:
-            return None
-        segment = data[idx_start:idx_end]
-        return func(segment, fs)
-
-    def compute_event_measurements(self, result: AnalysisResult) -> dict[str, float]:
-        """
-        线程安全：基于 UI 线程缓存的规格计算事件窗口测量值。
-        返回: {tag/name: value}
-        """
-        out: dict[str, float] = {}
-        for spec in self._snapshot_specs():
-            value = self._compute_from_spec(result, spec)
-            if value is not None and not np.isnan(value):
-                out[spec["name"]] = float(value)
-        return out
-
-    def update_from_fitted(self, fitted_snapshot):
-        """用 FittedSnapshot 更新所有行的显示值。"""
-        self._last_fitted = fitted_snapshot
-        for row in self._rows:
-            tag = row.get_name()
-            # 优先查 event_measurements (事件窗口值)
-            value = fitted_snapshot.event_measurements.get(tag)
-            if value is None:
-                # 回退: 用 channel + meas_key 组合在 channel_measurements 中查找
-                ch_key = f"{row.get_channel()}_{row.get_meas_key()}"
-                value = fitted_snapshot.channel_measurements.get(ch_key)
-            row.update_display_value(value)
-
-    def update_from_result(self, result: AnalysisResult):
-        """[遗留] 用最新一帧 AnalysisResult 更新所有行, 并把窗口化值写入 result.measurements。"""
-        self._last_result = result
-        for row in self._rows:
-            row.update_value(result)
-            # 把每行的窗口化值以标签名为 key 写入 result.measurements
-            tag = row.get_name()
-            value = row.compute_value(result)
-            if value is not None:
-                result.measurements[tag] = value
-
-    def get_subscriptions(self) -> list[dict]:
-        """返回订阅信息, 供 FeedbackPanel 使用"""
+    def get_measurement_specs(self) -> list[dict]:
+        """返回测量规格列表，供 MeasurementProcessor 使用"""
         return [
             {
-                "name": row.get_name(),
-                "channel": row.get_channel(),
-                "meas_key": row.get_meas_key(),
-                "start": row.get_start_time(),
-                "end": row.get_end_time(),
+                "tag": row.get_name(),
+                "channel": row.get_channel_index(),
+                "feature": row.get_meas_key(),
+                "start_ms": row.get_start_time(),
+                "end_ms": row.get_end_time(),
             }
             for row in self._rows
         ]
+
+    def update_from_fitted(self, snap: FittedSnapshot):
+        """用 FittedSnapshot 更新所有行的显示值。"""
+        for row in self._rows:
+            tag = row.get_name()
+            value = snap.get(tag)
+            row.set_value(value)
+
+    def get_subscriptions(self) -> list[dict]:
+        """返回订阅信息, 供 FeedbackPanel 使用"""
+        return self.get_measurement_specs()
 
     def clear_all(self):
         for row in list(self._rows):
