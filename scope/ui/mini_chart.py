@@ -206,7 +206,9 @@ class MiniChartWidget(QWidget):
         self._data.remove(key)
         
         if key in self._curves:
-            self._curves[key].clear()
+            curve = self._curves[key]
+            self._legend.removeItem(curve)
+            curve.clear()
             del self._curves[key]
         
         if key in self._visible:

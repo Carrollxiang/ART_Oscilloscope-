@@ -264,7 +264,7 @@ class DevicePanel(QWidget):
             "trigger_level": self.spinTrigLevel.value(),
         }
 
-    def get_config(self) -> DeviceConfig:
+    def get_config(self) -> dict:
         rate = self.spinSampleRate.value()
         samples = int(rate * self.spinDuration.value())
         # 从 ai_channels 解析实际通道数
@@ -280,11 +280,11 @@ class DevicePanel(QWidget):
                 n_ch = 4
         else:
             n_ch = 4
-        return DeviceConfig(
-            sample_rate=rate,
-            record_length=max(samples, 10),
-            channels_enabled=list(range(n_ch)),
-        )
+        return {
+            "sample_rate": rate,
+            "record_length": max(samples, 10),
+            "channels_enabled": list(range(n_ch)),
+        }
 
     def load_params(self, params: dict):
         """从现有设备参数回填。"""
