@@ -189,3 +189,30 @@ class ChannelPanel(QWidget):
             min_vals.append(ctrl["min_val"].value())
             max_vals.append(ctrl["max_val"].value())
         return min_vals, max_vals
+
+    def get_config(self) -> list[dict]:
+        """导出通道配置"""
+        config = []
+        for ch in range(self._channel_count):
+            ctrl = self._controls[ch]
+            config.append({
+                "channel": ch,
+                "enabled": ctrl["enable"].isChecked(),
+                "min_v": ctrl["min_val"].value(),
+                "max_v": ctrl["max_val"].value(),
+            })
+        return config
+
+    def set_config(self, config: list[dict]):
+        """恢复通道配置"""
+        for item in config:
+            ch = item.get("channel", 0)
+            if 0 <= ch < self._channel_count:
+                ctrl = self._controls[ch]
+                if "enabled" in item:
+                    ctrl["enable"].setChecked(item["enabled"])
+                if "min_v" in item:
+                    ctrl["min_val"].setValue(item["min_v"])
+                if "max_v" in item:
+                    ctrl["max_val"].setValue(item["max_v"])
+        return min_vals, max_vals

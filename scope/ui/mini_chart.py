@@ -65,6 +65,13 @@ class MiniChartData:
     def color(self, key: str) -> QColor:
         return self._colors.get(key, QColor("#888"))
 
+    def remove(self, key: str):
+        """删除单个 key 的数据"""
+        if key in self._buf:
+            del self._buf[key]
+        if key in self._colors:
+            del self._colors[key]
+
     @property
     def count(self):
         return self._count
@@ -193,6 +200,19 @@ class MiniChartWidget(QWidget):
     def refresh_now(self):
         """触发驱动刷新：由主显示在每帧数据到达时调用。"""
         self._refresh()
+
+    def remove_key(self, key: str):
+        """删除单个测量项的曲线"""
+        self._data.remove(key)
+        
+        if key in self._curves:
+            self._curves[key].clear()
+            del self._curves[key]
+        
+        if key in self._visible:
+            del self._visible[key]
+        
+        self._dirty = True
 
     def clear_all(self):
         self._data = MiniChartData()

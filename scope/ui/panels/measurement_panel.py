@@ -191,9 +191,10 @@ class MeasurementPanel:
     注意: 本面板不执行计算，只显示 MeasurementProcessor 的结果。
     """
 
-    def __init__(self, parent_widget: QWidget):
+    def __init__(self, parent_widget: QWidget, event_bus=None):
         self._parent = parent_widget
         self._rows: list[MeasurementRow] = []
+        self._event_bus = event_bus
         self._setup_ui()
 
         # 默认行
@@ -263,9 +264,13 @@ class MeasurementPanel:
 
     def _on_remove(self, row: MeasurementRow):
         if row in self._rows:
+            tag = row.get_name()
             self._rows.remove(row)
             self._container_layout.removeWidget(row)
             row.deleteLater()
+            
+            if self._event_bus:
+                self._event_bus.publish("measurement.remove", tag)
 
     def get_measurement_specs(self) -> list[dict]:
         """返回测量规格列表，供 MeasurementProcessor 使用"""
@@ -294,3 +299,16 @@ class MeasurementPanel:
     def clear_all(self):
         for row in list(self._rows):
             self._on_remove(row)
+
+    def set_config(self, config: list[dict]):
+        """恢复测量配置（清空重建）"""
+        self.clear_all()
+        
+        for item in config:
+            self.add_row(
+                name=item.get("tag", ""),
+                channel=f"CH{item.get('channel', 0) + 1}",
+                meas_key=item.get("feature", "Vpp"),
+                start_time=item.get("start_ms", 0.0),
+                end_time=item.get("end_ms", 500.0),
+            )

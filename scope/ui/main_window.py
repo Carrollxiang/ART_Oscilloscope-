@@ -47,9 +47,10 @@ class MainWindow(QMainWindow):
     art_config_applied = pyqtSignal(dict, object)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
-                 async_loop=None):
+                 async_loop=None, event_bus=None):
         super().__init__()
         self._async_loop = async_loop
+        self._event_bus = event_bus
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
@@ -96,7 +97,7 @@ class MainWindow(QMainWindow):
         self.device_panel.config_applied.connect(self._on_device_config)
 
         # ── 测量面板 (动态行) ──
-        self.measure_panel = MeasurementPanel(self.tabMeasurements)
+        self.measure_panel = MeasurementPanel(self.tabMeasurements, event_bus=event_bus)
 
         # ── 反馈面板 ──
         self._feedback_mgr = feedback_manager or FeedbackManager()
@@ -113,6 +114,13 @@ class MainWindow(QMainWindow):
 
         # ── 信号连接 ──
         self._connect_actions()
+
+        # 订阅测量项删除事件
+        if self._event_bus:
+            self._measurement_remove_queue = self._event_bus.subscribe("measurement.remove")
+            self._measurement_remove_timer = QTimer()
+            self._measurement_remove_timer.timeout.connect(self._poll_measurement_remove)
+            self._measurement_remove_timer.start(100)
 
         logger.info("MainWindow 初始化完成")
 
@@ -190,6 +198,18 @@ class MainWindow(QMainWindow):
                     logger.debug(f"MiniChart updated: {len(flat)} items, seq={fitted_snapshot.sequence_num}")
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
+
+    def _poll_measurement_remove(self):
+        """轮询测量项删除事件并清理 MiniChart"""
+        if not hasattr(self, '_measurement_remove_queue'):
+            return
+        
+        tag = self._measurement_remove_queue.get_nowait()
+        while tag is not None:
+            if hasattr(self, 'mini_chart'):
+                self.mini_chart.remove_key(tag)
+                logger.debug(f"MiniChart 已删除测量项: {tag}")
+            tag = self._measurement_remove_queue.get_nowait()
 
     def _update_status_bar(self, frame: RawFrame = None):
         """更新底部信息条"""

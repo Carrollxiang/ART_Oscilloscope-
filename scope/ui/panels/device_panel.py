@@ -308,3 +308,7 @@ class DevicePanel(QWidget):
             self.editTrigSrc.setText(src)
         else:
             self.chkTrig.setChecked(False)
+
+    def set_config(self, params: dict):
+        """恢复设备配置（load_params 的别名，用于 ConfigManager）"""
+        self.load_params(params)

@@ -70,6 +70,7 @@ class ScopeApp:
         self._event_bus.register_topic("frame.raw", maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
         self._event_bus.register_topic("frame.fitted", maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
         self._event_bus.register_topic("config.change", maxsize=8, on_drop=DropStrategy.BLOCK)
+        self._event_bus.register_topic("measurement.remove", maxsize=8, on_drop=DropStrategy.BLOCK)
 
         # MeasurementProcessor — 独立线程运行测量计算
         self._processor = MeasurementProcessor(self._event_bus, specs=[])
@@ -161,7 +162,8 @@ class ScopeApp:
         # 2. 创建主窗口
         self.main_win = MainWindow(
             feedback_manager=self.feedback_mgr,
-            async_loop=self._async_loop
+            async_loop=self._async_loop,
+            event_bus=self._event_bus
         )
         self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()

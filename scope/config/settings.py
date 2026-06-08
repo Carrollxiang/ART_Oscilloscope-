@@ -78,6 +78,10 @@ class ConfigManager:
             if 'device' in config and hasattr(main_window, 'device_panel'):
                 main_window.device_panel.set_config(config['device'])
 
+            # 加载测量配置
+            if 'measurements' in config and hasattr(main_window, 'measure_panel'):
+                main_window.measure_panel.set_config(config['measurements'])
+
             logger.info(f"配置已从 {filepath} 加载")
             return True
 
