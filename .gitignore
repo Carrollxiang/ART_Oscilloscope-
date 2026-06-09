@@ -36,3 +36,9 @@ test_hardware.py
 # Temporary files
 *.tmp
 1.24
+
+# bat
+*.bat
+
+# Hardware interface modules (in development)
+rtmq/
