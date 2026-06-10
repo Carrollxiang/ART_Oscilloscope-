@@ -9,7 +9,7 @@
   - ArtDevice: 硬件触发 → DONE 回调 → _on_frame
   - SimulatorDevice: 内部线程模拟触发 → _on_frame
   - 两者接口一致，上层代码无需区分
-  - _on_frame → EventBus → MeasurementProcessor / UIBridge / FeedbackWorker
+  - _on_frame → EventBus → MeasurementProcessor / UIBridge / FeedbackManager
 """
 
 import argparse
@@ -27,7 +27,6 @@ from scope.io import FeedbackManager
 from scope.ui import MainWindow
 from scope.runtime import EventBus, DropStrategy, MeasurementProcessor, MeasurementSpec
 from scope.ui.ui_bridge import UIBridge
-from scope.io.feedback_worker import FeedbackWorker
 from scope.runtime.config_worker import ConfigWorker
 
 logging.basicConfig(
@@ -49,7 +48,6 @@ class ScopeApp:
 
     def __init__(self, mock: bool = False):
         self._mock = mock
-        self.feedback_mgr = FeedbackManager()
         self.main_win: MainWindow = None
         self._running = False
         self._device_type = "unknown"
@@ -75,8 +73,9 @@ class ScopeApp:
         # MeasurementProcessor — 独立线程运行测量计算
         self._processor = MeasurementProcessor(self._event_bus, specs=[])
 
-        # FeedbackWorker — asyncio 消费 frame.fitted
-        self._feedback_worker = FeedbackWorker(self._event_bus, self.feedback_mgr)
+        # FeedbackManager — 内部持有 EventBus 订阅和分发协程
+        # (Worker 通过 add_worker 添加)
+        self.feedback_mgr = FeedbackManager(event_bus=self._event_bus)
 
         # ConfigWorker — asyncio 消费 config.change
         self._config_worker = ConfigWorker(
@@ -336,7 +335,7 @@ class ScopeApp:
     def _async_worker(self):
         """在独立线程中运行 asyncio loop"""
         asyncio.set_event_loop(self._async_loop)
-        self._async_loop.create_task(self._feedback_worker.run())
+        self._async_loop.create_task(self.feedback_mgr.start())
         self._async_loop.create_task(self._config_worker.run())
         self._async_loop.run_forever()
 

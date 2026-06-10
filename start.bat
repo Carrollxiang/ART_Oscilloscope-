@@ -2,7 +2,7 @@
 chcp 65001 > nul
 title Digital Oscilloscope
 
-.venv\python.exe main.py
+.venv\Scripts\python.exe main.py
 
 if errorlevel 1 (
     echo.

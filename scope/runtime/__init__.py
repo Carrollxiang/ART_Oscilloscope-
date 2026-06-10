@@ -7,7 +7,10 @@ runtime — 运行时基础设施 (v0.4)
   - FittedSnapshot: MeasurementProcessor 产出数据包
   - MeasurementSpec: 测量规格 (纯配置)
   - MeasurementProcessor: 测量处理器
+  - MeasurementSpec: 测量规格 (纯配置)
+  - MeasurementProcessor: 测量处理器
   - ConfigChange: 硬件配置变更指令
+  - PidController / PidConfig: PID 控制器
 """
 
 from .event_bus import BoundedQueue, DropStrategy, QueueStats, EventBus, TopicConfig
@@ -15,6 +18,7 @@ from .fitted_snapshot import FittedSnapshot
 from .measurement_spec import MeasurementSpec
 from .measurement_processor import MeasurementProcessor
 from .config_change import ConfigChange
+from .pid_controller import PidConfig, PidController
 
 __all__ = [
     "BoundedQueue",
@@ -26,4 +30,6 @@ __all__ = [
     "MeasurementSpec",
     "MeasurementProcessor",
     "ConfigChange",
+    "PidConfig",
+    "PidController",
 ]

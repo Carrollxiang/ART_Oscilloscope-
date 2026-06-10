@@ -1,6 +1,6 @@
-# TODO — EventBus v0.4 重构状态
+# TODO — EventBus v0.4 重构状态 + 反馈系统 v0.6
 
-> 更新于 Phase 1~5 代码实施完成后。见 docs/EVENTBUS_SPEC.md 架构设计。
+> 更新于 Phase 1~6 代码实施完成后。见 docs/EVENTBUS_SPEC.md 架构设计。
 
 ## ✅ 已完成 — EventBus 数据路由重构
 
@@ -49,3 +49,39 @@
 - [ ] 修改测量类型/时间参数流畅
 - [ ] 保存配置无明显卡顿
 - [ ] 同一订阅项在测量面板与反馈面板读数一致
+
+---
+
+## ✅ 已完成 — 反馈系统 v0.6 重构
+
+### 核心变更
+
+| 变更 | v0.5 (旧) | v0.6 (新) |
+|------|-----------|-----------|
+| 反馈单元 | `FeedbackSlot` 基类 | `FeedbackWorker` 独立单元 |
+| PID 封装 | 在 Slot 内部 | **独立 `PidController`** (`scope/runtime/pid_controller.py`) |
+| EventBus 订阅 | 每个 Slot 各自订阅 | **唯一订阅** (Manager 持有) |
+| `as_flat_dict()` | N 次/帧 | **1 次/帧** |
+| 数据分发 | `dispatch_raw()` + `DataSubscription` | Worker 直接按 `measurement_key` 取值 |
+
+### 新增文件
+- `scope/runtime/pid_controller.py` — PidConfig + PidController (11 测试)
+- `tests/test_pid_controller.py`
+- `tests/test_feedback_worker.py` (15 测试)
+- `tests/test_feedback_manager.py` (16 测试)
+
+### 重写文件
+- `scope/io/feedback_worker.py`
+- `scope/io/feedback_manager.py`
+
+### 删除文件
+- `scope/io/feedback_slots/` (base.py, null_slot.py, __init__.py)
+- `tests/test_feedback_slots.py`
+
+### 测试覆盖
+- **76/76 测试通过** (42 个新反馈测试 + 34 个旧测试，零回归)
+
+### 待完成
+- [ ] **FeedbackDialog 升级** — 从占位 QMessageBox 升级为真正的配置表单，调用 `feedback_manager.add_worker()`
+- [ ] **FeedbackPanel.refresh_slots()** — 实现 UI 刷新显示 worker 列表
+- [ ] Mock 模式完整测试（添加 worker、暂停/恢复、配置保存/加载）

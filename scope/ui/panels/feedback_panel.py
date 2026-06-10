@@ -97,22 +97,18 @@ class FeedbackPanel(QWidget):
 
     def _on_add(self):
         """添加新反馈插槽"""
-        self.add_feedback_requested.emit()
-        # TODO: 打开 FeedbackDialog 配置新插槽
+        dlg = FeedbackDialog(self)
+        dlg.exec()
 
-    def get_active_count(self) -> tuple[int, int, int]:
-        """返回 (running, paused, total)"""
+    def get_active_count(self) -> tuple[int, int]:
+        """返回 (running_count, total_count)"""
         if not self._feedback_mgr:
-            return 0, 0, 0
-
-        slots = self._feedback_mgr.list_slots()
-        running = sum(1 for s in slots if s.status == SlotStatus.RUNNING)
-        paused = sum(1 for s in slots if s.status == SlotStatus.PAUSED)
-        return running, paused, len(slots)
+            return 0, 0
+        return self._feedback_mgr.get_active_count()
 
     def refresh_slots(self):
-        """刷新插槽列表显示"""
-        # TODO: 根据 feedback_manager.list_slots() 更新 UI
+        """刷新 worker 列表显示"""
+        # TODO: 根据 feedback_manager.list_workers() 更新 UI
         pass
 
 

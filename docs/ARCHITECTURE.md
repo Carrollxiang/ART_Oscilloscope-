@@ -38,10 +38,16 @@
                             │ Qt Signal (UIBridge)
 ┌───────────────────────────▼──────────────────────────────────────────┐
 │                      运行时层 (EventBus)                             │
-│  ┌──────────────────────┐  ┌──────────────────────┐                 │
-│  │  MeasurementProcessor │  │  FeedbackWorker      │                 │
-│  │  (独立线程, CPU密集)   │  │  (asyncio, 网络 I/O) │                 │
-│  └──────────────────────┘  └──────────────────────┘                 │
+│  ┌──────────────────────┐  ┌───────────────────────────────┐        │
+│  │  MeasurementProcessor │  │  FeedbackManager               │        │
+│  │  (独立线程, CPU密集)   │  │  (asyncio, 唯一订阅+并发分发)  │        │
+│  │                       │  │  ┌─────────────────────────┐   │        │
+│  │                       │  │  │ FeedbackWorker_1        │   │        │
+│  │                       │  │  │ ├─ PidController        │   │        │
+│  │                       │  │  │ └─ target (v0.7)        │   │        │
+│  │                       │  │  ├─ FeedbackWorker_2 ...   │   │        │
+│  │                       │  │  └─ asyncio.gather()       │   │        │
+│  └──────────────────────┘  └───────────────────────────────┘        │
 │                                                                      │
 │  EventBus topics: frame.raw → frame.fitted                          │
 │  MeasurementSpec: 纯配置数据类 (tag, channel, start_ms, feature)   │
@@ -283,10 +289,10 @@ class FittedSnapshot:
     │     ├─ measure_panel.update_from_fitted() → 显示测量值
     │     └─ mini_chart.add_data() + refresh_now() → 更新趋势图
     │
-    └→ FeedbackWorker (asyncio)
-          └─ snapshot.as_flat_dict() → feedback_mgr.dispatch_raw()
+    └→ FeedbackManager._dispatch_loop() (asyncio)
+          └─ snapshot.as_flat_dict() → 并发分发
                   │
-                  └─ 并发执行所有 RUNNING 状态的 slot.on_data(payload)
+                  └─ asyncio.gather(worker.process(value) for each worker)
 ```
 
 **关键特性**:
@@ -415,89 +421,127 @@ class MeasurementProcessor:
 
 ---
 
-## 6. 反馈系统设计
+## 6. 反馈系统设计 (v0.6)
 
-### 6.1 数据流简化
+### 6.1 架构变更 (v0.5 → v0.6)
 
-**v0.3**:
+| 特性 | v0.5 (旧) | v0.6 (新) |
+|------|-----------|-----------|
+| 反馈单元 | `FeedbackSlot` (基类) | `FeedbackWorker` (独立单元) |
+| PID 封装 | 在 Slot 内部 | **独立 `PidController` 组件** |
+| EventBus 订阅 | 每个 Slot 各自订阅 | **唯一订阅** (FeedbackManager 持有) |
+| `as_flat_dict()` 调用 | N 次/帧 (每个 Slot) | **1 次/帧** (Manager 预过滤) |
+| 数据分发 | `dispatch_raw()` + `DataSubscription` | Worker 直接通过 `measurement_key` 获取值 |
+
+### 6.2 数据流
+
 ```
-AnalysisResult → _feedback_queue.put(MeasurementSnapshot)
-  → _feedback_consumer (asyncio)
-    → 重建 AnalysisResult (proxy)
-      → feedback_mgr.dispatch(result)
+FittedSnapshot (测量结果)
+  │
+  ↓
+EventBus (frame.fitted topic)
+  │
+  ↓
+**1 个共享订阅** → FeedbackManager._dispatch_loop()
+  │
+  ├─ snapshot.as_flat_dict()  ← 只调用 1 次
+  │
+  └─ 并发分发给所有 worker
+        │
+        ├─→ FeedbackWorker_1
+        │     ├─ 提取 "CH1_vpp" 值
+        │     ├─ PidController.step(value)
+        │     └─ 发送调整指令 (v0.7 实现)
+        │
+        ├─→ FeedbackWorker_2
+        │     └─ ...
+        │
+        └─→ asyncio.gather()  ← 并发执行
 ```
 
-**v0.5**:
+### 6.3 组件层次
+
 ```
-FittedSnapshot.as_flat_dict()
-  → FeedbackWorker (asyncio)
-    → feedback_mgr.dispatch_raw(measurements)  ✅ 直接传递字典
+┌─────────────────────────────────────────────────────────┐
+│              FeedbackManager (生命周期管理)             │
+│  - 持有唯一的 EventBus 订阅                             │
+│  - 管理 worker 生命周期                                 │
+│  - 并发分发数据                                         │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+        ┌───────────┼───────────┬─────────────┐
+        │           │           │             │
+        ↓           ↓           ↓             ↓
+  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │ Worker_1 │ │ Worker_2 │ │ Worker_3 │ │ Worker_N │
+  ├──────────┤ ├──────────┤ ├──────────┤ ├──────────┤
+  │PidControl│ │PidControl│ │PidControl│ │PidControl│
+  │  _errors │ │  _errors │ │  _errors │ │  _errors │
+  │  deque(10)│ │  deque(10)│ │  deque(10)│ │  deque(10)│
+  ├──────────┤ ├──────────┤ ├──────────┤ ├──────────┤
+  │Target:   │ │Target:   │ │Target:   │ │Target:   │
+  │ AD9910   │ │ RTMQ     │ │ Null     │ │ AD9910   │
+  └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
 
-### 6.2 FeedbackManager 核心接口
+### 6.4 核心组件
+
+**PidController** (`scope/runtime/pid_controller.py`):
+- 封装 PID 计算逻辑（P/I/D + 死区 + 积分限幅 + 输出限幅）
+- `deque(maxlen=window_size)` 自动丢弃旧误差
+- 独立组件，不依赖反馈系统
+
+**FeedbackWorker** (`scope/io/feedback_worker.py`):
+- 被动接收测量值（不订阅 EventBus）
+- 内部持有 `PidController`
+- 状态管理: `IDLE → RUNNING ↔ PAUSED`
+- `process(value)` 由 Manager 调用
+- v0.6 阶段 `_send_to_target()` 只记录日志（v0.7 实现）
+
+**FeedbackManager** (`scope/io/feedback_manager.py`):
+- 持有唯一 `frame.fitted` 订阅
+- `_dispatch_loop()` — asyncio 协程，提取数据后并发分发
+- Worker 管理: `add_worker / remove_worker / pause_worker / resume_worker`
+- 配置管理: `get_config() / load_config()` 支持 JSON 导入导出
+
+### 6.5 关键接口
 
 ```python
-class FeedbackManager:
-    """反馈调度器 — 管理 FeedbackSlot 的生命周期 + 数据分发"""
-    
-    async def dispatch_raw(self, measurements: dict[str, float]):
-        """
-        将扁平测量字典分发给所有活跃 slot。
-        
-        measurements 来自 FittedSnapshot.as_flat_dict()
-        """
-        active_slots = [s for s in self._slots.values() if s.status == SlotStatus.RUNNING]
-        
-        tasks = []
-        for slot in active_slots:
-            payload = self._build_payload_from_dict(measurements, slot._config.subscriptions)
-            if payload:
-                tasks.append(self._safe_on_data(slot, payload))
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-```
-
-### 6.3 数据订阅模型
-
-```python
+# 配置
 @dataclass
-class DataSubscription:
-    """数据订阅配置"""
-    local_key: str       # 本系统 key, 如 "CH1_vpp"
-    remote_key: str = "" # 远程仪器参数名 (为空则同 local_key)
-    scale: float = 1.0   # 缩放因子
-    offset: float = 0.0  # 偏移量
+class FeedbackConfig:
+    worker_id: str                    # 唯一标识符
+    measurement_key: str              # 如 "CH1_vpp"
+    pid_config: PidConfig             # PID 参数
+    target: Optional[TargetConfig]    # v0.7 预留
+
+# Worker 生命周期（由 Manager 调用）
+await worker.start()   # → RUNNING
+await worker.pause()   # → PAUSED
+await worker.resume()  # → RUNNING
+await worker.stop()    # → IDLE
+
+# Manager 核心接口
+class FeedbackManager:
+    async def add_worker(self, config: FeedbackConfig) -> str
+    async def remove_worker(self, worker_id: str)
+    async def pause_worker(self, worker_id: str)
+    async def resume_worker(self, worker_id: str)
+    async def load_config(self, config_list: list[dict])
+    def get_config(self) -> list[dict]
+    def list_workers(self) -> list[dict]
 ```
 
-**示例**:
-```python
-subscriptions = [
-    DataSubscription(local_key="CH1_vpp"),                    # 原样发送
-    DataSubscription(local_key="CH1_mean", remote_key="voltage_mv", scale=1000.0),  # V → mV
-]
-```
+### 6.6 性能对比
 
-### 6.4 Slot 状态管理
-
-```
-IDLE → start() → PAUSED (默认暂停, 连接池已创建)
-                ↓ resume()
-           RUNNING (正常发送)
-                ↓ pause() 或 连续 3 次错误
-           PAUSED (连接池保持, 不发送)
-                ↓ stop()
-           IDLE (连接池释放)
-```
-
-### 6.5 协议支持现状
-
-| 协议 | 状态 | 说明 |
+| 指标 | v0.5 | v0.6 |
 |------|------|------|
-| **rpyc** | ✅ 已实现 | PID 反馈 (AD9910 / RTMQ), 连接池复用 |
-| null | ✅ 已实现 | 调试用, 只打日志 |
-| UDP | 🔲 后续 | 标准库 socket |
-| 串口 | 🔲 后续 | pyserial |
+| EventBus 订阅数 | N 个 | **1 个** |
+| `as_flat_dict` 调用/帧 | N 次 | **1 次** |
+| Worker 隔离性 | ✅ | ✅ |
+| 目标设备接口 | 未统一 | **预留 AD9910/RTMQ** (v0.7) |
+
+---
 
 ---
 
@@ -582,7 +626,7 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | Topic | Payload 类型 | maxsize | drop 策略 | 生产者 | 消费者 |
 |-------|-------------|---------|-----------|--------|--------|
 | `frame.raw` | `RawFrame` | 2 | drop_oldest | `_on_frame()` | MeasurementProcessor, UIBridge |
-| `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | UIBridge, FeedbackWorker |
+| `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | **FeedbackManager**, UIBridge |
 | `config.change` | `ConfigChange` | 8 | block | UI 面板 | ConfigWorker |
 
 ### 8.2 线程边界
@@ -599,8 +643,8 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  asyncio 线程                                            │
-│    FeedbackWorker: queue.get() → dispatch()             │
-│    ConfigWorker:   queue.get() → _on_art_config()       │
+│    FeedbackManager._dispatch_loop(): queue → dispatch()  │
+│    ConfigWorker:              queue → _on_art_config()   │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  Qt 主线程                                               │
@@ -662,13 +706,15 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | 测试文件 | 测试数 | 通过率 |
 |----------|--------|--------|
 | `test_phase0.py` | 16 | ✅ 100% |
-| `test_feedback_slots.py` | 10 | ✅ 100% |
+| `test_pid_controller.py` | 11 | ✅ 100% |
+| `test_feedback_worker.py` | 15 | ✅ 100% |
+| `test_feedback_manager.py` | 16 | ✅ 100% |
 | `test_art_device.py` | 18 | ✅ 100% (部分需要硬件) |
-| **总计** | **44** | **✅ 100%** |
+| **总计** | **76** | **✅ 100%** |
 
 ---
 
-## 12. 未来扩展方向 (按需实现)
+## 12. 反馈系统扩展方向 (v0.7+)
 
 | 方向 | 优先级 | 说明 |
 |------|--------|------|

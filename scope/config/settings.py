@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -47,6 +48,10 @@ class ConfigManager:
             if hasattr(main_window, 'measure_panel'):
                 config['measurements'] = main_window.measure_panel.get_measurement_specs()
 
+            # 保存反馈配置
+            if hasattr(main_window, '_feedback_mgr'):
+                config['feedback_workers'] = main_window._feedback_mgr.get_config()
+
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
 
@@ -81,6 +86,15 @@ class ConfigManager:
             # 加载测量配置
             if 'measurements' in config and hasattr(main_window, 'measure_panel'):
                 main_window.measure_panel.set_config(config['measurements'])
+
+            # 加载反馈配置 (async: 通过 async loop 调度)
+            if 'feedback_workers' in config and hasattr(main_window, '_feedback_mgr'):
+                loop = getattr(main_window, '_async_loop', None)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        main_window._feedback_mgr.load_config(config['feedback_workers']),
+                        loop,
+                    )
 
             logger.info(f"配置已从 {filepath} 加载")
             return True

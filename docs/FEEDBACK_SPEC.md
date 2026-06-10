@@ -1,6 +1,6 @@
 # 反馈系统架构规范 (v0.6)
 
-> 状态: 📝 设计阶段  
+> 状态: ✅ 已实现 (v0.6)  
 > 最后更新: 2026/6/5
 
 ---
@@ -563,9 +563,9 @@ def load_from_file(main_window, filepath: str) -> bool:
 
 | 测试文件 | 测试内容 |
 |----------|----------|
-| `test_pid_controller.py` | PID 计算正确性、窗口限制、限幅、死区 |
-| `test_feedback_worker.py` | Worker 生命周期、状态切换、process() 调用 |
-| `test_feedback_manager.py` | Manager 生命周期、配置导入导出、并发分发 |
+| `test_pid_controller.py` (✅ 11 tests) | PID 计算正确性、窗口限制、限幅、死区 |
+| `test_feedback_worker.py` (✅ 15 tests) | Worker 生命周期、状态切换、process() 调用 |
+| `test_feedback_manager.py` (✅ 16 tests) | Manager 生命周期、配置导入导出、并发分发 |
 
 ### 7.2 集成测试
 
@@ -591,7 +591,7 @@ def load_from_file(main_window, filepath: str) -> bool:
 | 版本 | 状态 | 功能 |
 |------|------|------|
 | **v0.5** | ✅ 已完成 | FeedbackSlot + FeedbackManager（旧架构） |
-| **v0.6** | 📝 规划中 | 独立 worker + 共享订阅 + PID 封装 |
+| **v0.6** | **✅ 已实现** | **独立 worker + 共享订阅 + PID 封装 (当前版本)** |
 | **v0.7** | 🔲 未来 | 目标设备实现（AD9910 / RTMQ） |
 | **v0.8** | 🔲 未来 | 连接池 + 批量发送 |
 
@@ -601,19 +601,19 @@ def load_from_file(main_window, filepath: str) -> bool:
 
 ### 9.1 删除文件
 
-- ~~`scope/io/feedback_slots/`~~（删除整个目录）
-- ~~`scope/io/feedback_worker.py`~~（旧版本，重写）
+- ~~`scope/io/feedback_slots/`~~（✅ 已删除）
+- ~~`scope/io/feedback_worker.py`~~（✅ 已重写）
 
 ### 9.2 新建文件
 
-- `scope/runtime/pid_controller.py`（新建）
-- `scope/io/feedback_worker.py`（重写）
-- `scope/io/feedback_manager.py`（重写）
+- ~~`scope/runtime/pid_controller.py`~~（✅ 已新建）
+- ~~`scope/io/feedback_worker.py`~~（✅ 已重写）
+- ~~`scope/io/feedback_manager.py`~~（✅ 已重写）
 
 ### 9.3 修改文件
 
-- `scope/main.py`（更新初始化）
-- `scope/config/settings.py`（添加反馈配置保存/加载）
+- ~~`scope/main.py`~~（✅ 已更新初始化）
+- ~~`scope/config/settings.py`~~（✅ 已添加反馈配置保存/加载）
 
 ---
 

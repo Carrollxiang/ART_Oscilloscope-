@@ -1,252 +1,193 @@
 """
-FeedbackManager — 反馈调度器核心
+FeedbackManager — 反馈管理器（简化调度器）
 
 职责:
-  1. 管理所有 FeedbackSlot 的生命周期 (增删改查)
-  2. 在每次采集完成后, 提取订阅数据并向所有活跃 slot 并发分发
-  3. 保持运行时动态操作的能力 (add/remove/reconfigure 不阻塞采集)
-
-关键设计:
-  - dispatch_raw() 并发执行所有 active slot 的 on_data()
-  - 单个 slot 的失败不影响其他 slot
-  - add/remove 操作线程安全, 可在 dispatch 间隙调用
+  - 持有唯一的 EventBus 订阅
+  - 管理 worker 生命周期
+  - 并发分发数据给所有 worker
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from scope.model.enums import SlotStatus
-from .feedback_slots.base import (
-    FeedbackSlot,
-    SlotConfig,
-    DataSubscription,
-    SlotInfo,
-)
+from scope.runtime import EventBus
+from scope.runtime.pid_controller import PidConfig
+from .feedback_worker import FeedbackConfig, FeedbackWorker
 
 logger = logging.getLogger(__name__)
 
 
 class FeedbackManager:
-    """
-    反馈调度器。
+    """反馈管理器 — 数据分发 + 生命周期管理"""
 
-    用法:
-        mgr = FeedbackManager()
-        mgr.add_slot(slot_a)
-        mgr.add_slot(slot_b)
-        await mgr.start_all()
-
-        # 每次采集完成后
-        await mgr.dispatch(analysis_result)
-
-        # 运行时动态操作
-        mgr.remove_slot("slot_a")
-        mgr.add_slot(slot_c)
-
-        # 停止
-        await mgr.stop_all()
-    """
-
-    def __init__(self):
-        self._slots: dict[str, FeedbackSlot] = {}
+    def __init__(self, event_bus: Optional[EventBus] = None):
+        self._event_bus = event_bus
+        self._workers: dict[str, FeedbackWorker] = {}
+        self._queue = None
         self._lock = asyncio.Lock()
+        self._running = False
+        self._dispatch_task = None
 
-    # ── 生命周期管理 ───────────────────────────────────────────
+    # ── 生命周期 ───────────────────────────────────────────────
 
-    async def start_all(self):
-        """启动所有已注册的 slot"""
-        async with self._lock:
-            tasks = []
-            for slot in self._slots.values():
-                if slot.status == SlotStatus.IDLE:
-                    tasks.append(self._safe_start(slot))
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+    async def start(self):
+        """启动管理器（开始分发协程）"""
+        if self._running:
+            return
 
-    async def stop_all(self):
-        """停止所有 slot"""
-        async with self._lock:
-            tasks = [
-                self._safe_stop(slot)
-                for slot in self._slots.values()
-                if slot.status != SlotStatus.IDLE
-            ]
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+        self._running = True
+        if self._event_bus:
+            self._queue = self._event_bus.subscribe("frame.fitted")
+        self._dispatch_task = asyncio.create_task(self._dispatch_loop())
+        logger.info("FeedbackManager started")
 
-    # ── 增删改查 ───────────────────────────────────────────────
+    async def stop(self):
+        """停止管理器"""
+        self._running = False
+        await self.stop_all_workers()
+        if self._dispatch_task:
+            self._dispatch_task.cancel()
+            self._dispatch_task = None
+        logger.info("FeedbackManager stopped")
 
-    async def add_slot(self, slot: FeedbackSlot, auto_start: bool = True) -> str:
-        """
-        注册一个新 slot。
+    # ── Worker 管理 ───────────────────────────────────────────
 
-        auto_start=True 时立即启动。
-        返回 slot_id。
-        """
-        if slot.slot_id in self._slots:
-            raise KeyError(f'slot_id "{slot.slot_id}" 已存在')
+    async def add_worker(self, config: FeedbackConfig) -> str:
+        """添加反馈 worker"""
+        if config.worker_id in self._workers:
+            raise KeyError(f'worker_id "{config.worker_id}" already exists')
+
+        worker = FeedbackWorker(config)
 
         async with self._lock:
-            self._slots[slot.slot_id] = slot
+            self._workers[config.worker_id] = worker
 
-        if auto_start:
-            await self._safe_start(slot)
+        await worker.start()
+        logger.info(f'FeedbackWorker "{config.worker_id}" added (measurement={config.measurement_key})')
+        return config.worker_id
 
-        active, total = self._count_status()
-        logger.info(
-            f'FeedbackSlot "{slot.slot_id}" added '
-            f"(protocol={slot.protocol}, target={slot._get_target()}) "
-            f"[active={active}/{total}]"
-        )
-        return slot.slot_id
+    async def remove_worker(self, worker_id: str) -> Optional[FeedbackWorker]:
+        """移除反馈 worker"""
+        async with self._lock:
+            worker = self._workers.pop(worker_id, None)
 
-    def remove_slot(self, slot_id: str) -> Optional[FeedbackSlot]:
-        """
-        从管理器中移除 slot。
+        if worker:
+            await worker.stop()
+            logger.info(f'FeedbackWorker "{worker_id}" removed')
+        return worker
 
-        如果 slot 正在运行会先停止它。
-        返回被移除的 slot 对象。
-        """
-        slot = self._slots.get(slot_id)
-        if not slot:
-            logger.warning(f'remove_slot: "{slot_id}" 不存在')
-            return None
+    async def pause_worker(self, worker_id: str):
+        """暂停指定 worker"""
+        async with self._lock:
+            worker = self._workers.get(worker_id)
+        if worker:
+            await worker.pause()
 
-        # 先停止
-        if slot.status != SlotStatus.IDLE:
-            try:
-                # 已有运行中 loop (如 pytest-asyncio) → 调度但不等待
-                loop = asyncio.get_running_loop()
-                asyncio.ensure_future(self._safe_stop(slot))
-            except RuntimeError:
-                # UI 线程无 loop → 创建临时 loop 同步执行
-                asyncio.run(self._safe_stop(slot))
+    async def resume_worker(self, worker_id: str):
+        """恢复指定 worker"""
+        async with self._lock:
+            worker = self._workers.get(worker_id)
+        if worker:
+            await worker.resume()
 
-        # 从字典移除 (新 dispatch 不会再包含此 slot)
-        del self._slots[slot_id]
+    async def stop_all_workers(self):
+        """停止所有 worker"""
+        async with self._lock:
+            workers = list(self._workers.values())
+        for worker in workers:
+            await worker.stop()
 
-        active, total = self._count_status()
-        logger.info(
-            f'FeedbackSlot "{slot_id}" removed '
-            f"[active={active}/{total}]"
-        )
-        return slot
+    # ── 配置管理 ───────────────────────────────────────────────
 
-    def get_slot(self, slot_id: str) -> Optional[FeedbackSlot]:
-        return self._slots.get(slot_id)
-
-    def list_slots(self) -> list[SlotInfo]:
-        """返回所有 slot 的运行快照, 用于 UI 显示"""
-        return [s.get_info() for s in self._slots.values()]
-
-    def list_slots_summary(self) -> list[dict]:
-        """轻量摘要, 用于日志"""
+    def get_config(self) -> list[dict]:
+        """导出所有 worker 配置（用于保存）"""
         return [
             {
-                "id": s.slot_id,
-                "protocol": s.protocol,
-                "status": s.status.value,
-                "target": s._get_target(),
+                "worker_id": w.worker_id,
+                "measurement_key": w.measurement_key,
+                "pid_config": dataclasses.asdict(w.pid_config),
+                "target": None,  # v0.7 实现
             }
-            for s in self._slots.values()
+            for w in self._workers.values()
         ]
 
-    # ── 核心: 数据分发 ─────────────────────────────────────────
+    async def load_config(self, config_list: list[dict]):
+        """加载配置（重建所有 worker）"""
+        # 清空现有 worker
+        await self.stop_all_workers()
+        async with self._lock:
+            self._workers.clear()
 
-    async def dispatch_raw(self, measurements: dict[str, float]):
-        """
-        将扁平测量字典分发给所有活跃 slot。
+        # 重新创建
+        for item in config_list:
+            pid_config = PidConfig(**item["pid_config"])
+            worker_config = FeedbackConfig(
+                worker_id=item["worker_id"],
+                measurement_key=item["measurement_key"],
+                pid_config=pid_config,
+                target=None,
+            )
+            await self.add_worker(worker_config)
 
-        measurements 来自 FittedSnapshot.as_flat_dict()。
-        """
-        if not self._slots:
+    # ── 数据分发 ───────────────────────────────────────────────
+
+    async def _dispatch_loop(self):
+        """分发协程：订阅 → 提取 → 并发分发"""
+        if not self._queue:
+            logger.warning("FeedbackManager dispatch loop: no queue (event_bus not set)")
             return
 
-        active_slots = [
-            s for s in list(self._slots.values())
-            if s.status == SlotStatus.RUNNING
+        while self._running:
+            try:
+                snapshot = self._queue.get_nowait()
+                if snapshot is not None:
+                    # 只调用一次 as_flat_dict()
+                    flat = snapshot.as_flat_dict()
+
+                    # 并发分发给所有 worker
+                    tasks = []
+                    async with self._lock:
+                        for worker in self._workers.values():
+                            if worker.status == SlotStatus.RUNNING:
+                                value = flat.get(worker.measurement_key)
+                                if value is not None:
+                                    tasks.append(worker.process(value))
+
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
+                    await asyncio.sleep(0)  # 有数据 → 让出控制权，不延后批处理
+                else:
+                    await asyncio.sleep(0.01)  # 空队列 → 休眠 10ms 避免忙等
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"FeedbackManager dispatch error: {e}")
+                await asyncio.sleep(0.1)
+
+    # ── 状态查询 ───────────────────────────────────────────────
+
+    def list_workers(self) -> list[dict]:
+        """列出所有 worker 状态"""
+        return [
+            {
+                "worker_id": w.worker_id,
+                "status": w.status.value,
+                "measurement_key": w.measurement_key,
+            }
+            for w in self._workers.values()
         ]
-        if not active_slots:
-            return
 
-        tasks = []
-        for slot in active_slots:
-            payload = self._build_payload_from_dict(
-                measurements, slot._config.subscriptions
-            )
-            if payload:
-                tasks.append(self._safe_on_data(slot, payload))
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    def _build_payload_from_dict(
-        self,
-        measurements: dict[str, float],
-        subscriptions: list[DataSubscription],
-    ) -> dict[str, Any]:
-        """从扁平测量字典中根据订阅列表提取数据。"""
-        payload: dict[str, Any] = {}
-        for sub in subscriptions:
-            value = self._resolve_value_from_dict(measurements, sub.local_key)
-            if value is not None:
-                scaled = value * sub.scale + sub.offset
-                payload[sub.remote_key] = scaled
-        return payload
-
-    def _resolve_value_from_dict(
-        self, measurements: dict[str, float], key: str
-    ) -> Optional[float]:
-        """
-        从扁平测量字典中解析单个值。
-
-        支持结构化 key:
-          - "event:tag"   → 直查 measurements
-          - "raw:CH1_Vpp" → 直查 measurements
-          - "meta:seq"    → None (元信息不在此处)
-          - "CH1_Vpp"     → 直查 measurements (兼容旧订阅)
-        """
-        if key.startswith("event:"):
-            return measurements.get(key[6:])
-        elif key.startswith("raw:"):
-            return measurements.get(key[4:])
-        elif key.startswith("meta:"):
-            return None
-        else:
-            return measurements.get(key)
-
-    # ── 内部方法 ───────────────────────────────────────────────
-
-    async def _safe_start(self, slot: FeedbackSlot):
-        """安全启动, 捕获异常"""
-        try:
-            await slot.start()
-        except Exception as e:
-            logger.error(f'slot "{slot.slot_id}" start failed: {e}')
-
-    async def _safe_stop(self, slot: FeedbackSlot):
-        """安全停止, 捕获异常"""
-        try:
-            await slot.stop()
-        except Exception as e:
-            logger.error(f'slot "{slot.slot_id}" stop failed: {e}')
-
-    async def _safe_on_data(self, slot: FeedbackSlot, payload: dict):
-        """安全发送, 捕获异常"""
-        try:
-            await slot.on_data(payload)
-        except Exception as e:
-            logger.error(
-                f'slot "{slot.slot_id}" on_data failed: {e}'
-            )
-
-    def _count_status(self) -> tuple[int, int]:
+    def get_active_count(self) -> tuple[int, int]:
         """返回 (running_count, total_count)"""
         running = sum(
-            1 for s in self._slots.values()
-            if s.status == SlotStatus.RUNNING
+            1 for w in self._workers.values()
+            if w.status == SlotStatus.RUNNING
         )
-        return running, len(self._slots)
+        return running, len(self._workers)

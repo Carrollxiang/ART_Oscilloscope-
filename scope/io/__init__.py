@@ -5,9 +5,10 @@ IO 模块 — 反馈管理
 """
 
 from .feedback_manager import FeedbackManager
-from .feedback_worker import FeedbackWorker
+from .feedback_worker import FeedbackConfig, FeedbackWorker
 
 __all__ = [
+    "FeedbackConfig",
     "FeedbackManager",
     "FeedbackWorker",
 ]

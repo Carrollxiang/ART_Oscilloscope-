@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
             status_callback=self._update_status_bar,
             async_loop=getattr(self, '_async_loop', None),
         )
+        self._embed_widget(self.tabFeedback.layout(), self.feedback_panel)
 
         # ── 初始化 MeasurementBar / StatusBar ──
         self._update_status_bar()
@@ -220,7 +221,8 @@ class MainWindow(QMainWindow):
             self.statusTrigger.setText(f"触发: {frame.n_channels}ch")
 
         # 反馈状态
-        running, paused, total = self.feedback_panel.get_active_count()
+        running, total = self.feedback_panel.get_active_count()
+        paused = total - running
         status_parts = []
         if running:
             status_parts.append(f"{running} 运行")
