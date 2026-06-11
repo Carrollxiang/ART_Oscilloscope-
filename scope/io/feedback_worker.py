@@ -56,6 +56,9 @@ class FeedbackWorker:
         self._pid = PidController(config.pid_config)
         self._status = SlotStatus.IDLE
         self._target = config.target
+        self._last_value: Optional[float] = None
+        self._last_error: Optional[float] = None
+        self._frames_processed: int = 0
 
     # ── 属性 ────────────────────────────────────────────────────
 
@@ -74,6 +77,25 @@ class FeedbackWorker:
     @property
     def pid_config(self) -> PidConfig:
         return self._config.pid_config
+
+    @property
+    def last_value(self) -> Optional[float]:
+        return self._last_value
+
+    @property
+    def last_error(self) -> Optional[float]:
+        """当前误差 = preset_value - last_value（最近一次 process 计算后的值）"""
+        return self._last_error
+
+    @property
+    def frames_processed(self) -> int:
+        return self._frames_processed
+
+    def update_pid_config(self, pid_config: PidConfig):
+        """运行时更新 PID 参数，重置控制器状态"""
+        self._config.pid_config = pid_config
+        self._pid = PidController(pid_config)
+        logger.info(f'Worker "{self.worker_id}" PID 参数已更新')
 
     # ── 生命周期 ───────────────────────────────────────────────
 
@@ -108,11 +130,15 @@ class FeedbackWorker:
 
         由 FeedbackManager 调用，传入已提取的测量值。
         """
+        self._last_value = value
+        self._last_error = self._config.pid_config.preset_value - value
+
         if self._status != SlotStatus.RUNNING:
             return
 
         try:
             delta = self._pid.step(value)
+            self._frames_processed += 1
             if delta is not None and self._target:
                 await self._send_to_target(delta)
             elif delta is not None:

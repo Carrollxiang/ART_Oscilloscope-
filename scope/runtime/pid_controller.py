@@ -7,6 +7,7 @@ PidController — PID 控制器封装
 from __future__ import annotations
 
 from collections import deque
+import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -84,10 +85,32 @@ class PidController:
         self._last_error = 0.0
 
     @property
+    def errors_std(self) -> float:
+        """误差窗口内的标准差"""
+        if len(self._errors) < 2:
+            return 0.0
+        mean = sum(self._errors) / len(self._errors)
+        variance = sum((e - mean) ** 2 for e in self._errors) / len(self._errors)
+        return math.sqrt(variance)
+
+    @property
+    def errors_count(self) -> int:
+        return len(self._errors)
+
+    @property
+    def preset_value(self) -> float:
+        return self._config.preset_value
+
+    @property
+    def deadband(self) -> float:
+        return self._config.deadband
+
+    @property
     def metrics(self) -> dict:
         """运行时指标"""
         return {
             "errors_count": len(self._errors),
             "last_error": self._last_error,
             "preset_value": self._config.preset_value,
+            "errors_std": self.errors_std,
         }

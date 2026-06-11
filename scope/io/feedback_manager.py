@@ -102,6 +102,15 @@ class FeedbackManager:
         for worker in workers:
             await worker.stop()
 
+    async def update_worker_pid(self, worker_id: str, pid_config: PidConfig):
+        """更新指定 worker 的 PID 参数"""
+        async with self._lock:
+            worker = self._workers.get(worker_id)
+        if worker:
+            worker.update_pid_config(pid_config)
+        else:
+            raise KeyError(f'worker_id "{worker_id}" not found')
+
     # ── 配置管理 ───────────────────────────────────────────────
 
     def get_config(self) -> list[dict]:
@@ -174,12 +183,25 @@ class FeedbackManager:
     # ── 状态查询 ───────────────────────────────────────────────
 
     def list_workers(self) -> list[dict]:
-        """列出所有 worker 状态"""
+        """列出所有 worker 状态（含运行时数据）"""
         return [
             {
                 "worker_id": w.worker_id,
                 "status": w.status.value,
                 "measurement_key": w.measurement_key,
+                "preset_value": w.pid_config.preset_value,
+                "deadband": w.pid_config.deadband,
+                "last_value": w.last_value,
+                "last_error": w.last_error,
+                "errors_std": w._pid.errors_std,
+                "errors_count": w._pid.errors_count,
+                "frames_processed": w.frames_processed,
+                "kp": w.pid_config.kp,
+                "ki": w.pid_config.ki,
+                "kd": w.pid_config.kd,
+                "output_limit": w.pid_config.output_limit,
+                "i_limit": w.pid_config.i_limit,
+                "window_size": w.pid_config.window_size,
             }
             for w in self._workers.values()
         ]

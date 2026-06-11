@@ -98,6 +98,9 @@ class MainWindow(QMainWindow):
 
         # ── 测量面板 (动态行) ──
         self.measure_panel = MeasurementPanel(self.tabMeasurements, event_bus=event_bus)
+        self.measure_panel.set_name_change_callback(
+            lambda: self.feedback_panel.refresh_slots() if hasattr(self, 'feedback_panel') else None
+        )
 
         # ── 反馈面板 ──
         self._feedback_mgr = feedback_manager or FeedbackManager()
@@ -186,7 +189,7 @@ class MainWindow(QMainWindow):
             logger.error(f"原始帧更新异常: {e}", exc_info=True)
 
     def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
-        """拟合结果更新 → 测量面板 + MiniChart。"""
+        """拟合结果更新 → 测量面板 + MiniChart + 反馈面板。"""
         try:
             if hasattr(self, 'measure_panel'):
                 self.measure_panel.update_from_fitted(fitted_snapshot)
@@ -197,6 +200,11 @@ class MainWindow(QMainWindow):
                 self.mini_chart.refresh_now()
                 if fitted_snapshot.sequence_num % 10 == 1:
                     logger.debug(f"MiniChart updated: {len(flat)} items, seq={fitted_snapshot.sequence_num}")
+
+            # 事件驱动：每帧刷新反馈面板（零轮询）
+            if hasattr(self, 'feedback_panel'):
+                self.feedback_panel.refresh_slots()
+
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
 

@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget,
     QHBoxLayout,
@@ -51,6 +51,11 @@ MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
 class MeasurementRow(QWidget):
     """单行: [名称] [通道▼] [测量项▼] [起始] [结束] [值] [✕]"""
 
+    # 类级别自增 ID 计数器
+    _next_id = 0
+    # 名称变更信号
+    name_changed = pyqtSignal(int)  # row_id
+
     def __init__(self, parent=None,
                  name: str = "",
                  channel: str = "CH1",
@@ -60,6 +65,8 @@ class MeasurementRow(QWidget):
                  frame_duration: float = 500.0,
                  on_remove=None):
         super().__init__(parent)
+        self._row_id = MeasurementRow._next_id
+        MeasurementRow._next_id += 1
         self._meas_key = meas_key
         self._on_remove = on_remove
         self._frame_duration = frame_duration
@@ -68,10 +75,11 @@ class MeasurementRow(QWidget):
         layout.setContentsMargins(0, 3, 0, 3)
         layout.setSpacing(6)
 
-        # 名称
+        # 名称（用户可改，仅作显示用）
         self.name_edit = QLineEdit(name)
         self.name_edit.setPlaceholderText("名称")
         self.name_edit.setFixedWidth(80)
+        self.name_edit.textChanged.connect(lambda: self.name_changed.emit(self._row_id))
         layout.addWidget(self.name_edit)
 
         # 通道
@@ -139,8 +147,18 @@ class MeasurementRow(QWidget):
 
     # ── 获取配置 ───────────────────────────────────────────────
 
+    @property
+    def row_id(self) -> int:
+        """稳定唯一 ID（创建后不变）"""
+        return self._row_id
+
+    @property
+    def stable_tag(self) -> str:
+        """稳定标识符，用于 FittedSnapshot key 和反馈订阅"""
+        return f"m{self._row_id}"
+
     def get_name(self) -> str:
-        return self.name_edit.text() or f"{self.get_channel()}_{self.get_meas_key()}"
+        return self.name_edit.text() or f"M{self._row_id}"
 
     def get_channel(self) -> str:
         return self.channel_combo.currentText()
@@ -195,12 +213,17 @@ class MeasurementPanel:
         self._parent = parent_widget
         self._rows: list[MeasurementRow] = []
         self._event_bus = event_bus
+        self._name_change_callback = None
         self._setup_ui()
 
         # 默认行
         self.add_row(name="CH1_vpp", channel="CH1", meas_key="Vpp", end_time=500)
         self.add_row(name="CH1_mean", channel="CH1", meas_key="Mean", end_time=500)
         self.add_row(name="CH2_vpp", channel="CH2", meas_key="Vpp", end_time=500)
+
+    def set_name_change_callback(self, callback):
+        """设置名称变更回调（用于通知 FeedbackPanel 刷新）"""
+        self._name_change_callback = callback
 
     def _setup_ui(self):
         # 获取或创建布局, 清空子控件
@@ -253,22 +276,28 @@ class MeasurementPanel:
             frame_duration=500.0,
             on_remove=self._on_remove,
         )
+        row.name_changed.connect(self._on_row_name_changed)
         self._rows.append(row)
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
         return row
 
+    def _on_row_name_changed(self, row_id: int):
+        """行名称变更 → 通知回调"""
+        if self._name_change_callback:
+            self._name_change_callback()
+
     def _on_add(self):
         self.add_row()
 
     def _on_remove(self, row: MeasurementRow):
         if row in self._rows:
-            tag = row.get_name()
+            tag = row.stable_tag
             self._rows.remove(row)
             self._container_layout.removeWidget(row)
             row.deleteLater()
-            
+
             if self._event_bus:
                 self._event_bus.publish("measurement.remove", tag)
 
@@ -276,7 +305,7 @@ class MeasurementPanel:
         """返回测量规格列表，供 MeasurementProcessor 使用"""
         return [
             {
-                "tag": row.get_name(),
+                "tag": row.stable_tag,
                 "channel": row.get_channel_index(),
                 "feature": row.get_meas_key(),
                 "start_ms": row.get_start_time(),
@@ -285,11 +314,14 @@ class MeasurementPanel:
             for row in self._rows
         ]
 
+    def get_display_name_mapping(self) -> dict[str, str]:
+        """返回 {稳定tag: 显示名称} 映射，供 FeedbackPanel 使用"""
+        return {row.stable_tag: row.get_name() for row in self._rows}
+
     def update_from_fitted(self, snap: FittedSnapshot):
         """用 FittedSnapshot 更新所有行的显示值。"""
         for row in self._rows:
-            tag = row.get_name()
-            value = snap.get(tag)
+            value = snap.get(row.stable_tag)
             row.set_value(value)
 
     def get_subscriptions(self) -> list[dict]:
@@ -303,10 +335,12 @@ class MeasurementPanel:
     def set_config(self, config: list[dict]):
         """恢复测量配置（清空重建）"""
         self.clear_all()
-        
+
         for item in config:
+            # 兼容新旧格式：新格式有"name"字段，旧格式用"tag"作为显示名
+            display_name = item.get("name") or item.get("tag", "")
             self.add_row(
-                name=item.get("tag", ""),
+                name=display_name,
                 channel=f"CH{item.get('channel', 0) + 1}",
                 meas_key=item.get("feature", "Vpp"),
                 start_time=item.get("start_ms", 0.0),

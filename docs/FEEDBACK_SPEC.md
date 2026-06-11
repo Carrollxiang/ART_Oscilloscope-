@@ -571,10 +571,12 @@ def load_from_file(main_window, filepath: str) -> bool:
 
 | 测试场景 | 验证内容 |
 |----------|----------|
-| **Mock 模式** | 添加 10 个 feedback worker，验证并发运行 |
-| **暂停/恢复** | 某个 worker 暂停不影响其他 worker |
-| **错误隔离** | 某个 worker 抛异常不影响其他 worker |
-| **配置保存/加载** | 保存后重新加载，验证 worker 恢复 |
+| **Mock 模式** | 添加 10 个 feedback worker，验证并发运行 ✅ |
+| **暂停/恢复** | 某个 worker 暂停不影响其他 worker ✅ |
+| **错误隔离** | 某个 worker 抛异常不影响其他 worker ✅ |
+| **配置保存/加载** | 保存后重新加载，验证 worker 恢复 ✅ |
+| **名称变更同步** | 测量面板改名后反馈面板自动同步 ✅ |
+| **重复订阅检测** | 同一测量项被两个 Worker 订阅时弹窗阻止 ✅ |
 
 ### 7.3 性能测试
 
