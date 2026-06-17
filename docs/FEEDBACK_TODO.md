@@ -301,7 +301,7 @@
 ### 7.1 运行所有测试
 
 **任务**:
-- [x] `pytest tests/ -v` 全部通过 (81/81)
+- [x] `pytest tests/ -v` 全部通过 (84/84)
 - [x] 确保无 regressions
 
 ---

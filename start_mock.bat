@@ -2,7 +2,7 @@
 chcp 65001 > nul
 title Digital Oscilloscope [Mock]
 
-.venv\Scripts\python.exe main.py --mock
+.venv\python.exe main.py --mock
 
 if errorlevel 1 (
     echo.

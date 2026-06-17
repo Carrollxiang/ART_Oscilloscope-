@@ -215,4 +215,3 @@ class ChannelPanel(QWidget):
                     ctrl["min_val"].setValue(item["min_v"])
                 if "max_v" in item:
                     ctrl["max_val"].setValue(item["max_v"])
-        return min_vals, max_vals

@@ -4,7 +4,7 @@
 >
 > **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，部分 v0.5 结构示例和测试数量不是最新状态。
 >
-> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；测试基线为 `81 passed`。
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；测试基线为 `84 passed`。
 
 ---
 
@@ -512,5 +512,5 @@ python -m scope.main
 - ✅ 设备配置 UI 已发布 `config.change`，由 ConfigWorker 应用
 - ✅ 测量规格 UI 已发布 `measurement.specs.changed`，由 MeasurementConfigWorker 应用
 - ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
-- ✅ 当前测试基线: 81/81 通过
+- ✅ 当前测试基线: 84/84 通过
 - 🟡 下一步: `feedback.status` / `runtime.metrics` 状态读取路径事件化

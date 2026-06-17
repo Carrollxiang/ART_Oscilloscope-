@@ -64,10 +64,11 @@ class MeasurementRow(QWidget):
                  start_time: float = 0.0,
                  end_time: float = 500.0,
                  frame_duration: float = 500.0,
-                 on_remove=None):
+                 on_remove=None,
+                 stable_tag: str | None = None):
         super().__init__(parent)
-        self._row_id = MeasurementRow._next_id
-        MeasurementRow._next_id += 1
+        self._row_id = self._allocate_row_id(stable_tag)
+        self._stable_tag = stable_tag or f"m{self._row_id}"
         self._meas_key = meas_key
         self._on_remove = on_remove
         self._frame_duration = frame_duration
@@ -147,6 +148,21 @@ class MeasurementRow(QWidget):
     def _emit_config_changed(self, *args):
         self.config_changed.emit(self._row_id)
 
+    @classmethod
+    def _allocate_row_id(cls, stable_tag: str | None) -> int:
+        """为行分配 ID；尽量从 m123 形式的 tag 中恢复原 ID。"""
+        row_id = None
+        if stable_tag and stable_tag.startswith("m"):
+            suffix = stable_tag[1:]
+            if suffix.isdigit():
+                row_id = int(suffix)
+
+        if row_id is None:
+            row_id = cls._next_id
+
+        cls._next_id = max(cls._next_id, row_id + 1)
+        return row_id
+
     @staticmethod
     def _unit_of(key: str) -> str:
         for k, _, u in MEASUREMENT_TYPES:
@@ -164,7 +180,7 @@ class MeasurementRow(QWidget):
     @property
     def stable_tag(self) -> str:
         """稳定标识符，用于 FittedSnapshot key 和反馈订阅"""
-        return f"m{self._row_id}"
+        return self._stable_tag
 
     def get_name(self) -> str:
         return self.name_edit.text() or f"M{self._row_id}"
@@ -218,7 +234,12 @@ class MeasurementPanel:
     注意: 本面板不执行计算，只显示 MeasurementProcessor 的结果。
     """
 
-    def __init__(self, parent_widget: QWidget, event_bus=None):
+    def __init__(
+        self,
+        parent_widget: QWidget,
+        event_bus=None,
+        initial_measurements: list[dict] | None = None,
+    ):
         self._parent = parent_widget
         self._rows: list[MeasurementRow] = []
         self._event_bus = event_bus
@@ -226,10 +247,12 @@ class MeasurementPanel:
         self._spec_change_id = 0
         self._setup_ui()
 
-        # 默认行
-        self.add_row(name="CH1_vpp", channel="CH1", meas_key="Vpp", end_time=500)
-        self.add_row(name="CH1_mean", channel="CH1", meas_key="Mean", end_time=500)
-        self.add_row(name="CH2_vpp", channel="CH2", meas_key="Vpp", end_time=500)
+        if initial_measurements:
+            self.set_config(initial_measurements)
+        else:
+            self.add_row(name="CH1_vpp", channel="CH1", meas_key="Vpp", end_time=500)
+            self.add_row(name="CH1_mean", channel="CH1", meas_key="Mean", end_time=500)
+            self.add_row(name="CH2_vpp", channel="CH2", meas_key="Vpp", end_time=500)
 
     def set_name_change_callback(self, callback):
         """设置名称变更回调（用于通知 FeedbackPanel 刷新）"""
@@ -279,12 +302,14 @@ class MeasurementPanel:
 
     def add_row(self, name: str = "", channel: str = "CH1",
                 meas_key: str = "Vpp",
-                start_time: float = 0.0, end_time: float = 500.0):
+                start_time: float = 0.0, end_time: float = 500.0,
+                stable_tag: str | None = None):
         row = MeasurementRow(
             name=name, channel=channel, meas_key=meas_key,
             start_time=start_time, end_time=end_time,
             frame_duration=500.0,
             on_remove=self._on_remove,
+            stable_tag=stable_tag,
         )
         row.name_changed.connect(self._on_row_name_changed)
         row.config_changed.connect(self._on_row_config_changed)
@@ -323,7 +348,9 @@ class MeasurementPanel:
         return [
             {
                 "tag": row.stable_tag,
+                "name": row.get_name(),
                 "channel": row.get_channel_index(),
+                "channel_name": row.get_channel(),
                 "feature": row.get_meas_key(),
                 "start_ms": row.get_start_time(),
                 "end_ms": row.get_end_time(),
@@ -362,6 +389,7 @@ class MeasurementPanel:
                 meas_key=item.get("feature", "Vpp"),
                 start_time=item.get("start_ms", 0.0),
                 end_time=item.get("end_ms", 500.0),
+                stable_tag=item.get("tag"),
             )
 
         self._publish_specs_changed()
@@ -372,7 +400,16 @@ class MeasurementPanel:
             return
 
         try:
-            specs = [MeasurementSpec(**item) for item in self.get_measurement_specs()]
+            specs = [
+                MeasurementSpec(
+                    tag=item["tag"],
+                    channel=item["channel"],
+                    feature=item["feature"],
+                    start_ms=item["start_ms"],
+                    end_ms=item["end_ms"],
+                )
+                for item in self.get_measurement_specs()
+            ]
         except Exception as e:
             logger.warning("构建 MeasurementSpec 快照失败: %s", e)
             return

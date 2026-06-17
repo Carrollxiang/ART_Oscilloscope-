@@ -12,7 +12,7 @@
 | 数据面 | `frame.raw` -> `MeasurementProcessor` -> `frame.fitted` |
 | 控制面 | 设备配置、测量规格、反馈 worker 命令均已走 EventBus |
 | 反馈系统 | v0.6 Worker 架构已实现，目标设备发送预留到 v0.7 |
-| 测试基线 | `81 passed` |
+| 测试基线 | `84 passed` |
 | 推荐测试命令 | `& .\.venv\python.exe -m pytest -q` |
 
 ## 推荐阅读顺序

@@ -95,7 +95,12 @@ class MainWindow(QMainWindow):
         self.device_panel.config_applied.connect(self._on_device_config)
 
         # ── 测量面板 (动态行) ──
-        self.measure_panel = MeasurementPanel(self.tabMeasurements, event_bus=event_bus)
+        default_measurements = ConfigManager.load_default_measurements()
+        self.measure_panel = MeasurementPanel(
+            self.tabMeasurements,
+            event_bus=event_bus,
+            initial_measurements=default_measurements,
+        )
         self.measure_panel.set_name_change_callback(
             lambda: self.feedback_panel.refresh_slots() if hasattr(self, 'feedback_panel') else None
         )

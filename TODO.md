@@ -83,7 +83,7 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **81/81 测试通过** (新增测量规格控制面与反馈命令控制面测试)
+- **84/84 测试通过** (新增默认配置加载与配置恢复回归测试)
 
 ### 待完成
 - [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`

@@ -8,7 +8,6 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +16,49 @@ class ConfigManager:
     """配置管理器 — 保存/加载用户配置"""
 
     _default_dir = Path.home() / ".digital_scope"
+    _project_default_path = (
+        Path(__file__).resolve().parents[2] / "config" / "default_config.json"
+    )
 
     @staticmethod
     def default_filepath() -> str:
         """返回默认配置文件路径"""
         ConfigManager._default_dir.mkdir(parents=True, exist_ok=True)
         return str(ConfigManager._default_dir / "config.json")
+
+    @staticmethod
+    def project_default_filepath() -> str:
+        """返回项目内默认配置文件路径。"""
+        return str(ConfigManager._project_default_path)
+
+    @staticmethod
+    def load_json(filepath: str | Path) -> dict:
+        """读取 JSON 配置文件。"""
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    @staticmethod
+    def load_project_default_config() -> dict:
+        """读取项目默认配置；文件不存在时返回空 dict。"""
+        path = ConfigManager._project_default_path
+        if not path.exists():
+            logger.info(f"项目默认配置不存在: {path}")
+            return {}
+        try:
+            return ConfigManager.load_json(path)
+        except Exception as e:
+            logger.warning(f"读取项目默认配置失败: {e}")
+            return {}
+
+    @staticmethod
+    def load_default_measurements() -> list[dict]:
+        """读取项目默认测量项配置。"""
+        config = ConfigManager.load_project_default_config()
+        measurements = config.get("measurements", [])
+        if not isinstance(measurements, list):
+            logger.warning("项目默认配置 measurements 字段不是 list")
+            return []
+        return measurements
 
     @staticmethod
     def save_to_file(main_window, filepath: str) -> bool:
@@ -72,8 +108,7 @@ class ConfigManager:
             filepath: 配置文件路径
         """
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            config = ConfigManager.load_json(filepath)
 
             # 加载通道配置
             if 'channels' in config and hasattr(main_window, 'channel_panel'):
