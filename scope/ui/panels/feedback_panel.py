@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import math
 from typing import Optional, Callable
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -30,8 +28,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 
-from scope.model.enums import SlotStatus
 from scope.runtime.pid_controller import PidConfig
+from scope.io.feedback_command import FeedbackCommand
 from scope.io.feedback_worker import FeedbackConfig
 
 logger = logging.getLogger(__name__)
@@ -540,12 +538,15 @@ class FeedbackPanel(QWidget):
         measurement_panel=None,
         status_callback: Optional[Callable] = None,
         async_loop=None,
+        event_bus=None,
     ):
         super().__init__(parent_widget)
         self._feedback_mgr = feedback_manager
         self._measurement_panel = measurement_panel
         self._status_callback = status_callback
         self._async_loop = async_loop
+        self._event_bus = event_bus
+        self._command_change_id = 0
         self._card_widgets: dict[str, WorkerCard] = {}  # worker_id → WorkerCard
         self._worker_counter: int = len(self._card_widgets)
 
@@ -627,10 +628,11 @@ class FeedbackPanel(QWidget):
         dlg._worker_id_internal = worker_id
         if dlg.exec() == QDialog.DialogCode.Accepted:
             config = dlg.result_config
-            if config and self._feedback_mgr and self._async_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._feedback_mgr.add_worker(config),
-                    self._async_loop,
+            if config:
+                self._publish_feedback_command(
+                    action="add",
+                    worker_id=worker_id,
+                    config=config,
                 )
                 logger.info(f'添加 Worker 成功: {worker_id} → {config.measurement_key}')
 
@@ -709,29 +711,17 @@ class FeedbackPanel(QWidget):
     # ── Worker 操作 ────────────────────────────────────────────
 
     def _on_pause_worker(self, worker_id: str):
-        if self._feedback_mgr and self._async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self._feedback_mgr.pause_worker(worker_id),
-                self._async_loop,
-            )
+        self._publish_feedback_command("pause", worker_id)
 
     def _on_resume_worker(self, worker_id: str):
-        if self._feedback_mgr and self._async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self._feedback_mgr.resume_worker(worker_id),
-                self._async_loop,
-            )
+        self._publish_feedback_command("resume", worker_id)
 
     def _on_remove_worker(self, worker_id: str):
-        if self._feedback_mgr and self._async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self._feedback_mgr.remove_worker(worker_id),
-                self._async_loop,
-            )
+        self._publish_feedback_command("remove", worker_id)
 
     def _on_edit_worker(self, worker_id: str):
         """弹出 PID 编辑对话框"""
-        if not self._feedback_mgr or not self._async_loop:
+        if not self._feedback_mgr:
             return
 
         workers = self._feedback_mgr.list_workers()
@@ -747,11 +737,36 @@ class FeedbackPanel(QWidget):
         )
         dlg = PidEditDialog(self, pid_config=current)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_config:
-            asyncio.run_coroutine_threadsafe(
-                self._feedback_mgr.update_worker_pid(worker_id, dlg.result_config),
-                self._async_loop,
+            self._publish_feedback_command(
+                action="update_pid",
+                worker_id=worker_id,
+                pid_config=dlg.result_config,
             )
             logger.info(f"Worker '{worker_id}' PID 参数更新已提交")
+
+    def _publish_feedback_command(
+        self,
+        action: str,
+        worker_id: str,
+        config: Optional[FeedbackConfig] = None,
+        pid_config: Optional[PidConfig] = None,
+    ):
+        """发布反馈控制命令到 EventBus。"""
+        if not self._event_bus:
+            logger.error("无法发布反馈命令: EventBus 未连接")
+            return
+
+        self._command_change_id += 1
+        self._event_bus.publish(
+            "feedback.worker.command",
+            FeedbackCommand(
+                action=action,
+                worker_id=worker_id,
+                config=config,
+                pid_config=pid_config,
+                change_id=self._command_change_id,
+            ),
+        )
 
     # ── 状态查询 ───────────────────────────────────────────────
 

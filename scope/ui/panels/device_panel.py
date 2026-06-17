@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Optional, Callable
 
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -37,7 +38,7 @@ class DevicePanel(QWidget):
     设备设置面板 (替换原来的"触发"Tab)。
 
     所有 ART 采集卡配置在此完成 + 通讯测试按钮。
-    配置确认后发射 config_applied 信号。
+    配置确认后发射 config_applied 信号，由 MainWindow 发布到 EventBus 控制面。
     """
 
     config_applied = pyqtSignal(dict, object)  # (params, DeviceConfig)
@@ -218,8 +219,10 @@ class DevicePanel(QWidget):
             p = self.get_params()
             cfg = self.get_config()
             from scope.hardware.art_device import ArtDevice
-            dev = ArtDevice(**p)
-            dev._read_timeout = p["read_timeout"]
+            art_params = dict(p)
+            read_timeout = art_params.pop("read_timeout")
+            dev = ArtDevice(**art_params)
+            dev._read_timeout = read_timeout
 
             lines = [f"🟡 设备: {p['device_name']}/{p['ai_channels']}"]
             dev.open()
@@ -264,7 +267,7 @@ class DevicePanel(QWidget):
             "trigger_level": self.spinTrigLevel.value(),
         }
 
-    def get_config(self) -> dict:
+    def get_config(self) -> DeviceConfig:
         rate = self.spinSampleRate.value()
         samples = int(rate * self.spinDuration.value())
         # 从 ai_channels 解析实际通道数
@@ -280,13 +283,23 @@ class DevicePanel(QWidget):
                 n_ch = 4
         else:
             n_ch = 4
+        return DeviceConfig(
+            sample_rate=rate,
+            record_length=max(samples, 10),
+            channels_enabled=list(range(n_ch)),
+            channel_min_vals=[-10.0] * n_ch,
+            channel_max_vals=[10.0] * n_ch,
+        )
+
+    def get_state(self) -> dict:
+        """返回可 JSON 序列化的设备面板状态。"""
         return {
-            "sample_rate": rate,
-            "record_length": max(samples, 10),
-            "channels_enabled": list(range(n_ch)),
+            "params": self.get_params(),
+            "config": asdict(self.get_config()),
+            "duration": self.spinDuration.value(),
         }
 
-    def load_params(self, params: dict):
+    def load_params(self, params: dict, config_data: dict | None = None):
         """从现有设备参数回填。"""
         self.editDeviceName.setText(params.get("device_name", "Dev42"))
         self.editAiChannels.setText(params.get("ai_channels", "ai0:15"))
@@ -298,8 +311,16 @@ class DevicePanel(QWidget):
                 break
 
         self.spinTimeout.setValue(params.get("read_timeout", 5.0))
-        self.spinSampleRate.setValue(params.get("sample_rate", 30_000))
-        self.spinDuration.setValue(params.get("duration", 0.5))
+
+        cfg = config_data or params
+        sample_rate = cfg.get("sample_rate", params.get("sample_rate", 30_000))
+        record_length = cfg.get("record_length")
+        duration = params.get("duration", 0.5)
+        if record_length is not None and sample_rate:
+            duration = max(float(record_length) / float(sample_rate), 0.001)
+
+        self.spinSampleRate.setValue(int(sample_rate))
+        self.spinDuration.setValue(duration)
         self._update_samples()
 
         src = params.get("trigger_source", "")
@@ -309,6 +330,20 @@ class DevicePanel(QWidget):
         else:
             self.chkTrig.setChecked(False)
 
-    def set_config(self, params: dict):
-        """恢复设备配置（load_params 的别名，用于 ConfigManager）"""
-        self.load_params(params)
+        slope = params.get("trigger_slope", "rising")
+        for i in range(self.cmbTrigSlope.count()):
+            if self.cmbTrigSlope.itemData(i) == slope:
+                self.cmbTrigSlope.setCurrentIndex(i)
+                break
+        self.spinTrigLevel.setValue(params.get("trigger_level", 1.0))
+
+    def set_config(self, state: dict):
+        """恢复设备配置（兼容旧版扁平 dict 和新版嵌套 state）。"""
+        if "params" in state or "config" in state:
+            params = state.get("params", {})
+            config_data = state.get("config", {})
+            if "duration" in state:
+                params = {**params, "duration": state["duration"]}
+            self.load_params(params, config_data)
+        else:
+            self.load_params(state)

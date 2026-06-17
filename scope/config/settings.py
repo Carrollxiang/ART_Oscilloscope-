@@ -42,7 +42,7 @@ class ConfigManager:
 
             # 保存设备配置
             if hasattr(main_window, 'device_panel'):
-                config['device'] = main_window.device_panel.get_config()
+                config['device'] = main_window.device_panel.get_state()
 
             # 保存测量配置
             if hasattr(main_window, 'measure_panel'):

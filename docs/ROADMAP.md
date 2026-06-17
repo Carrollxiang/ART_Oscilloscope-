@@ -1,6 +1,10 @@
 # 实施路线图
 
 > **总体策略**: 每阶段产出是可独立运行验证的增量，不依赖硬件到位。数据模型先行 → 反馈系统验证 → UI 界面 → 硬件集成。
+>
+> **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，部分 v0.5 结构示例和测试数量不是最新状态。
+>
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；测试基线为 `81 passed`。
 
 ---
 
@@ -330,7 +334,7 @@ scope/
 
 ---
 
-## Phase 7 — 反馈系统架构重构 (规划中, v0.6)
+## Phase 7 — 反馈系统架构重构 (核心已完成, v0.6)
 
 ### 目标
 
@@ -497,13 +501,16 @@ python -m scope.main
 | v0.3 | 2026/5/21 | Pipeline + EventBus |
 | v0.4 | 2026/6/4 | 文档更新尝试 |
 | **v0.5** | **2026/6/5** | **数据模型重构 + Pipeline 删除** |
+| **v0.6** | **2026/6/17** | **反馈 Worker 架构 + 设备配置控制面 EventBus 化** |
 
 ---
 
 ## 当前状态
 
 - ✅ Phase 0-6 全部完成
-- ✅ 主要功能已实现并验证
-- ✅ 架构简化，代码量减少 33%
-- ✅ 测试覆盖: 45/45 通过
-- 🟡 Phase 7 持续优化中
+- ✅ Phase 7 反馈 Worker 架构核心已实现
+- ✅ 设备配置 UI 已发布 `config.change`，由 ConfigWorker 应用
+- ✅ 测量规格 UI 已发布 `measurement.specs.changed`，由 MeasurementConfigWorker 应用
+- ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
+- ✅ 当前测试基线: 81/81 通过
+- 🟡 下一步: `feedback.status` / `runtime.metrics` 状态读取路径事件化

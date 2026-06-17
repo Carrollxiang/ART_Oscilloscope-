@@ -11,12 +11,13 @@ from typing import Optional
 
 import numpy as np
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem
 
 from scope.model import RawFrame
-from scope.runtime import FittedSnapshot
+from scope.runtime import ConfigChange, FittedSnapshot
 from scope.io import FeedbackManager
+from scope.hardware import DeviceConfig
 from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
 from .panels.measurement_panel import MeasurementPanel
@@ -42,15 +43,12 @@ class MainWindow(QMainWindow):
       - 数据流: AnalysisResult → update_display()
     """
 
-    # 跨线程信号 (旧 data_received 已移除, 统一走 UIBridge)
-    # ART 配置变更信号: 设备面板确认 → ScopeApp 重建设备
-    art_config_applied = pyqtSignal(dict, object)
-
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
                  async_loop=None, event_bus=None):
         super().__init__()
         self._async_loop = async_loop
         self._event_bus = event_bus
+        self._config_change_id = 0
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
@@ -110,6 +108,7 @@ class MainWindow(QMainWindow):
             measurement_panel=self.measure_panel,
             status_callback=self._update_status_bar,
             async_loop=getattr(self, '_async_loop', None),
+            event_bus=self._event_bus,
         )
         self._embed_widget(self.tabFeedback.layout(), self.feedback_panel)
 
@@ -147,9 +146,19 @@ class MainWindow(QMainWindow):
                 self._update_status_bar()
 
     def _on_device_config(self, params: dict, config: DeviceConfig):
-        """设备面板 → 转发配置到 ScopeApp。"""
-        logger.info(f"设备配置已应用: {params}")
-        self.art_config_applied.emit(params, config)
+        """设备面板 → 发布配置变更到 EventBus 控制面。"""
+        if not self._event_bus:
+            logger.error("无法应用设备配置: EventBus 未连接")
+            return
+
+        self._config_change_id += 1
+        change = ConfigChange(
+            device_config=config,
+            art_params=params,
+            change_id=self._config_change_id,
+        )
+        self._event_bus.publish("config.change", change)
+        logger.info(f"设备配置变更已发布到 config.change: {params}")
 
     def _on_legend_toggle(self, ch: int, visible: bool):
         """图例点击切换时, 同步通道面板的复选框。"""

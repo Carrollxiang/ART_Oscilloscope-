@@ -255,8 +255,6 @@ class FittedSnapshot:
     ▼
 [ScopeApp._on_frame(chunk)]          ← 采集线程调用
     │
-    ├→ (每10帧) _sync_measurement_specs() → MeasurementProcessor.set_specs()
-    │
     ├→ make_raw_frame(chunk) → RawFrame
     │
     ├→ event_bus.publish("frame.raw", RawFrame)
@@ -628,6 +626,9 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `frame.raw` | `RawFrame` | 2 | drop_oldest | `_on_frame()` | MeasurementProcessor, UIBridge |
 | `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | **FeedbackManager**, UIBridge |
 | `config.change` | `ConfigChange` | 8 | block | UI 面板 | ConfigWorker |
+| `measurement.specs.changed` | `MeasurementSpecsChanged` | 4 | drop_oldest | MeasurementPanel | MeasurementConfigWorker |
+| `feedback.worker.command` | `FeedbackCommand` | 32 | block | FeedbackPanel | FeedbackCommandWorker |
+| `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
 
 ### 8.2 线程边界
 
@@ -644,10 +645,15 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 ├─────────────────────────────────────────────────────────┤
 │  asyncio 线程                                            │
 │    FeedbackManager._dispatch_loop(): queue → dispatch()  │
-│    ConfigWorker:              queue → _on_art_config()   │
+│    ConfigWorker: config.change → _on_art_config()        │
+│    MeasurementConfigWorker: specs.changed → set_specs()  │
+│    FeedbackCommandWorker: worker.command → manager API   │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  Qt 主线程                                               │
+│    DevicePanel.config_applied → publish(config.change)   │
+│    MeasurementPanel edits → publish(specs.changed)       │
+│    FeedbackPanel actions → publish(worker.command)       │
 │    UIBridge.signal → waveform_view / panel / mini_chart │
 └─────────────────────────────────────────────────────────┘
 ```

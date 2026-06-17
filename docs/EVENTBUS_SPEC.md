@@ -1,6 +1,8 @@
 # EventBus 数据路由架构 (v0.5)
 
 > v0.5 重构核心 — 数据面/控制面分离，简化数据流，降低延迟
+>
+> **当前状态**: EventBus 数据面/控制面仍有效；反馈系统已升级到 v0.6 Worker 架构，反馈细节以 [FEEDBACK_SPEC.md](./FEEDBACK_SPEC.md) 为准。当前文档入口见 [README.md](./README.md)。
 
 ---
 
@@ -25,18 +27,18 @@
       ▼
   EventBus.publish("frame.raw", RawFrame)
   ┌─────────────────┬────────────────────┬──────────────────┐
-  ▼                  ▼                    ▼                  
-MeasurementProcessor UIBridge         FeedbackWorker    
+  ▼                  ▼                    ▼
+MeasurementProcessor UIBridge         FeedbackManager
 (独立线程)            (采集线程内        (asyncio loop)
-                      qt信号桥接)                
-      │                  │                    │                  
-      │  订阅             │ 订阅                 │ 订阅              
-      │ frame.raw         │ frame.raw           │ frame.fitted      
-      │                   │ + frame.fitted       │                   
-      ▼                   ▼                     ▼                  
-  扁平计算           Qt 主线程:            直接消费              
-  (4个测量项)        波形/面板/迷你图      FittedSnapshot      
-      │                                      → dispatch_raw
+                      qt信号桥接)
+      │                  │                    │
+      │  订阅             │ 订阅                 │ 订阅
+      │ frame.raw         │ frame.raw           │ frame.fitted
+      │                   │ + frame.fitted       │
+      ▼                   ▼                     ▼
+  扁平计算           Qt 主线程:            分发给 FeedbackWorker
+  (specs.changed     波形/面板/迷你图      (共享订阅)
+   更新测量规格)
       ▼
   EventBus.publish("frame.fitted", FittedSnapshot)
 ```
@@ -46,8 +48,11 @@ MeasurementProcessor UIBridge         FeedbackWorker
 | Topic | Payload 类型 | maxsize | drop 策略 | 生产者 | 消费者 |
 |-------|-------------|---------|-----------|--------|--------|
 | `frame.raw` | `RawFrame`（只有 4 个字段） | 2 | drop_oldest | `_on_frame()` | MeasurementProcessor, UIBridge |
-| `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | UIBridge, FeedbackWorker |
+| `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | UIBridge, FeedbackManager |
 | `config.change` | `ConfigChange`（`DeviceConfig` + params dict） | 8 | block | UI 面板 | ConfigWorker |
+| `measurement.specs.changed` | `MeasurementSpecsChanged` | 4 | drop_oldest | MeasurementPanel | MeasurementConfigWorker |
+| `feedback.worker.command` | `FeedbackCommand` | 32 | block | FeedbackPanel | FeedbackCommandWorker |
+| `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
 
 **对比 v0.3**:
 - ✅ 删除 `frame.measured` topic
@@ -68,8 +73,10 @@ MeasurementProcessor UIBridge         FeedbackWorker
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  asyncio 线程                                            │
-│    FeedbackWorker: queue.get() → dispatch_raw()         │
-│    ConfigWorker:   queue.get() → _on_art_config()       │
+│    FeedbackManager:        frame.fitted → worker.process()│
+│    ConfigWorker:           config.change → _on_art_config()│
+│    MeasurementConfigWorker: specs.changed → set_specs()  │
+│    FeedbackCommandWorker:  worker.command → manager API  │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  Qt 主线程                                               │
@@ -328,7 +335,7 @@ class UIBridge(QObject):
 ```
 运行位置：asyncio 线程（与 FeedbackWorker 共享）
 输入：    config.change 队列 → ConfigChange
-处理：    调用 ScopeApp._on_art_config(change.device_config, change.art_params)
+处理：    调用 ScopeApp._on_art_config(change.art_params, change.device_config)
 ```
 
 ---
@@ -351,16 +358,11 @@ def _on_frame(self, chunk):
 
 ```python
 def _on_frame(self, chunk):
-    # 1. 每 10 帧同步一次测量规格
-    self._frame_count += 1
-    if self._frame_count % 10 == 1:
-        self._sync_measurement_specs()
-    
-    # 2. 组装并发布 RawFrame
+    # 1. 组装并发布 RawFrame
     frame = self.device.make_raw_frame(chunk)
     self._event_bus.publish("frame.raw", frame)
     
-    # 3. 轮询 UI 桥接
+    # 2. 轮询 UI 桥接
     if self._ui_bridge is not None:
         self._ui_bridge.poll()
     
@@ -419,7 +421,7 @@ def _on_frame(self, chunk):
 | UI 更新由 UIBridge 信号驱动 | `measure_panel.update_from_fitted` 只在 Qt 主线程被调用 | ✅ 通过 |
 | 反馈消费 frame.fitted | `FeedbackWorker` 不引用 `AnalysisResult` | ✅ 通过 |
 | 队列背压生效 | 模拟下游慢时 `total_drops > 0` | ✅ 通过 |
-| 现有测试原样通过 | `pytest tests/` | ✅ **45/45 通过** |
+| v0.5 现有测试原样通过 | `pytest tests/` | ✅ **45/45 通过**（当前基线见 README） |
 | Mock 模式正常运行 | `start_mock.bat` | ✅ 通过 |
 
 ---

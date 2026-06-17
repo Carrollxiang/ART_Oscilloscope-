@@ -23,9 +23,9 @@ from PyQt6.QtWidgets import QApplication
 from scope.hardware import DeviceConfig
 from scope.hardware.simulator import SimulatorDevice
 from scope.hardware.art_device import ArtDevice
-from scope.io import FeedbackManager
+from scope.io import FeedbackCommandWorker, FeedbackManager
 from scope.ui import MainWindow
-from scope.runtime import EventBus, DropStrategy, MeasurementProcessor, MeasurementSpec
+from scope.runtime import EventBus, DropStrategy, MeasurementConfigWorker, MeasurementProcessor
 from scope.ui.ui_bridge import UIBridge
 from scope.runtime.config_worker import ConfigWorker
 
@@ -52,7 +52,6 @@ class ScopeApp:
         self._running = False
         self._device_type = "unknown"
         self._async_loop = asyncio.new_event_loop()
-        self._frame_count = 0  # 帧计数器，用于降低同步频率
 
         # 设备配置 (16 通道, ai0:15, 30k Sa/s, 0.5s/帧, ±10V)
         self._config = DeviceConfig(
@@ -69,13 +68,31 @@ class ScopeApp:
         self._event_bus.register_topic("frame.fitted", maxsize=2, on_drop=DropStrategy.DROP_OLDEST)
         self._event_bus.register_topic("config.change", maxsize=8, on_drop=DropStrategy.BLOCK)
         self._event_bus.register_topic("measurement.remove", maxsize=8, on_drop=DropStrategy.BLOCK)
+        self._event_bus.register_topic(
+            "measurement.specs.changed",
+            maxsize=4,
+            on_drop=DropStrategy.DROP_OLDEST,
+        )
+        self._event_bus.register_topic(
+            "feedback.worker.command",
+            maxsize=32,
+            on_drop=DropStrategy.BLOCK,
+        )
 
         # MeasurementProcessor — 独立线程运行测量计算
         self._processor = MeasurementProcessor(self._event_bus, specs=[])
+        self._measurement_config_worker = MeasurementConfigWorker(
+            self._event_bus,
+            self._processor,
+        )
 
         # FeedbackManager — 内部持有 EventBus 订阅和分发协程
         # (Worker 通过 add_worker 添加)
         self.feedback_mgr = FeedbackManager(event_bus=self._event_bus)
+        self._feedback_command_worker = FeedbackCommandWorker(
+            self._event_bus,
+            self.feedback_mgr,
+        )
 
         # ConfigWorker — asyncio 消费 config.change
         self._config_worker = ConfigWorker(
@@ -164,23 +181,19 @@ class ScopeApp:
             async_loop=self._async_loop,
             event_bus=self._event_bus
         )
-        self.main_win.art_config_applied.connect(self._on_art_config)
         self.main_win.show()
 
         # 3. 创建 UIBridge 并连接信号
         self._ui_bridge = UIBridge(self._event_bus)
         self.main_win.connect_ui_bridge(self._ui_bridge)
 
-        # 4. 初始化测量规格（确保第一帧就有 specs）
-        self._sync_measurement_specs()
-
-        # 5. 启动 MeasurementProcessor
+        # 4. 启动 MeasurementProcessor
         self._processor.start()
 
-        # 6. 注册数据回调 (统一事件驱动)
+        # 5. 注册数据回调 (统一事件驱动)
         self.device.set_data_callback(self._on_frame)
 
-        # 7. 启动设备采集
+        # 6. 启动设备采集
         self.device.start_acquisition()
 
         self._running = True
@@ -200,6 +213,12 @@ class ScopeApp:
         # 停止 MeasurementProcessor
         if hasattr(self, '_processor'):
             self._processor.stop()
+        if hasattr(self, '_measurement_config_worker'):
+            self._measurement_config_worker.stop()
+        if hasattr(self, '_feedback_command_worker'):
+            self._feedback_command_worker.stop()
+        if hasattr(self, '_config_worker'):
+            self._config_worker.stop()
 
         # 停止设备
         self.device.stop_acquisition()
@@ -215,39 +234,21 @@ class ScopeApp:
         事件驱动回调: 每收到一帧原始数据后调用。
         
         职责:
-          1. 低频同步测量规格 (每 10 帧)
-          2. 组装 RawFrame
-          3. 发布到 EventBus
-          4. 轮询 UIBridge
+          1. 组装 RawFrame
+          2. 发布到 EventBus
+          3. 轮询 UIBridge
         """
         try:
-            # 1. 每 10 帧同步一次测量规格（降低开销）
-            self._frame_count += 1
-            if self._frame_count % 10 == 1:  # 第 1, 11, 21... 帧
-                self._sync_measurement_specs()
-
-            # 2. 组装并发布
+            # 1. 组装并发布
             frame = self.device.make_raw_frame(chunk)
             self._event_bus.publish("frame.raw", frame)
 
-            # 3. 轮询 UI 桥接
+            # 2. 轮询 UI 桥接
             if self._ui_bridge is not None:
                 self._ui_bridge.poll()
 
         except Exception as e:
             logger.error(f"帧处理错误: {e}", exc_info=True)
-
-    def _sync_measurement_specs(self):
-        """从 MeasurementPanel 同步测量规格到 MeasurementProcessor"""
-        if not (self.main_win and hasattr(self.main_win, 'measure_panel')):
-            return
-
-        try:
-            specs_dict = self.main_win.measure_panel.get_measurement_specs()
-            specs = [MeasurementSpec(**d) for d in specs_dict]
-            self._processor.set_specs(specs)
-        except Exception as e:
-            logger.warning(f"同步测量规格失败: {e}")
 
     def _on_art_config(self, params: dict, config: DeviceConfig):
         """
@@ -337,6 +338,8 @@ class ScopeApp:
         asyncio.set_event_loop(self._async_loop)
         self._async_loop.create_task(self.feedback_mgr.start())
         self._async_loop.create_task(self._config_worker.run())
+        self._async_loop.create_task(self._measurement_config_worker.run())
+        self._async_loop.create_task(self._feedback_command_worker.run())
         self._async_loop.run_forever()
 
 

@@ -8,7 +8,7 @@
 - [x] `BoundedQueue` → 扩展为 `EventBus` 类（多 topic / 多 subscriber 独立队列 / publish / metrics）
 - [x] `FittedSnapshot` — FitWorker 产出物（channel_measurements + event_measurements）
 - [x] `ConfigChange` — 控制面配置变更指令
-- [x] EventBus 注册 3 个 topic：`frame.measured`/`frame.fitted`/`config.change`
+- [x] EventBus 注册核心 topic：`frame.raw`/`frame.fitted`/`config.change`/`measurement.specs.changed`/`measurement.remove`/`feedback.worker.command`
 
 ### Phase 2 — FitWorker（接管全部计算） ✅
 - [x] 独立线程运行 `ProcessingPipeline`（AutoMeasure / MathOp / FFT）
@@ -30,6 +30,8 @@
 
 ### Phase 5 — ConfigWorker + 控制面隔离 ✅
 - [x] `ConfigWorker` — 订阅 `config.change`，`change_id` 去重，`run_in_executor` 调用
+- [x] `MeasurementConfigWorker` — 订阅 `measurement.specs.changed`，更新 MeasurementProcessor specs
+- [x] `FeedbackCommandWorker` — 订阅 `feedback.worker.command`，统一应用 add/pause/resume/remove/update_pid
 - [x] 在 asyncio loop 中与 FeedbackWorker 并行运行
 
 ---
@@ -39,7 +41,9 @@
 ### P2 - 交互流畅度（低优先级，可后续补充）
 
 - [ ] **错误弹窗限流**（同类错误 N 秒内只提示一次） — `FeedbackPanel._notified_auto_pause` 已有去重思路，可强化
-- [ ] **UI 面板操作 → config.change 发布** — 当前 DevicePanel 仍直接 emit `art_config_applied`，未走 ConfigWorker publish 路径
+- [x] **设备配置 UI → config.change 发布** — DevicePanel 本地信号由 MainWindow 包装为 `ConfigChange`，经 ConfigWorker 应用
+- [x] **测量规格 UI → measurement.specs.changed 发布** — MeasurementPanel 发布完整 specs 快照，经 MeasurementConfigWorker 应用
+- [x] **反馈控制 UI → feedback.worker.command 发布** — FeedbackPanel 发布命令，经 FeedbackCommandWorker 应用
 - [ ] **ControlQueue 帧边界原子生效** — ConfigWorker 可用，但 UI 端未改为异步发送
 
 ### 验收指标（待长跑验证）
@@ -79,9 +83,9 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **76/76 测试通过** (42 个新反馈测试 + 34 个旧测试，零回归)
+- **81/81 测试通过** (新增测量规格控制面与反馈命令控制面测试)
 
 ### 待完成
-- [ ] **FeedbackDialog 升级** — 从占位 QMessageBox 升级为真正的配置表单，调用 `feedback_manager.add_worker()`
-- [ ] **FeedbackPanel.refresh_slots()** — 实现 UI 刷新显示 worker 列表
+- [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`
+- [x] **FeedbackPanel.refresh_slots()** — 已实现 UI 刷新显示 worker 列表
 - [ ] Mock 模式完整测试（添加 worker、暂停/恢复、配置保存/加载）

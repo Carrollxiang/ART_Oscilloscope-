@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
 )
 
-from scope.runtime import FittedSnapshot
+from scope.runtime import FittedSnapshot, MeasurementSpec, MeasurementSpecsChanged
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class MeasurementRow(QWidget):
     _next_id = 0
     # 名称变更信号
     name_changed = pyqtSignal(int)  # row_id
+    config_changed = pyqtSignal(int)  # row_id
 
     def __init__(self, parent=None,
                  name: str = "",
@@ -138,6 +139,14 @@ class MeasurementRow(QWidget):
 
         layout.addStretch()
 
+        self.channel_combo.currentIndexChanged.connect(self._emit_config_changed)
+        self.meas_combo.currentIndexChanged.connect(self._emit_config_changed)
+        self.start_spin.valueChanged.connect(self._emit_config_changed)
+        self.end_spin.valueChanged.connect(self._emit_config_changed)
+
+    def _emit_config_changed(self, *args):
+        self.config_changed.emit(self._row_id)
+
     @staticmethod
     def _unit_of(key: str) -> str:
         for k, _, u in MEASUREMENT_TYPES:
@@ -214,6 +223,7 @@ class MeasurementPanel:
         self._rows: list[MeasurementRow] = []
         self._event_bus = event_bus
         self._name_change_callback = None
+        self._spec_change_id = 0
         self._setup_ui()
 
         # 默认行
@@ -277,16 +287,22 @@ class MeasurementPanel:
             on_remove=self._on_remove,
         )
         row.name_changed.connect(self._on_row_name_changed)
+        row.config_changed.connect(self._on_row_config_changed)
         self._rows.append(row)
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
+        self._publish_specs_changed()
         return row
 
     def _on_row_name_changed(self, row_id: int):
         """行名称变更 → 通知回调"""
         if self._name_change_callback:
             self._name_change_callback()
+
+    def _on_row_config_changed(self, row_id: int):
+        """行配置变更 → 发布完整测量规格快照"""
+        self._publish_specs_changed()
 
     def _on_add(self):
         self.add_row()
@@ -300,6 +316,7 @@ class MeasurementPanel:
 
             if self._event_bus:
                 self._event_bus.publish("measurement.remove", tag)
+            self._publish_specs_changed()
 
     def get_measurement_specs(self) -> list[dict]:
         """返回测量规格列表，供 MeasurementProcessor 使用"""
@@ -346,3 +363,25 @@ class MeasurementPanel:
                 start_time=item.get("start_ms", 0.0),
                 end_time=item.get("end_ms", 500.0),
             )
+
+        self._publish_specs_changed()
+
+    def _publish_specs_changed(self):
+        """发布完整 MeasurementSpec 快照到控制面。"""
+        if not self._event_bus:
+            return
+
+        try:
+            specs = [MeasurementSpec(**item) for item in self.get_measurement_specs()]
+        except Exception as e:
+            logger.warning("构建 MeasurementSpec 快照失败: %s", e)
+            return
+
+        self._spec_change_id += 1
+        self._event_bus.publish(
+            "measurement.specs.changed",
+            MeasurementSpecsChanged(
+                specs=specs,
+                change_id=self._spec_change_id,
+            ),
+        )
