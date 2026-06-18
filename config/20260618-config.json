@@ -1,0 +1,326 @@
+{
+  "channels": [
+    {
+      "channel": 0,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 1,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 2,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 3,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 4,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 5,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 6,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 7,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 8,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 9,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 10,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 11,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 12,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 13,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 14,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 15,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    }
+  ],
+  "device": {
+    "params": {
+      "device_name": "Dev42",
+      "ai_channels": "ai0:15",
+      "terminal_config": "NRSE",
+      "read_timeout": 5.0,
+      "trigger_source": "ai12",
+      "trigger_slope": "rising",
+      "trigger_level": 1.0
+    },
+    "config": {
+      "sample_rate": 30000,
+      "channels_enabled": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "vertical_ranges": [
+        5.0,
+        5.0,
+        5.0,
+        5.0
+      ],
+      "channel_min_vals": [
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0
+      ],
+      "channel_max_vals": [
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0
+      ],
+      "trigger_source": 0,
+      "trigger_level": 0.0,
+      "trigger_slope": "rising",
+      "record_length": 15000
+    },
+    "duration": 0.5
+  },
+  "measurements": [
+    {
+      "tag": "m3",
+      "name": "780 X+ Det Cooling",
+      "channel": 1,
+      "channel_name": "CH2",
+      "feature": "Mean",
+      "start_ms": 21.0,
+      "end_ms": 29.0
+    },
+    {
+      "tag": "m4",
+      "name": "780 X- Det Cooling",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 21.0,
+      "end_ms": 29.0
+    },
+    {
+      "tag": "m5",
+      "name": "780 X- EIT Cooling",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 31.0,
+      "end_ms": 39.0
+    },
+    {
+      "tag": "m6",
+      "name": "780 X- Det Repump",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 41.0,
+      "end_ms": 49.0
+    },
+    {
+      "tag": "m7",
+      "name": "780 X- Pushout",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 51.0,
+      "end_ms": 59.0
+    },
+    {
+      "tag": "m8",
+      "name": "780 X- MOT Cooling",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 61.0,
+      "end_ms": 69.0
+    },
+    {
+      "tag": "m9",
+      "name": "780 X- MOT Repump",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 71.0,
+      "end_ms": 79.0
+    },
+    {
+      "tag": "m10",
+      "name": "780 Cooling TA 分光监控",
+      "channel": 6,
+      "channel_name": "CH7",
+      "feature": "Mean",
+      "start_ms": 10.0,
+      "end_ms": 200.0
+    },
+    {
+      "tag": "m11",
+      "name": "795 X+ GM Depump",
+      "channel": 8,
+      "channel_name": "CH9",
+      "feature": "Mean",
+      "start_ms": 21.0,
+      "end_ms": 29.0
+    },
+    {
+      "tag": "m12",
+      "name": "795 X+ SP Depump/Clock SP Depump",
+      "channel": 8,
+      "channel_name": "CH9",
+      "feature": "Mean",
+      "start_ms": 31.0,
+      "end_ms": 39.0
+    },
+    {
+      "tag": "m13",
+      "name": "795 X+ GM Repump",
+      "channel": 8,
+      "channel_name": "CH9",
+      "feature": "Mean",
+      "start_ms": 51.0,
+      "end_ms": 58.0
+    },
+    {
+      "tag": "m14",
+      "name": "795 X+ SP Repump",
+      "channel": 8,
+      "channel_name": "CH9",
+      "feature": "Mean",
+      "start_ms": 41.0,
+      "end_ms": 49.0
+    },
+    {
+      "tag": "m15",
+      "name": "795 X- GM Depump",
+      "channel": 14,
+      "channel_name": "CH15",
+      "feature": "Mean",
+      "start_ms": 61.0,
+      "end_ms": 69.0
+    },
+    {
+      "tag": "m16",
+      "name": "795 X- Clock SP Depump",
+      "channel": 14,
+      "channel_name": "CH15",
+      "feature": "Mean",
+      "start_ms": 71.0,
+      "end_ms": 79.0
+    },
+    {
+      "tag": "m17",
+      "name": "795 X-  Repump",
+      "channel": 14,
+      "channel_name": "CH15",
+      "feature": "Mean",
+      "start_ms": 81.0,
+      "end_ms": 89.0
+    },
+    {
+      "tag": "m18",
+      "name": "780 X- Local Raman",
+      "channel": 4,
+      "channel_name": "CH5",
+      "feature": "Mean",
+      "start_ms": 96.0,
+      "end_ms": 102.0
+    }
+  ],
+  "feedback_workers": []
+}

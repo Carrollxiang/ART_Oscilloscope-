@@ -1,0 +1,231 @@
+{
+  "channels": [
+    {
+      "channel": 0,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 1,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 2,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 3,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 4,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 5,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 6,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 7,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 8,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 9,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 10,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 11,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 12,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 13,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 14,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    },
+    {
+      "channel": 15,
+      "enabled": true,
+      "min_v": -10.0,
+      "max_v": 10.0
+    }
+  ],
+  "device": {
+    "params": {
+      "device_name": "Dev42",
+      "ai_channels": "ai0:15",
+      "terminal_config": "NRSE",
+      "read_timeout": 5.0,
+      "trigger_source": "ai12",
+      "trigger_slope": "rising",
+      "trigger_level": 1.0
+    },
+    "config": {
+      "sample_rate": 30000,
+      "channels_enabled": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "vertical_ranges": [
+        5.0,
+        5.0,
+        5.0,
+        5.0
+      ],
+      "channel_min_vals": [
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0
+      ],
+      "channel_max_vals": [
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0
+      ],
+      "trigger_source": 0,
+      "trigger_level": 0.0,
+      "trigger_slope": "rising",
+      "record_length": 15000
+    },
+    "duration": 0.5
+  },
+  "measurements": [
+    {
+      "tag": "m0",
+      "channel": 0,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m1",
+      "channel": 0,
+      "feature": "Mean",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m2",
+      "channel": 1,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m3",
+      "channel": 0,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m4",
+      "channel": 0,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m5",
+      "channel": 0,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    },
+    {
+      "tag": "m6",
+      "channel": 0,
+      "feature": "Vpp",
+      "start_ms": 0.0,
+      "end_ms": 500.0
+    }
+  ],
+  "feedback_workers": []
+}

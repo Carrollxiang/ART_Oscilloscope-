@@ -245,6 +245,7 @@ class MeasurementPanel:
         self._event_bus = event_bus
         self._name_change_callback = None
         self._spec_change_id = 0
+        self._suspend_spec_publish = False
         self._setup_ui()
 
         if initial_measurements:
@@ -303,7 +304,8 @@ class MeasurementPanel:
     def add_row(self, name: str = "", channel: str = "CH1",
                 meas_key: str = "Vpp",
                 start_time: float = 0.0, end_time: float = 500.0,
-                stable_tag: str | None = None):
+                stable_tag: str | None = None,
+                publish: bool = True):
         row = MeasurementRow(
             name=name, channel=channel, meas_key=meas_key,
             start_time=start_time, end_time=end_time,
@@ -317,7 +319,8 @@ class MeasurementPanel:
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
-        self._publish_specs_changed()
+        if publish and not self._suspend_spec_publish:
+            self._publish_specs_changed()
         return row
 
     def _on_row_name_changed(self, row_id: int):
@@ -341,7 +344,8 @@ class MeasurementPanel:
 
             if self._event_bus:
                 self._event_bus.publish("measurement.remove", tag)
-            self._publish_specs_changed()
+            if not self._suspend_spec_publish:
+                self._publish_specs_changed()
 
     def get_measurement_specs(self) -> list[dict]:
         """返回测量规格列表，供 MeasurementProcessor 使用"""
@@ -378,41 +382,57 @@ class MeasurementPanel:
 
     def set_config(self, config: list[dict]):
         """恢复测量配置（清空重建）"""
-        self.clear_all()
+        self._suspend_spec_publish = True
+        try:
+            self.clear_all()
 
-        for item in config:
-            # 兼容新旧格式：新格式有"name"字段，旧格式用"tag"作为显示名
-            display_name = item.get("name") or item.get("tag", "")
-            self.add_row(
-                name=display_name,
-                channel=f"CH{item.get('channel', 0) + 1}",
-                meas_key=item.get("feature", "Vpp"),
-                start_time=item.get("start_ms", 0.0),
-                end_time=item.get("end_ms", 500.0),
-                stable_tag=item.get("tag"),
-            )
+            for item in config:
+                # 兼容新旧格式：新格式有"name"字段，旧格式用"tag"作为显示名
+                display_name = item.get("name") or item.get("tag", "")
+                self.add_row(
+                    name=display_name,
+                    channel=f"CH{item.get('channel', 0) + 1}",
+                    meas_key=item.get("feature", "Vpp"),
+                    start_time=item.get("start_ms", 0.0),
+                    end_time=item.get("end_ms", 500.0),
+                    stable_tag=item.get("tag"),
+                    publish=False,
+                )
+        finally:
+            self._suspend_spec_publish = False
 
         self._publish_specs_changed()
 
+    @staticmethod
+    def _runtime_spec_from_item(item: dict) -> MeasurementSpec | None:
+        """把 UI 行快照转成运行时规格；非法项保留 UI 行但不发布。"""
+        try:
+            return MeasurementSpec(
+                tag=item["tag"],
+                channel=item["channel"],
+                feature=item["feature"],
+                start_ms=item["start_ms"],
+                end_ms=item["end_ms"],
+            )
+        except Exception as e:
+            logger.warning(
+                "跳过无效测量项 %s (%s): %s",
+                item.get("tag", "<unknown>"),
+                item.get("name", ""),
+                e,
+            )
+            return None
+
     def _publish_specs_changed(self):
         """发布完整 MeasurementSpec 快照到控制面。"""
-        if not self._event_bus:
+        if not self._event_bus or self._suspend_spec_publish:
             return
 
-        try:
-            specs = [
-                MeasurementSpec(
-                    tag=item["tag"],
-                    channel=item["channel"],
-                    feature=item["feature"],
-                    start_ms=item["start_ms"],
-                    end_ms=item["end_ms"],
-                )
-                for item in self.get_measurement_specs()
-            ]
-        except Exception as e:
-            logger.warning("构建 MeasurementSpec 快照失败: %s", e)
-            return
+        specs = [
+            spec
+            for item in self.get_measurement_specs()
+            if (spec := self._runtime_spec_from_item(item)) is not None
+        ]
 
         self._spec_change_id += 1
         self._event_bus.publish(
