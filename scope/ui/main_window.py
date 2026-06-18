@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         # 水平分割: 迷你图 1/4, 配置Tab 3/4
         bs = getattr(self, 'bottomSplitter', None)
         if bs:
-            bs.setSizes([150, 450])
+            bs.setSizes([300, 300])
 
         # ── 迷你图 (左下角持久化) ──
         self.mini_chart = MiniChartWidget()
@@ -260,7 +260,8 @@ class MainWindow(QMainWindow):
                 self.measure_panel.update_from_fitted(fitted_snapshot)
 
             flat = fitted_snapshot.as_flat_dict()
-            if flat and hasattr(self, 'mini_chart'):
+            if flat and hasattr(self, 'mini_chart') and hasattr(self, 'measure_panel'):
+                self.mini_chart.set_display_names(self.measure_panel.get_display_name_mapping())
                 self.mini_chart.add_data(flat)
                 self.mini_chart.refresh_now()
                 if fitted_snapshot.sequence_num % 10 == 1:

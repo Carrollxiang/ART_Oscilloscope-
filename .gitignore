@@ -42,3 +42,14 @@ test_hardware.py
 
 # Hardware interface modules (in development)
 rtmq/
+
+# Reasonix agent artifacts
+.reasonix/
+.codegraph/
+reasonix.toml
+
+# Windows reserved names
+nul
+
+# Config snapshots (optional)
+config/*.json

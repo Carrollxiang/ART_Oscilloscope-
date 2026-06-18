@@ -21,7 +21,7 @@ from typing import Optional
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget,
+    QFrame,
     QHBoxLayout,
     QVBoxLayout,
     QComboBox,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QPushButton,
     QScrollArea,
+    QWidget,
 )
 
 from scope.runtime import FittedSnapshot, MeasurementSpec, MeasurementSpecsChanged
@@ -48,8 +49,20 @@ MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
 ]
 
 
-class MeasurementRow(QWidget):
-    """单行: [名称] [通道▼] [测量项▼] [起始] [结束] [值] [✕]"""
+class NoWheelComboBox(QComboBox):
+    """QComboBox 子类 — 忽略鼠标滚轮事件，防止滚轮意外修改值"""
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox 子类 — 忽略鼠标滚轮事件，防止滚轮意外修改值"""
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class MeasurementRow(QFrame):
+    """单行卡片: [名称] [通道▼] [测量项▼] [起始] [结束] [值] [✕]"""
 
     # 类级别自增 ID 计数器
     _next_id = 0
@@ -73,26 +86,58 @@ class MeasurementRow(QWidget):
         self._on_remove = on_remove
         self._frame_duration = frame_duration
 
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet("""
+            MeasurementRow {
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
+                padding: 0px;
+                margin: 1px 0px;
+                background: #FFFFFF;
+            }
+            MeasurementRow:hover {
+                border-color: #999999;
+            }
+        """)
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 3, 0, 3)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
 
         # 名称（用户可改，仅作显示用）
         self.name_edit = QLineEdit(name)
         self.name_edit.setPlaceholderText("名称")
-        self.name_edit.setFixedWidth(80)
+        self.name_edit.setStyleSheet(
+            "QLineEdit { background: #F5F5F5; color: #111; border: 1px solid #999;"
+            " border-radius: 3px; padding: 2px 4px; }"
+        )
+        self.name_edit.setFixedWidth(240)
         self.name_edit.textChanged.connect(lambda: self.name_changed.emit(self._row_id))
         layout.addWidget(self.name_edit)
 
         # 通道
-        self.channel_combo = QComboBox()
+        self.channel_combo = NoWheelComboBox()
+        self.channel_combo.setStyleSheet(
+            "NoWheelComboBox { background: #F5F5F5; color: #111; border: 1px solid #999;"
+            " border-radius: 3px; padding: 2px 4px; }"
+            "NoWheelComboBox:hover { border-color: #777; }"
+            "NoWheelComboBox QAbstractItemView { background: #FFFFFF; color: #111;"
+            "  selection-background-color: #DDDDDD; }"
+        )
         self.channel_combo.addItems(CHANNELS)
         self.channel_combo.setCurrentText(channel)
         self.channel_combo.setFixedWidth(65)
         layout.addWidget(self.channel_combo)
 
         # 测量项
-        self.meas_combo = QComboBox()
+        self.meas_combo = NoWheelComboBox()
+        self.meas_combo.setStyleSheet(
+            "NoWheelComboBox { background: #F5F5F5; color: #111; border: 1px solid #999;"
+            " border-radius: 3px; padding: 2px 4px; }"
+            "NoWheelComboBox:hover { border-color: #777; }"
+            "NoWheelComboBox QAbstractItemView { background: #FFFFFF; color: #111;"
+            "  selection-background-color: #DDDDDD; }"
+        )
         for key, label, unit in MEASUREMENT_TYPES:
             self.meas_combo.addItem(f"{label} ({unit})", key)
         idx = next((i for i, (k, _, _) in enumerate(MEASUREMENT_TYPES)
@@ -102,7 +147,12 @@ class MeasurementRow(QWidget):
         layout.addWidget(self.meas_combo)
 
         # 起始时间 (ms)
-        self.start_spin = QDoubleSpinBox()
+        self.start_spin = NoWheelDoubleSpinBox()
+        self.start_spin.setStyleSheet(
+            "NoWheelDoubleSpinBox { background: #F5F5F5; color: #111; border: 1px solid #999;"
+            " border-radius: 3px; padding: 2px 2px; }"
+            "NoWheelDoubleSpinBox:hover { border-color: #777; }"
+        )
         self.start_spin.setDecimals(1)
         self.start_spin.setRange(0.0, 60_000.0)
         self.start_spin.setSuffix(" ms")
@@ -112,7 +162,12 @@ class MeasurementRow(QWidget):
         layout.addWidget(self.start_spin)
 
         # 结束时间 (ms)
-        self.end_spin = QDoubleSpinBox()
+        self.end_spin = NoWheelDoubleSpinBox()
+        self.end_spin.setStyleSheet(
+            "NoWheelDoubleSpinBox { background: #F5F5F5; color: #111; border: 1px solid #999;"
+            " border-radius: 3px; padding: 2px 2px; }"
+            "NoWheelDoubleSpinBox:hover { border-color: #777; }"
+        )
         self.end_spin.setDecimals(1)
         self.end_spin.setRange(0.1, 60_000.0)
         self.end_spin.setSuffix(" ms")
@@ -121,10 +176,16 @@ class MeasurementRow(QWidget):
         self.end_spin.setFixedWidth(90)
         layout.addWidget(self.end_spin)
 
-        # 值 + 标准差 + 单位
+        layout.addStretch()
+
+        # 值 + 单位 (右侧视觉重心)
         self.value_label = QLabel("—")
-        self.value_label.setStyleSheet("font-weight: bold; font-size: 13px;")
-        self.value_label.setMinimumWidth(160)
+        self.value_label.setStyleSheet(
+            "color: #00008B; font-weight: bold; font-size: 15px;"
+            "font-family: Consolas, monospace;"
+        )
+        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.value_label.setMinimumWidth(150)
         layout.addWidget(self.value_label)
 
         # 删除
@@ -133,17 +194,18 @@ class MeasurementRow(QWidget):
             btn.setFixedSize(22, 22)
             btn.setStyleSheet(
                 "QPushButton { color: #FF4444; border: none; }"
-                "QPushButton:hover { background: #442222; }"
+                "QPushButton:hover { background: #FFCCCC; }"
             )
             btn.clicked.connect(lambda: self._on_remove(self))
             layout.addWidget(btn)
 
-        layout.addStretch()
-
         self.channel_combo.currentIndexChanged.connect(self._emit_config_changed)
         self.meas_combo.currentIndexChanged.connect(self._emit_config_changed)
+        self.meas_combo.currentIndexChanged.connect(self._update_value_unit)
         self.start_spin.valueChanged.connect(self._emit_config_changed)
         self.end_spin.valueChanged.connect(self._emit_config_changed)
+
+        self._update_value_unit()
 
     def _emit_config_changed(self, *args):
         self.config_changed.emit(self._row_id)
@@ -203,8 +265,11 @@ class MeasurementRow(QWidget):
 
     # ── 显示值 ─────────────────────────────────────────────────
 
+    _last_value: Optional[float] = None
+
     def set_value(self, value: Optional[float]):
         """用已算好的值直接更新显示。从 FittedSnapshot 获取。"""
+        self._last_value = value
         unit = self._unit_of(self.get_meas_key())
         if value is not None and not np.isnan(value):
             self.value_label.setText(f"{self._fmt(value)} {unit}")
@@ -213,16 +278,12 @@ class MeasurementRow(QWidget):
 
     @staticmethod
     def _fmt(v: float) -> str:
-        if abs(v) >= 10000:
-            return f"{v:.1f}"
-        elif abs(v) >= 1:
-            return f"{v:.4f}"
-        elif abs(v) >= 0.001:
-            return f"{v:.6f}"
-        elif v == 0:
-            return "0"
-        else:
-            return f"{v:.3e}"
+        """固定 4 位小数格式化"""
+        return f"{v:.4f}"
+
+    def _update_value_unit(self):
+        """测量项变更时刷新单位后缀"""
+        self.set_value(self._last_value)
 
 
 class MeasurementPanel:
@@ -286,7 +347,37 @@ class MeasurementPanel:
         self._container = QWidget()
         self._container_layout = QVBoxLayout(self._container)
         self._container_layout.setContentsMargins(0, 0, 0, 0)
-        self._container_layout.setSpacing(2)
+        self._container_layout.setSpacing(4)
+
+        # 列标题栏
+        header = QWidget()
+        header.setStyleSheet("background: transparent;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 2, 8, 2)
+        header_layout.setSpacing(8)
+        cols = [
+            ("名称", 240),
+            ("通道", 65),
+            ("测量", 120),
+            ("起始", 90),
+            ("结束", 90),
+        ]
+        for text, w in cols:
+            lbl = QLabel(text)
+            lbl.setFixedWidth(w)
+            lbl.setStyleSheet("color: #333; font-size: 10px;")
+            header_layout.addWidget(lbl)
+        # 值标题 (右侧)
+        val_lbl = QLabel("值")
+        val_lbl.setStyleSheet("color: #333; font-size: 10px;")
+        val_lbl.setMinimumWidth(150)
+        val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(val_lbl)
+        # 删除列占位
+        header_layout.addSpacing(22)
+        header_layout.addStretch()
+        self._container_layout.addWidget(header)
+
         self._container_layout.addStretch()
         scroll.setWidget(self._container)
         layout.addWidget(scroll, stretch=1)
@@ -296,7 +387,7 @@ class MeasurementPanel:
         btn_add.setStyleSheet(
             "QPushButton { color: #00CC00; border: 1px solid #336633; "
             "padding: 4px; }"
-            "QPushButton:hover { background: #224422; }"
+            "QPushButton:hover { background: #D0F0D0; }"
         )
         btn_add.clicked.connect(self._on_add)
         layout.addWidget(btn_add)

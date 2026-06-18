@@ -108,34 +108,34 @@ class WorkerCard(QFrame):
 
         # ID + 测量项
         self._name_label = QLabel(worker_id)
-        self._name_label.setStyleSheet("color: #ddd; font-weight: bold; font-size: 12px;")
+        self._name_label.setStyleSheet("color: #111; font-weight: bold; font-size: 12px;")
         self._name_label.setMinimumWidth(140)
         header_layout.addWidget(self._name_label)
 
         # 测量项
         self._meas_label = QLabel("")
-        self._meas_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._meas_label.setStyleSheet("color: #111; font-size: 11px;")
         self._meas_label.setMinimumWidth(80)
         header_layout.addWidget(self._meas_label)
 
         # 目标值
         header_layout.addWidget(QLabel("目标:"))
         self._preset_label = QLabel("—")
-        self._preset_label.setStyleSheet("color: #aae; font-weight: bold;")
+        self._preset_label.setStyleSheet("color: #111; font-weight: bold;")
         self._preset_label.setMinimumWidth(60)
         header_layout.addWidget(self._preset_label)
 
         # 实际值
         header_layout.addWidget(QLabel("实际:"))
         self._value_label = QLabel("—")
-        self._value_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 12px;")
+        self._value_label.setStyleSheet("color: #111; font-weight: bold; font-size: 12px;")
         self._value_label.setMinimumWidth(70)
         header_layout.addWidget(self._value_label)
 
         # 标准差
         header_layout.addWidget(QLabel("σ:"))
         self._std_label = QLabel("—")
-        self._std_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._std_label.setStyleSheet("color: #111; font-size: 11px;")
         self._std_label.setMinimumWidth(50)
         header_layout.addWidget(self._std_label)
 
