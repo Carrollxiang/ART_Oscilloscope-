@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -99,40 +98,50 @@ class ConfigManager:
             return False
 
     @staticmethod
-    def load_from_file(main_window, filepath: str) -> bool:
+    def load_from_file(main_window, filepath: str) -> dict | bool:
         """
         从 JSON 文件加载配置到主窗口。
-        
+
+        回填 UI 后，返回设备参数和反馈配置列表，
+        供调用方自行决定是否发布 EventBus 控制面命令。
+
         Args:
             main_window: MainWindow 实例
             filepath: 配置文件路径
+
+        Returns:
+            False — 加载失败
+            dict — 加载成功，含可选字段:
+                  {"device": {"params": dict, "config": DeviceConfig} | None,
+                   "feedback_workers": list[dict] | None}
         """
         try:
             config = ConfigManager.load_json(filepath)
+            payload: dict = {"device": None, "feedback_workers": None}
 
             # 加载通道配置
             if 'channels' in config and hasattr(main_window, 'channel_panel'):
                 main_window.channel_panel.set_config(config['channels'])
 
-            # 加载设备配置
+            # 加载设备配置（回填 UI）
             if 'device' in config and hasattr(main_window, 'device_panel'):
                 main_window.device_panel.set_config(config['device'])
+                # 从面板读取参数，供调用方发布 config.change
+                payload["device"] = {
+                    "params": main_window.device_panel.get_params(),
+                    "config": main_window.device_panel.get_config(),
+                }
 
             # 加载测量配置
             if 'measurements' in config and hasattr(main_window, 'measure_panel'):
                 main_window.measure_panel.set_config(config['measurements'])
 
-            # 加载反馈配置 (async: 通过 async loop 调度)
-            if 'feedback_workers' in config and hasattr(main_window, '_feedback_mgr'):
-                loop = getattr(main_window, '_async_loop', None)
-                if loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        main_window._feedback_mgr.load_config(config['feedback_workers']),
-                        loop,
-                    )
+            # 加载反馈配置（不再直接 call_threadsafe，交由调用方走 EventBus）
+            if 'feedback_workers' in config:
+                payload["feedback_workers"] = config["feedback_workers"]
 
             logger.info(f"配置已从 {filepath} 加载")
-            return True
+            return payload
 
         except FileNotFoundError:
             logger.warning(f"配置文件不存在: {filepath}")

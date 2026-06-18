@@ -14,7 +14,7 @@ from typing import Literal, Optional
 from scope.runtime.pid_controller import PidConfig
 from .feedback_worker import FeedbackConfig
 
-FeedbackAction = Literal["add", "pause", "resume", "remove", "update_pid"]
+FeedbackAction = Literal["add", "pause", "resume", "remove", "update_pid", "load_batch"]
 
 
 @dataclass
@@ -26,4 +26,5 @@ class FeedbackCommand:
     change_id: int
     config: Optional[FeedbackConfig] = None
     pid_config: Optional[PidConfig] = None
+    config_list: Optional[list[dict]] = None
     timestamp: float = field(default_factory=time.monotonic)

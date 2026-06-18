@@ -85,6 +85,10 @@ class FeedbackCommandWorker:
                     command.worker_id,
                     command.pid_config,
                 )
+            elif command.action == "load_batch":
+                if command.config_list is None:
+                    raise ValueError("load_batch requires config_list")
+                await self._feedback_manager.load_config(command.config_list)
             else:
                 raise ValueError(f"unknown feedback command: {command.action}")
         except Exception:

@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetI
 from scope.model import RawFrame
 from scope.runtime import ConfigChange, FittedSnapshot
 from scope.io import FeedbackManager
+from scope.io.feedback_command import FeedbackCommand
 from scope.hardware import DeviceConfig
 from .waveform_view import WaveformView
 from .panels.channel_panel import ChannelPanel
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
         self._async_loop = async_loop
         self._event_bus = event_bus
         self._config_change_id = 0
+        self._feedback_command_change_id = 0
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
@@ -114,6 +116,7 @@ class MainWindow(QMainWindow):
             status_callback=self._update_status_bar,
             async_loop=getattr(self, '_async_loop', None),
             event_bus=self._event_bus,
+            command_id_provider=self._next_feedback_command_id,
         )
         self._embed_widget(self.tabFeedback.layout(), self.feedback_panel)
 
@@ -141,14 +144,59 @@ class MainWindow(QMainWindow):
             ConfigManager.save_to_file(self, path)
 
     def _load_config(self):
-        """从 JSON 文件加载配置。"""
+        """从 JSON 文件加载配置 — 回填 UI，可选发布控制面命令。"""
         path, _ = QFileDialog.getOpenFileName(
             self, "加载配置", ConfigManager.default_filepath(),
             "JSON 配置 (*.json)")
-        if path:
-            ok = ConfigManager.load_from_file(self, path)
-            if ok:
-                self._update_status_bar()
+        if not path:
+            return
+
+        result = ConfigManager.load_from_file(self, path)
+        if not result:
+            return
+
+        # ── 设备配置 → 问用户是否应用到硬件 ──
+        device_info = result.get("device")
+        if device_info is not None and self._event_bus:
+            reply = QMessageBox.question(
+                self,
+                "应用设备配置",
+                "是否将设备配置应用到硬件？\n\n"
+                "选择「是」会重建设备（当前采集会中断）。\n"
+                "选择「否」只回填 UI，不生效到硬件。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._config_change_id += 1
+                change = ConfigChange(
+                    device_config=device_info["config"],
+                    art_params=device_info["params"],
+                    change_id=self._config_change_id,
+                )
+                self._event_bus.publish("config.change", change)
+                logger.info("配置加载: 设备配置已发布到 config.change")
+
+        # ── 反馈配置 → 走 EventBus 控制面 ──
+        fw = result.get("feedback_workers")
+        if fw is not None and self._event_bus:
+            self._event_bus.publish(
+                "feedback.worker.command",
+                FeedbackCommand(
+                    action="load_batch",
+                    worker_id="_batch_",
+                    config_list=fw,
+                    change_id=self._next_feedback_command_id(),
+                ),
+            )
+            logger.info("配置加载: 反馈 workers 配置已发布到 feedback.worker.command")
+
+        self._update_status_bar()
+
+    def _next_feedback_command_id(self) -> int:
+        """为所有反馈控制入口分配同一条单调递增命令序列。"""
+        self._feedback_command_change_id += 1
+        return self._feedback_command_change_id
 
     def _on_device_config(self, params: dict, config: DeviceConfig):
         """设备面板 → 发布配置变更到 EventBus 控制面。"""

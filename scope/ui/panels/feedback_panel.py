@@ -539,6 +539,7 @@ class FeedbackPanel(QWidget):
         status_callback: Optional[Callable] = None,
         async_loop=None,
         event_bus=None,
+        command_id_provider: Optional[Callable[[], int]] = None,
     ):
         super().__init__(parent_widget)
         self._feedback_mgr = feedback_manager
@@ -547,10 +548,15 @@ class FeedbackPanel(QWidget):
         self._async_loop = async_loop
         self._event_bus = event_bus
         self._command_change_id = 0
+        self._command_id_provider = command_id_provider or self._next_command_id
         self._card_widgets: dict[str, WorkerCard] = {}  # worker_id → WorkerCard
         self._worker_counter: int = len(self._card_widgets)
 
         self._setup_ui()
+
+    def _next_command_id(self) -> int:
+        self._command_change_id += 1
+        return self._command_change_id
 
     def _setup_ui(self):
         """构建 UI"""
@@ -756,7 +762,6 @@ class FeedbackPanel(QWidget):
             logger.error("无法发布反馈命令: EventBus 未连接")
             return
 
-        self._command_change_id += 1
         self._event_bus.publish(
             "feedback.worker.command",
             FeedbackCommand(
@@ -764,7 +769,7 @@ class FeedbackPanel(QWidget):
                 worker_id=worker_id,
                 config=config,
                 pid_config=pid_config,
-                change_id=self._command_change_id,
+                change_id=self._command_id_provider(),
             ),
         )
 

@@ -85,6 +85,30 @@ async def test_update_pid(sample_config):
     assert manager.list_workers()[0]["kp"] == 0.2
 
 
+async def test_load_batch_replaces_existing_workers(sample_config):
+    worker, manager = make_worker()
+    await worker._apply_command(
+        FeedbackCommand(
+            action="add",
+            worker_id="w1",
+            config=sample_config,
+            change_id=1,
+        )
+    )
+    assert manager.get_active_count() == (1, 1)
+
+    await worker._apply_command(
+        FeedbackCommand(
+            action="load_batch",
+            worker_id="_batch_",
+            config_list=[],
+            change_id=2,
+        )
+    )
+
+    assert manager.get_active_count() == (0, 0)
+
+
 async def test_skip_old_command(sample_config):
     worker, manager = make_worker()
     await worker._apply_command(
