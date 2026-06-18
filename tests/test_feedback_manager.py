@@ -16,6 +16,7 @@ from scope.io.feedback_manager import FeedbackManager
 def event_bus():
     eb = EventBus()
     eb.register_topic("frame.fitted", maxsize=10)
+    eb.register_topic("feedback.status", maxsize=10)
     return eb
 
 
@@ -137,6 +138,7 @@ class TestConfigManagement:
 
     async def test_load_config(self, mgr):
         """导入配置重建 worker"""
+        status_queue = mgr._event_bus.subscribe("feedback.status")
         config_list = [
             {
                 "worker_id": "w1",
@@ -173,6 +175,10 @@ class TestConfigManagement:
         assert len(mgr._workers) == 2
         assert mgr._workers["w1"].measurement_key == "CH1_vpp"
         assert mgr._workers["w2"].measurement_key == "CH2_vpp"
+        snapshot = status_queue.get_nowait()
+        assert snapshot is not None
+        assert snapshot.total_count == 2
+        assert status_queue.get_nowait() is None
 
     async def test_load_config_replaces_existing(self, mgr, sample_config):
         """加载配置替换现有 worker"""

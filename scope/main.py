@@ -26,6 +26,7 @@ from scope.hardware.art_device import ArtDevice
 from scope.io import FeedbackCommandWorker, FeedbackManager
 from scope.ui import MainWindow
 from scope.runtime import EventBus, DropStrategy, MeasurementConfigWorker, MeasurementProcessor
+from scope.runtime import RuntimeMetricsSnapshot
 from scope.ui.ui_bridge import UIBridge
 from scope.runtime.config_worker import ConfigWorker
 
@@ -77,6 +78,16 @@ class ScopeApp:
             "feedback.worker.command",
             maxsize=32,
             on_drop=DropStrategy.BLOCK,
+        )
+        self._event_bus.register_topic(
+            "feedback.status",
+            maxsize=2,
+            on_drop=DropStrategy.DROP_OLDEST,
+        )
+        self._event_bus.register_topic(
+            "runtime.metrics",
+            maxsize=2,
+            on_drop=DropStrategy.DROP_OLDEST,
         )
 
         # MeasurementProcessor — 独立线程运行测量计算
@@ -167,6 +178,8 @@ class ScopeApp:
 
     def start(self):
         """启动所有子系统"""
+        self._running = True
+
         # 1. 启动 asyncio 工作线程
         async_thread = threading.Thread(
             target=self._async_worker,
@@ -195,8 +208,6 @@ class ScopeApp:
 
         # 6. 启动设备采集
         self.device.start_acquisition()
-
-        self._running = True
 
         device_label = "模拟设备" if self._device_type == "simulator" else "ART 采集卡"
         logger.info(
@@ -333,6 +344,23 @@ class ScopeApp:
                 self._device_type = "simulator"
                 logger.info("已回退到模拟设备")
 
+    async def _metrics_publish_task(self):
+        """周期发布 runtime.metrics 快照。"""
+        while self._running:
+            try:
+                snapshot = RuntimeMetricsSnapshot(
+                    measurement_processor=self._processor.metrics,
+                    event_bus=self._event_bus.metrics(),
+                    config_worker=self._config_worker.metrics,
+                    measurement_config_worker=self._measurement_config_worker.metrics,
+                    feedback_command_worker=self._feedback_command_worker.metrics,
+                    ui_bridge=self._ui_bridge.metrics if self._ui_bridge else {},
+                )
+                self._event_bus.publish("runtime.metrics", snapshot)
+            except Exception as e:
+                logger.error(f"RuntimeMetrics publish error: {e}")
+            await asyncio.sleep(1.0)
+
     def _async_worker(self):
         """在独立线程中运行 asyncio loop"""
         asyncio.set_event_loop(self._async_loop)
@@ -340,6 +368,7 @@ class ScopeApp:
         self._async_loop.create_task(self._config_worker.run())
         self._async_loop.create_task(self._measurement_config_worker.run())
         self._async_loop.create_task(self._feedback_command_worker.run())
+        self._async_loop.create_task(self._metrics_publish_task())
         self._async_loop.run_forever()
 
 

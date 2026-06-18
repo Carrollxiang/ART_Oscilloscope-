@@ -8,7 +8,7 @@
 - [x] `BoundedQueue` → 扩展为 `EventBus` 类（多 topic / 多 subscriber 独立队列 / publish / metrics）
 - [x] `FittedSnapshot` — FitWorker 产出物（channel_measurements + event_measurements）
 - [x] `ConfigChange` — 控制面配置变更指令
-- [x] EventBus 注册核心 topic：`frame.raw`/`frame.fitted`/`config.change`/`measurement.specs.changed`/`measurement.remove`/`feedback.worker.command`
+- [x] EventBus 注册核心 topic：`frame.raw`/`frame.fitted`/`config.change`/`measurement.specs.changed`/`measurement.remove`/`feedback.worker.command`/`feedback.status`/`runtime.metrics`
 
 ### Phase 2 — FitWorker（接管全部计算） ✅
 - [x] 独立线程运行 `ProcessingPipeline`（AutoMeasure / MathOp / FFT）
@@ -32,6 +32,8 @@
 - [x] `ConfigWorker` — 订阅 `config.change`，`change_id` 去重，`run_in_executor` 调用
 - [x] `MeasurementConfigWorker` — 订阅 `measurement.specs.changed`，更新 MeasurementProcessor specs
 - [x] `FeedbackCommandWorker` — 订阅 `feedback.worker.command`，统一应用 add/pause/resume/remove/update_pid
+- [x] `feedback.status` — FeedbackManager 在 worker 变更和帧分发后发布状态快照，UIBridge 桥接到 Qt UI
+- [x] `runtime.metrics` — ScopeApp 周期聚合 runtime worker metrics 并发布
 - [x] 在 asyncio loop 中与 FeedbackWorker 并行运行
 
 ---
@@ -44,6 +46,8 @@
 - [x] **设备配置 UI → config.change 发布** — DevicePanel 本地信号由 MainWindow 包装为 `ConfigChange`，经 ConfigWorker 应用
 - [x] **测量规格 UI → measurement.specs.changed 发布** — MeasurementPanel 发布完整 specs 快照，经 MeasurementConfigWorker 应用
 - [x] **反馈控制 UI → feedback.worker.command 发布** — FeedbackPanel 发布命令，经 FeedbackCommandWorker 应用
+- [x] **反馈状态 → feedback.status 发布** — FeedbackManager 事件驱动发布快照，FeedbackPanel 从缓存更新卡片
+- [x] **运行时指标 → runtime.metrics 发布** — MeasurementProcessor/EventBus/ConfigWorker/FeedbackCommandWorker/UIBridge 指标聚合
 - [ ] **ControlQueue 帧边界原子生效** — ConfigWorker 可用，但 UI 端未改为异步发送
 
 ### 验收指标（待长跑验证）
@@ -83,9 +87,9 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **84/84 测试通过** (新增默认配置加载与配置恢复回归测试)
+- **85/85 测试通过** (新增反馈状态批量发布回归测试)
 
 ### 待完成
 - [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`
-- [x] **FeedbackPanel.refresh_slots()** — 已实现 UI 刷新显示 worker 列表
+- [x] **FeedbackPanel.on_status_update()** — 从 `feedback.status` 快照更新 worker 卡片
 - [ ] Mock 模式完整测试（添加 worker、暂停/恢复、配置保存/加载）

@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem
 
 from scope.model import RawFrame
-from scope.runtime import ConfigChange, FittedSnapshot
+from scope.runtime import ConfigChange, FittedSnapshot, FeedbackStatusSnapshot
 from scope.io import FeedbackManager
 from scope.io.feedback_command import FeedbackCommand
 from scope.hardware import DeviceConfig
@@ -104,7 +104,9 @@ class MainWindow(QMainWindow):
             initial_measurements=default_measurements,
         )
         self.measure_panel.set_name_change_callback(
-            lambda: self.feedback_panel.refresh_slots() if hasattr(self, 'feedback_panel') else None
+            lambda: self.feedback_panel.on_status_update(self.feedback_panel._last_status)
+            if hasattr(self, 'feedback_panel') and self.feedback_panel._last_status
+            else None
         )
 
         # ── 反馈面板 ──
@@ -231,6 +233,7 @@ class MainWindow(QMainWindow):
         """
         ui_bridge.signal_raw_frame.connect(self._on_ui_raw_frame)
         ui_bridge.signal_fitted.connect(self._on_ui_fitted)
+        ui_bridge.signal_feedback_status.connect(self._on_ui_feedback_status)
 
     def _on_ui_raw_frame(self, frame: RawFrame):
         """原始帧更新 → 主波形。"""
@@ -251,7 +254,7 @@ class MainWindow(QMainWindow):
             logger.error(f"原始帧更新异常: {e}", exc_info=True)
 
     def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
-        """拟合结果更新 → 测量面板 + MiniChart + 反馈面板。"""
+        """拟合结果更新 → 测量面板 + MiniChart。"""
         try:
             if hasattr(self, 'measure_panel'):
                 self.measure_panel.update_from_fitted(fitted_snapshot)
@@ -262,10 +265,6 @@ class MainWindow(QMainWindow):
                 self.mini_chart.refresh_now()
                 if fitted_snapshot.sequence_num % 10 == 1:
                     logger.debug(f"MiniChart updated: {len(flat)} items, seq={fitted_snapshot.sequence_num}")
-
-            # 事件驱动：每帧刷新反馈面板（零轮询）
-            if hasattr(self, 'feedback_panel'):
-                self.feedback_panel.refresh_slots()
 
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
@@ -283,15 +282,20 @@ class MainWindow(QMainWindow):
             tag = self._measurement_remove_queue.get_nowait()
 
     def _update_status_bar(self, frame: RawFrame = None):
-        """更新底部信息条"""
+        """更新底部信息条（帧信息部分）"""
         if frame:
             sample_rate = self._format_sample_rate(frame.sample_rate)
             self.statusSampling.setText(f"采样率: {sample_rate}")
             self.statusFrames.setText(f"帧 #: {frame.sequence_num}")
             self.statusTrigger.setText(f"触发: {frame.n_channels}ch")
 
-        # 反馈状态
-        running, total = self.feedback_panel.get_active_count()
+    def _on_ui_feedback_status(self, snapshot: FeedbackStatusSnapshot):
+        """反馈状态更新 → 反馈面板 + 状态栏。"""
+        if hasattr(self, 'feedback_panel'):
+            self.feedback_panel.on_status_update(snapshot)
+
+        running = snapshot.running_count
+        total = snapshot.total_count
         paused = total - running
         status_parts = []
         if running:

@@ -137,7 +137,8 @@ project-root/
 │   ├── ARCHITECTURE.md         # ✅ v0.5 架构文档
 │   ├── ROADMAP.md              # ✅ 实施路线图
 │   ├── EVENTBUS_SPEC.md        # ✅ EventBus 规范
-│   ├── FEEDBACK_DESIGN.md      # ✅ 反馈设计
+│   ├── FEEDBACK_SPEC.md        # ✅ 当前反馈系统规范
+│   ├── FEEDBACK_DESIGN_v0.5.md # ⚠️ 旧反馈设计归档
 │   ├── TECH_STACK.md           # ✅ 本文档
 │   └── CHECKLIST.md            # ✅ 实施清单
 │

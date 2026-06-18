@@ -23,6 +23,8 @@ from .config_change import ConfigChange
 from .measurement_change import MeasurementSpecsChanged
 from .measurement_config_worker import MeasurementConfigWorker
 from .pid_controller import PidConfig, PidController
+from .feedback_status import FeedbackWorkerStatus, FeedbackStatusSnapshot
+from .runtime_metrics import RuntimeMetricsSnapshot
 
 __all__ = [
     "BoundedQueue",
@@ -38,4 +40,7 @@ __all__ = [
     "MeasurementConfigWorker",
     "PidConfig",
     "PidController",
+    "FeedbackWorkerStatus",
+    "FeedbackStatusSnapshot",
+    "RuntimeMetricsSnapshot",
 ]

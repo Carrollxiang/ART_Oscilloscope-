@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from scope.runtime.pid_controller import PidConfig
+from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.io.feedback_command import FeedbackCommand
 from scope.io.feedback_worker import FeedbackConfig
 
@@ -551,6 +552,7 @@ class FeedbackPanel(QWidget):
         self._command_id_provider = command_id_provider or self._next_command_id
         self._card_widgets: dict[str, WorkerCard] = {}  # worker_id → WorkerCard
         self._worker_counter: int = len(self._card_widgets)
+        self._last_status: Optional[FeedbackStatusSnapshot] = None
 
         self._setup_ui()
 
@@ -624,9 +626,9 @@ class FeedbackPanel(QWidget):
 
         # 收集已被订阅的测量项 key
         existing_keys: set[str] = set()
-        if self._feedback_mgr:
-            for w in self._feedback_mgr.list_workers():
-                existing_keys.add(w.get("measurement_key", ""))
+        if self._last_status:
+            for ws in self._last_status.workers:
+                existing_keys.add(ws.measurement_key)
 
         dlg = FeedbackDialog(self, measurement_keys=meas_tags,
                              measurement_display_map=display_map,
@@ -644,25 +646,23 @@ class FeedbackPanel(QWidget):
 
     # ── 事件驱动刷新 ───────────────────────────────────────────
 
-    def refresh_slots(self):
+    def on_status_update(self, snapshot: FeedbackStatusSnapshot):
         """
-        根据 FeedbackManager 当前状态更新卡片列表。
+        从 feedback.status topic 快照更新卡片。
 
-        由 MainWindow._on_ui_fitted() 每帧事件驱动调用（零轮询）。
+        由 UIBridge signal_feedback_status 驱动，替代旧的
+        refresh_slots() 对 _feedback_mgr.list_workers() 的直接调用。
         """
-        if not self._feedback_mgr:
-            return
+        self._last_status = snapshot
 
-        # 获取当前稳定 tag → 显示名映射
-        name_map: dict[str, str] = {}  # stable_tag → display_name
+        name_map: dict[str, str] = {}
         if self._measurement_panel and hasattr(self._measurement_panel, "get_display_name_mapping"):
             try:
                 name_map = dict(self._measurement_panel.get_display_name_mapping())
             except Exception:
                 pass
 
-        workers = self._feedback_mgr.list_workers()
-        current_ids = {w["worker_id"] for w in workers}
+        current_ids = {ws.worker_id for ws in snapshot.workers}
 
         # 移除已删除的卡片
         for wid in list(self._card_widgets.keys()):
@@ -672,33 +672,28 @@ class FeedbackPanel(QWidget):
                 card.deleteLater()
 
         # 添加/更新卡片
-        for w in workers:
-            wid = w["worker_id"]
-            worker_tag = w.get("measurement_key", "")
-            display_name = name_map.get(worker_tag, worker_tag)
-
-            # 构造卡片数据
+        for ws in snapshot.workers:
+            wid = ws.worker_id
+            display_name = name_map.get(ws.measurement_key, ws.measurement_key)
             card_data = {
-                "status": w["status"],
+                "status": ws.status,
                 "measurement_key": display_name,
-                "preset_value": w.get("preset_value"),
-                "deadband": w.get("deadband", 0.0),
-                "last_value": w.get("last_value"),
-                "last_error": w.get("last_error"),
-                "errors_std": w.get("errors_std", 0.0),
-                "errors_count": w.get("errors_count", 0),
-                "frames_processed": w.get("frames_processed", 0),
-                "kp": w.get("kp", 0),
-                "ki": w.get("ki", 0),
-                "kd": w.get("kd", 0),
-                "window_size": w.get("window_size", 0),
+                "preset_value": ws.preset_value,
+                "deadband": ws.deadband,
+                "last_value": ws.last_value,
+                "last_error": ws.last_error,
+                "errors_std": ws.errors_std,
+                "errors_count": ws.errors_count,
+                "frames_processed": ws.frames_processed,
+                "kp": ws.kp,
+                "ki": ws.ki,
+                "kd": ws.kd,
+                "window_size": ws.window_size,
             }
 
             if wid in self._card_widgets:
-                # 更新已有卡片
                 self._card_widgets[wid].update_data(card_data)
             else:
-                # 创建新卡片
                 card = WorkerCard(wid)
                 card.pause_clicked.connect(self._on_pause_worker)
                 card.resume_clicked.connect(self._on_resume_worker)
@@ -727,19 +722,18 @@ class FeedbackPanel(QWidget):
 
     def _on_edit_worker(self, worker_id: str):
         """弹出 PID 编辑对话框"""
-        if not self._feedback_mgr:
+        if not self._last_status:
             return
 
-        workers = self._feedback_mgr.list_workers()
-        wdata = next((w for w in workers if w["worker_id"] == worker_id), None)
+        wdata = next((w for w in self._last_status.workers if w.worker_id == worker_id), None)
         if not wdata:
             return
 
         current = PidConfig(
-            preset_value=wdata["preset_value"],
-            kp=wdata["kp"], ki=wdata["ki"], kd=wdata["kd"],
-            output_limit=wdata["output_limit"], i_limit=wdata["i_limit"],
-            window_size=wdata["window_size"], deadband=wdata["deadband"],
+            preset_value=wdata.preset_value,
+            kp=wdata.kp, ki=wdata.ki, kd=wdata.kd,
+            output_limit=wdata.output_limit, i_limit=wdata.i_limit,
+            window_size=wdata.window_size, deadband=wdata.deadband,
         )
         dlg = PidEditDialog(self, pid_config=current)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_config:
@@ -776,7 +770,7 @@ class FeedbackPanel(QWidget):
     # ── 状态查询 ───────────────────────────────────────────────
 
     def get_active_count(self) -> tuple[int, int]:
-        """返回 (running_count, total_count)"""
-        if not self._feedback_mgr:
+        """返回 (running_count, total_count) — 从缓存读。"""
+        if not self._last_status:
             return 0, 0
-        return self._feedback_mgr.get_active_count()
+        return self._last_status.running_count, self._last_status.total_count

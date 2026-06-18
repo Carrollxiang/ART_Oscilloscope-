@@ -3,7 +3,7 @@
 > 状态: ✅ **全部完成** (2026/6/5)  
 > 测试结果: **45/45 通过**
 >
-> **归档说明**: 本文是 v0.5 重构验收记录，不代表当前测试基线。当前文档入口见 [README.md](./README.md)，当前测试基线为 `84 passed`。
+> **归档说明**: 本文是 v0.5 重构验收记录，不代表当前测试基线。当前文档入口见 [README.md](./README.md)，当前测试基线为 `85 passed`。
 
 ---
 
@@ -226,7 +226,7 @@
   - 更新数据流时序图
 - [x] `docs/ROADMAP.md`：标记 Phase 0-6 全部完成
 - [x] `docs/EVENTBUS_SPEC.md`：更新 Topic 定义和 Worker 规范
-- [x] `docs/FEEDBACK_DESIGN.md`：更新数据流，使用 dispatch_raw()
+- [x] `docs/FEEDBACK_DESIGN_v0.5.md`：旧设计归档，当前反馈规范见 `FEEDBACK_SPEC.md`
 - [x] `docs/TECH_STACK.md`：更新项目结构和依赖
 - [x] `docs/CHECKLIST.md`：标记所有项为已完成（本文档）
 

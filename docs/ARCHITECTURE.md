@@ -49,7 +49,8 @@
 │  │                       │  │  └─ asyncio.gather()       │   │        │
 │  └──────────────────────┘  └───────────────────────────────┘        │
 │                                                                      │
-│  EventBus topics: frame.raw → frame.fitted                          │
+│  EventBus topics: frame.raw → frame.fitted → feedback.status        │
+│                  config.change / feedback.worker.command / metrics  │
 │  MeasurementSpec: 纯配置数据类 (tag, channel, start_ms, feature)   │
 └───────────────────────────┬──────────────────────────────────────────┘
                             │ RawFrame (numpy array)
@@ -629,6 +630,8 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `measurement.specs.changed` | `MeasurementSpecsChanged` | 4 | drop_oldest | MeasurementPanel | MeasurementConfigWorker |
 | `feedback.worker.command` | `FeedbackCommand` | 32 | block | FeedbackPanel | FeedbackCommandWorker |
 | `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
+| `feedback.status` | `FeedbackStatusSnapshot` | 2 | drop_oldest | FeedbackManager | UIBridge -> MainWindow / FeedbackPanel |
+| `runtime.metrics` | `RuntimeMetricsSnapshot` | 2 | drop_oldest | ScopeApp metrics task | 诊断面板预留 |
 
 ### 8.2 线程边界
 
@@ -648,13 +651,15 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 │    ConfigWorker: config.change → _on_art_config()        │
 │    MeasurementConfigWorker: specs.changed → set_specs()  │
 │    FeedbackCommandWorker: worker.command → manager API   │
+│    ScopeApp metrics task → publish(runtime.metrics)      │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  Qt 主线程                                               │
 │    DevicePanel.config_applied → publish(config.change)   │
 │    MeasurementPanel edits → publish(specs.changed)       │
 │    FeedbackPanel actions → publish(worker.command)       │
-│    UIBridge.signal → waveform_view / panel / mini_chart │
+│    UIBridge.signal → waveform_view / panel / mini_chart  │
+│                    → feedback status UI                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -716,7 +721,11 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `test_feedback_worker.py` | 15 | ✅ 100% |
 | `test_feedback_manager.py` | 16 | ✅ 100% |
 | `test_art_device.py` | 18 | ✅ 100% (部分需要硬件) |
-| **总计** | **76** | **✅ 100%** |
+| `test_feedback_command_worker.py` | 4 | ✅ 100% |
+| `test_measurement_config_worker.py` | 2 | ✅ 100% |
+| `test_config_manager.py` | 2 | ✅ 100% |
+| `test_channel_panel_source.py` | 1 | ✅ 100% |
+| **总计** | **85** | **✅ 100%** |
 
 ---
 

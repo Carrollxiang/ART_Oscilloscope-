@@ -40,12 +40,12 @@ Current required topics:
 - `measurement.specs.changed`
 - `measurement.remove`
 - `feedback.worker.command`
-
-Planned command/status topics:
-
-- `device.status`
 - `feedback.status`
 - `runtime.metrics`
+
+Planned status topics:
+
+- `device.status`
 
 ## UI Rules
 
@@ -72,7 +72,7 @@ Use the project conda environment, not the global Python installation:
 Current expected result:
 
 ```text
-84 passed
+85 passed
 ```
 
 ## Documentation Rules

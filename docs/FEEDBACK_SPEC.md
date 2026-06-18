@@ -263,6 +263,7 @@ class FeedbackWorker:
 - ✅ 持有唯一的 EventBus 订阅
 - ✅ 管理 worker 生命周期
 - ✅ 并发分发数据给所有 worker
+- ✅ 发布 `feedback.status` 状态快照，供 UI 状态栏和反馈卡片消费
 - ❌ 删除旧的 Slot 管理逻辑
 
 **接口**:
@@ -294,7 +295,7 @@ class FeedbackManager:
     
     # ── Worker 管理 ───────────────────────────────────────────
     
-    async def add_worker(self, config: FeedbackConfig) -> str:
+    async def add_worker(self, config: FeedbackConfig, publish: bool = True) -> str:
         """添加反馈 worker"""
         worker = FeedbackWorker(config)
         
@@ -303,6 +304,8 @@ class FeedbackManager:
         
         await worker.start()
         logger.info(f'FeedbackWorker "{config.worker_id}" added')
+        if publish:
+            self._publish_status()
         return config.worker_id
     
     async def remove_worker(self, worker_id: str):
@@ -313,6 +316,7 @@ class FeedbackManager:
         if worker:
             await worker.stop()
             logger.info(f'FeedbackWorker "{worker_id}" removed')
+            self._publish_status()
     
     async def pause_worker(self, worker_id: str):
         """暂停指定 worker"""
@@ -362,7 +366,9 @@ class FeedbackManager:
                 pid_config=pid_config,
                 target=None,
             )
-            await self.add_worker(worker_config)
+            await self.add_worker(worker_config, publish=False)
+
+        self._publish_status()
     
     # ── 数据分发 ───────────────────────────────────────────────
     
@@ -386,6 +392,8 @@ class FeedbackManager:
                     
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
+
+                    self._publish_status()
                 
                 await asyncio.sleep(0)  # 让出控制权
                 
@@ -393,7 +401,12 @@ class FeedbackManager:
                 logger.error(f"FeedbackManager dispatch error: {e}")
                 await asyncio.sleep(0.1)
     
-    # ── 状态查询 ───────────────────────────────────────────────
+    # ── 状态发布 / 查询 ───────────────────────────────────────
+
+    def _publish_status(self):
+        """发布当前 worker 状态快照到 feedback.status topic。"""
+        if self._event_bus:
+            self._event_bus.publish("feedback.status", self._build_status_snapshot())
     
     def list_workers(self) -> list[dict]:
         """列出所有 worker 状态"""
@@ -412,6 +425,7 @@ class FeedbackManager:
 - ✅ **预过滤**: 只调用一次 `as_flat_dict()`
 - ✅ **并发分发**: `asyncio.gather()` 并发调用所有 worker
 - ✅ **配置管理**: 支持导出/加载配置
+- ✅ **状态事件化**: UI 不直接轮询 manager；FeedbackPanel 消费 `FeedbackStatusSnapshot`
 
 ---
 
@@ -565,7 +579,8 @@ def load_from_file(main_window, filepath: str) -> bool:
 |----------|----------|
 | `test_pid_controller.py` (✅ 11 tests) | PID 计算正确性、窗口限制、限幅、死区 |
 | `test_feedback_worker.py` (✅ 15 tests) | Worker 生命周期、状态切换、process() 调用 |
-| `test_feedback_manager.py` (✅ 16 tests) | Manager 生命周期、配置导入导出、并发分发 |
+| `test_feedback_manager.py` (✅ 16 tests) | Manager 生命周期、配置导入导出、并发分发、批量状态发布 |
+| `test_feedback_command_worker.py` (✅ 4 tests) | feedback.worker.command 应用、批量加载清空 |
 
 ### 7.2 集成测试
 
@@ -623,4 +638,4 @@ def load_from_file(main_window, filepath: str) -> bool:
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - 系统架构
 - [EVENTBUS_SPEC.md](./EVENTBUS_SPEC.md) - EventBus 规范
-- [FEEDBACK_DESIGN.md](./FEEDBACK_DESIGN.md) - 旧版设计（将被替换）
+- [FEEDBACK_DESIGN_v0.5.md](./FEEDBACK_DESIGN_v0.5.md) - 旧版设计归档

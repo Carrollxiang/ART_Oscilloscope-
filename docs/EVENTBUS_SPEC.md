@@ -35,6 +35,7 @@ MeasurementProcessor UIBridge         FeedbackManager
       │  订阅             │ 订阅                 │ 订阅
       │ frame.raw         │ frame.raw           │ frame.fitted
       │                   │ + frame.fitted       │
+      │                   │ + feedback.status    │
       ▼                   ▼                     ▼
   扁平计算           Qt 主线程:            分发给 FeedbackWorker
   (specs.changed     波形/面板/迷你图      (共享订阅)
@@ -53,6 +54,8 @@ MeasurementProcessor UIBridge         FeedbackManager
 | `measurement.specs.changed` | `MeasurementSpecsChanged` | 4 | drop_oldest | MeasurementPanel | MeasurementConfigWorker |
 | `feedback.worker.command` | `FeedbackCommand` | 32 | block | FeedbackPanel | FeedbackCommandWorker |
 | `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
+| `feedback.status` | `FeedbackStatusSnapshot` | 2 | drop_oldest | FeedbackManager | UIBridge -> MainWindow / FeedbackPanel |
+| `runtime.metrics` | `RuntimeMetricsSnapshot` | 2 | drop_oldest | ScopeApp metrics task | 诊断面板预留 |
 
 **对比 v0.3**:
 - ✅ 删除 `frame.measured` topic
@@ -77,6 +80,7 @@ MeasurementProcessor UIBridge         FeedbackManager
 │    ConfigWorker:           config.change → _on_art_config()│
 │    MeasurementConfigWorker: specs.changed → set_specs()  │
 │    FeedbackCommandWorker:  worker.command → manager API  │
+│    ScopeApp metrics task:  runtime.metrics               │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  Qt 主线程                                               │
@@ -205,6 +209,38 @@ class MeasurementSpec:
 - `Vmax`: 最大值 (`np.max`)
 - `Vmin`: 最小值 (`np.min`)
 - `Mean`: 平均值 (`np.mean`)
+
+---
+
+### 4.4 FeedbackStatusSnapshot（反馈状态）
+
+```python
+@dataclass
+class FeedbackStatusSnapshot:
+    """FeedbackManager 发布的 worker 状态快照。"""
+
+    workers: list[FeedbackWorkerStatus]
+    running_count: int
+    total_count: int
+    timestamp: float = field(default_factory=time.monotonic)
+```
+
+`FeedbackManager` 在 worker add/remove/pause/resume/update/load 以及每次 `frame.fitted` 分发完成后发布该快照。UI 侧由 `UIBridge` 在帧回调中消费最新快照并更新 `FeedbackPanel` 与状态栏；不额外引入 Qt 定时器。
+
+### 4.5 RuntimeMetricsSnapshot（运行时指标）
+
+```python
+@dataclass
+class RuntimeMetricsSnapshot:
+    measurement_processor: dict
+    event_bus: dict
+    config_worker: dict
+    measurement_config_worker: dict
+    feedback_command_worker: dict
+    ui_bridge: dict
+```
+
+`ScopeApp` 周期聚合各 runtime worker 的 `metrics`，发布到 `runtime.metrics`。当前供后续诊断面板消费。
 
 ---
 

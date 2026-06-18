@@ -16,6 +16,7 @@ from typing import Optional
 
 from scope.model.enums import SlotStatus
 from scope.runtime import EventBus
+from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.runtime.pid_controller import PidConfig
 from .feedback_worker import FeedbackConfig, FeedbackWorker
 
@@ -57,7 +58,11 @@ class FeedbackManager:
 
     # ── Worker 管理 ───────────────────────────────────────────
 
-    async def add_worker(self, config: FeedbackConfig) -> str:
+    async def add_worker(
+        self,
+        config: FeedbackConfig,
+        publish: bool = True,
+    ) -> str:
         """添加反馈 worker"""
         if config.worker_id in self._workers:
             raise KeyError(f'worker_id "{config.worker_id}" already exists')
@@ -69,6 +74,8 @@ class FeedbackManager:
 
         await worker.start()
         logger.info(f'FeedbackWorker "{config.worker_id}" added (measurement={config.measurement_key})')
+        if publish:
+            self._publish_status()
         return config.worker_id
 
     async def remove_worker(self, worker_id: str) -> Optional[FeedbackWorker]:
@@ -79,6 +86,7 @@ class FeedbackManager:
         if worker:
             await worker.stop()
             logger.info(f'FeedbackWorker "{worker_id}" removed')
+            self._publish_status()
         return worker
 
     async def pause_worker(self, worker_id: str):
@@ -87,6 +95,7 @@ class FeedbackManager:
             worker = self._workers.get(worker_id)
         if worker:
             await worker.pause()
+            self._publish_status()
 
     async def resume_worker(self, worker_id: str):
         """恢复指定 worker"""
@@ -94,6 +103,7 @@ class FeedbackManager:
             worker = self._workers.get(worker_id)
         if worker:
             await worker.resume()
+            self._publish_status()
 
     async def stop_all_workers(self):
         """停止所有 worker"""
@@ -108,6 +118,7 @@ class FeedbackManager:
             worker = self._workers.get(worker_id)
         if worker:
             worker.update_pid_config(pid_config)
+            self._publish_status()
         else:
             raise KeyError(f'worker_id "{worker_id}" not found')
 
@@ -141,7 +152,9 @@ class FeedbackManager:
                 pid_config=pid_config,
                 target=None,
             )
-            await self.add_worker(worker_config)
+            await self.add_worker(worker_config, publish=False)
+
+        self._publish_status()
 
     # ── 数据分发 ───────────────────────────────────────────────
 
@@ -170,6 +183,7 @@ class FeedbackManager:
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
 
+                    self._publish_status()
                     await asyncio.sleep(0)  # 有数据 → 让出控制权，不延后批处理
                 else:
                     await asyncio.sleep(0.01)  # 空队列 → 休眠 10ms 避免忙等
@@ -179,6 +193,47 @@ class FeedbackManager:
             except Exception as e:
                 logger.error(f"FeedbackManager dispatch error: {e}")
                 await asyncio.sleep(0.1)
+
+    # ── 状态发布 ───────────────────────────────────────────────
+
+    def _publish_status(self):
+        """发布当前 worker 状态快照到 feedback.status topic。"""
+        if not self._event_bus:
+            return
+        snapshot = self._build_status_snapshot()
+        self._event_bus.publish("feedback.status", snapshot)
+
+    def _build_status_snapshot(self) -> FeedbackStatusSnapshot:
+        """构建当前全部 worker 状态快照。"""
+        workers = list(self._workers.values())
+        worker_statuses = []
+        running_count = 0
+        for w in workers:
+            if w.status == SlotStatus.RUNNING:
+                running_count += 1
+            worker_statuses.append(FeedbackWorkerStatus(
+                worker_id=w.worker_id,
+                status=w.status.value,
+                measurement_key=w.measurement_key,
+                last_value=w.last_value,
+                last_error=w.last_error,
+                errors_std=w._pid.errors_std,
+                errors_count=w._pid.errors_count,
+                frames_processed=w.frames_processed,
+                preset_value=w.pid_config.preset_value,
+                deadband=w.pid_config.deadband,
+                kp=w.pid_config.kp,
+                ki=w.pid_config.ki,
+                kd=w.pid_config.kd,
+                output_limit=w.pid_config.output_limit,
+                i_limit=w.pid_config.i_limit,
+                window_size=w.pid_config.window_size,
+            ))
+        return FeedbackStatusSnapshot(
+            workers=worker_statuses,
+            running_count=running_count,
+            total_count=len(workers),
+        )
 
     # ── 状态查询 ───────────────────────────────────────────────
 

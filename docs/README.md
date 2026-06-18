@@ -11,8 +11,9 @@
 | 主架构 | PyQt6 UI + EventBus 数据面/控制面 + 独立 runtime worker |
 | 数据面 | `frame.raw` -> `MeasurementProcessor` -> `frame.fitted` |
 | 控制面 | 设备配置、测量规格、反馈 worker 命令均已走 EventBus |
-| 反馈系统 | v0.6 Worker 架构已实现，目标设备发送预留到 v0.7 |
-| 测试基线 | `84 passed` |
+| 状态面 | `feedback.status` 事件驱动快照 + `runtime.metrics` 运行时指标 |
+| 反馈系统 | v0.6 Worker 架构已实现，状态读取由 EventBus 快照驱动，目标设备发送预留到 v0.7 |
+| 测试基线 | `85 passed` |
 | 推荐测试命令 | `& .\.venv\python.exe -m pytest -q` |
 
 ## 推荐阅读顺序
@@ -53,6 +54,8 @@
 - `frame.fitted`
 - `config.change`
 - `measurement.remove`
+- `feedback.status`
+- `runtime.metrics`
 
 局部 UI 交互继续走 Qt signal：
 
@@ -69,7 +72,6 @@
 ## 当前技术债
 
 - `TECH_STACK.md`、`ROADMAP.md` 中仍有部分 v0.5 项目结构和测试数量描述，需要后续统一清理。
-- 状态读取路径仍有 UI 直接查询 manager 的地方；长期目标是 `feedback.status` / `runtime.metrics`。
 - Mock 模式的完整 UI 操作长跑验证尚未形成自动化测试。
 
 ## 文档维护规则

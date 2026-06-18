@@ -248,17 +248,14 @@
   ```
 - [x] 在 `load_from_file()` 中添加反馈配置加载
   ```python
-  if 'feedback_workers' in config and hasattr(main_window, '_feedback_mgr'):
-      loop = getattr(main_window, '_async_loop', None)
-      if loop and loop.is_running():
-          asyncio.run_coroutine_threadsafe(
-              main_window._feedback_mgr.load_config(config['feedback_workers']),
-              loop,
-          )
+  # ConfigManager 只回填 UI 并返回 payload；
+  # MainWindow 通过 feedback.worker.command/load_batch 应用配置。
+  if 'feedback_workers' in config:
+      payload["feedback_workers"] = config["feedback_workers"]
   ```
 
 **注意**:
-- `load_config` 是 async 方法，需要处理 async 调用
+- `load_config` 仍是 async 方法，但 UI 不直接调用；由 `FeedbackCommandWorker` 在 asyncio loop 中消费 `load_batch` 命令。
 
 ---
 
@@ -301,7 +298,7 @@
 ### 7.1 运行所有测试
 
 **任务**:
-- [x] `pytest tests/ -v` 全部通过 (84/84)
+- [x] `pytest tests/ -v` 全部通过 (85/85)
 - [x] 确保无 regressions
 
 ---
