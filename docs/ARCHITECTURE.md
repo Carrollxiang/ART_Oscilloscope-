@@ -1,7 +1,7 @@
-# 数字示波器 — 系统架构文档 (v0.5)
+# 数字示波器 — 系统架构文档 (v0.7)
 
-> 最后更新: 2026/6/5  
-> 重构里程碑: 简化数据模型 + 统一事件驱动架构
+> 最后更新: 2026/6  
+> 重构里程碑: 简化数据模型 + 统一事件驱动架构 + 反馈 Worker 架构 (v0.6) + 目标设备发送 (v0.7)
 
 ## 1. 概述
 
@@ -60,10 +60,11 @@
 │  ├─ ArtDevice         ← ART USB 采集卡 (artdaq/NI-DAQmx)             │
 │  ├─ SimulatorDevice   ← 模拟器 (事件驱动, 预生成帧)                  │
 │  │                                                                   │
-│  └─ 统一接口: set_data_callback(chunk) → 回调驱动                   │
+│  └─ 统一事件驱动: set_data_callback(chunk) → 回调驱动              │
 │                                                                      │
 │  接口: open/close/start_acquisition/stop_acquisition/read_chunk      │
-│        configure/reset/ping/restore_state/set_data_callback         │
+│        configure/get_config/reset/ping/restore_state                 │
+│        set_data_callback/make_raw_frame (ABC 抽象方法)               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,15 +74,16 @@
 
 ```python
 class AcquisitionDevice(ABC):
-    """所有采集设备的统一接口"""
+    """所有采集设备的统一接口 (均为抽象方法)"""
     def open(self) -> bool
     def close(self)
     def start_acquisition(self)
     def stop_acquisition(self)
     def read_chunk(self) -> np.ndarray          # shape: (channels, samples)
     def configure(self, params: DeviceConfig)
+    def get_config(self) -> DeviceConfig
     
-    # v0.5 新增：统一事件驱动
+    # v0.5 新增：统一事件驱动 (v0.7 补进 ABC 抽象方法)
     def set_data_callback(self, callback: Callable[[np.ndarray], None])
     
     # Watchdog 支持
@@ -108,7 +110,7 @@ class AcquisitionDevice(ABC):
 - 采集模式: `AcquisitionType.FINITE` (有限点采集), 触发后采集 `samps_per_chan` 个点后自动停止
 - `rearm()` 每帧读取后重建整个 Task (调用 `_close_task()` + `start_acquisition()`), 重新等待触发
 - `read_timeout` 超时抛 `TimeoutError` → 上层捕获后跳过此帧继续下一帧
-- **默认配置**: 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V
+- **运行配置** (ScopeApp): 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V (由 `main.py` 显式构造；`DeviceConfig` dataclass 默认值为 4 通道/10k 点)
 - **DLL 路径**: `C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64\Art_DAQ.dll`
 
 **SimulatorDevice v0.5 新设计**:
@@ -116,7 +118,7 @@ class AcquisitionDevice(ABC):
 - **事件驱动**: 内部线程定时调用 `_data_callback(chunk)`
 - **波形类型**: 正弦波、方波、三角波、噪声 (每通道独立配置)
 - **故障注入**: `fail_on_read_every_n` 模拟硬件断连
-- **触发间隔**: 默认 500ms (可配置)
+- **触发间隔**: 由帧时长决定 (`record_length / sample_rate * 1000`)，非固定 500ms
 
 ---
 
@@ -495,7 +497,7 @@ EventBus (frame.fitted topic)
 - 内部持有 `PidController`
 - 状态管理: `IDLE → RUNNING ↔ PAUSED`
 - `process(value)` 由 Manager 调用
-- v0.6 阶段 `_send_to_target()` 只记录日志（v0.7 实现）
+- v0.6 阶段 `_send_to_target()` 只记录日志；**v0.7 已实现真实发送**（按 target 类型调用 Ad9910Sender / RtmqSender）
 
 **FeedbackManager** (`scope/io/feedback_manager.py`):
 - 持有唯一 `frame.fitted` 订阅
@@ -512,7 +514,7 @@ class FeedbackConfig:
     worker_id: str                    # 唯一标识符
     measurement_key: str              # 如 "CH1_vpp"
     pid_config: PidConfig             # PID 参数
-    target: Optional[TargetConfig]    # v0.7 预留
+    target: Optional[TargetConfig]    # v0.7 已实现: Ad9910Target / RtmqTarget
 
 # Worker 生命周期（由 Manager 调用）
 await worker.start()   # → RUNNING
@@ -538,7 +540,7 @@ class FeedbackManager:
 | EventBus 订阅数 | N 个 | **1 个** |
 | `as_flat_dict` 调用/帧 | N 次 | **1 次** |
 | Worker 隔离性 | ✅ | ✅ |
-| 目标设备接口 | 未统一 | **预留 AD9910/RTMQ** (v0.7) |
+| 目标设备接口 | 未统一 | **已实现 AD9910/RTMQ** (v0.7) |
 
 ---
 
@@ -552,11 +554,12 @@ class FeedbackManager:
 class UIBridge(QObject):
     """采集线程 → Qt 主线程桥接"""
     
-    signal_raw_frame = pyqtSignal(object)   # RawFrame
-    signal_fitted = pyqtSignal(object)      # FittedSnapshot
+    signal_raw_frame = pyqtSignal(object)       # RawFrame
+    signal_fitted = pyqtSignal(object)          # FittedSnapshot
+    signal_feedback_status = pyqtSignal(object) # FeedbackStatusSnapshot (v0.6)
     
     def poll(self):
-        """非阻塞轮询两个队列，有数据则 emit"""
+        """非阻塞轮询队列，有数据则 emit"""
         # 1. 原始帧（主波形）
         raw = self._raw_queue.get_nowait()
         while raw is not None:
@@ -568,6 +571,12 @@ class UIBridge(QObject):
         while fitted is not None:
             self.signal_fitted.emit(fitted)
             fitted = self._fitted_queue.get_nowait()
+
+        # 3. 反馈状态快照（FeedbackPanel / 状态栏）
+        status = self._status_queue.get_nowait()
+        while status is not None:
+            self.signal_feedback_status.emit(status)
+            status = self._status_queue.get_nowait()
 ```
 
 ### 7.2 面板构成
@@ -587,12 +596,12 @@ class UIBridge(QObject):
 
 **各面板说明**:
 
-| 面板 | 文件 | v0.5 特性 |
+| 面板 | 文件 | 特性 |
 |------|------|-----------|
 | 通道 | `channel_panel.py` | 16 通道 2 列网格, 逐通道电压量程 |
 | 设备 | `device_panel.py` | 4 列布局: 设备 \| 触发 \| 采集 \| 测试 |
 | 测量 | `measurement_panel.py` | 动态行: 名称+通道+测量项+时间窗 → 值 |
-| 反馈 | `feedback_panel.py` | PID 反馈卡片: 开始/暂停/继续三态 |
+| 反馈 | `feedback_panel.py` | PID 反馈卡片: 暂停/恢复/编辑/移除 + 4 色状态灯 |
 
 ### 7.3 MiniChart 触发驱动策略
 
@@ -626,7 +635,7 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 |-------|-------------|---------|-----------|--------|--------|
 | `frame.raw` | `RawFrame` | 2 | drop_oldest | `_on_frame()` | MeasurementProcessor, UIBridge |
 | `frame.fitted` | `FittedSnapshot` | 2 | drop_oldest | MeasurementProcessor | **FeedbackManager**, UIBridge |
-| `config.change` | `ConfigChange` | 8 | block | UI 面板 | ConfigWorker |
+| `config.change` | `ConfigChange` | 8 | block | DevicePanel / MainWindow (配置加载) | ConfigWorker |
 | `measurement.specs.changed` | `MeasurementSpecsChanged` | 4 | drop_oldest | MeasurementPanel | MeasurementConfigWorker |
 | `feedback.worker.command` | `FeedbackCommand` | 32 | block | FeedbackPanel | FeedbackCommandWorker |
 | `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
@@ -716,16 +725,19 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 
 | 测试文件 | 测试数 | 通过率 |
 |----------|--------|--------|
+| `test_feedback_worker.py` | 29 | ✅ 100% |
+| `test_feedback_manager.py` | 19 | ✅ 100% |
+| `test_art_device.py` | 18 | ✅ 100% (mock artdaq, 无需硬件) |
+| `test_ad9910_sender.py` | 16 | ✅ 100% |
 | `test_phase0.py` | 16 | ✅ 100% |
+| `test_rpyc_pool.py` | 17 | ✅ 100% |
 | `test_pid_controller.py` | 11 | ✅ 100% |
-| `test_feedback_worker.py` | 15 | ✅ 100% |
-| `test_feedback_manager.py` | 16 | ✅ 100% |
-| `test_art_device.py` | 18 | ✅ 100% (部分需要硬件) |
-| `test_feedback_command_worker.py` | 4 | ✅ 100% |
-| `test_measurement_config_worker.py` | 2 | ✅ 100% |
+| `test_rtmq_sender.py` | 6 | ✅ 100% |
+| `test_feedback_command_worker.py` | 5 | ✅ 100% |
 | `test_config_manager.py` | 2 | ✅ 100% |
+| `test_measurement_config_worker.py` | 2 | ✅ 100% |
 | `test_channel_panel_source.py` | 1 | ✅ 100% |
-| **总计** | **85** | **✅ 100%** |
+| **总计** | **142** | **✅ 100%** |
 
 ---
 

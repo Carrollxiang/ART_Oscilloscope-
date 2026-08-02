@@ -339,8 +339,9 @@ def _compute(frame: RawFrame, spec: MeasurementSpec) -> Optional[float]:
 **信号定义**:
 ```python
 class UIBridge(QObject):
-    signal_raw_frame = pyqtSignal(object)   # RawFrame → WaveformView
-    signal_fitted    = pyqtSignal(object)   # FittedSnapshot  → MeasurementPanel + MiniChart
+    signal_raw_frame = pyqtSignal(object)       # RawFrame → WaveformView
+    signal_fitted    = pyqtSignal(object)       # FittedSnapshot → MeasurementPanel + MiniChart
+    signal_feedback_status = pyqtSignal(object) # FeedbackStatusSnapshot → FeedbackPanel (v0.6)
 ```
 
 **约束**：
@@ -349,20 +350,22 @@ class UIBridge(QObject):
 
 ---
 
-### 5.4 FeedbackWorker (v0.5 简化)
+### 5.4 FeedbackManager + FeedbackWorker (v0.6)
 
 ```
-运行位置：asyncio 线程（扩展当前的 _async_worker）
-输入：    frame.fitted 队列 → FittedSnapshot
+运行位置：asyncio 线程
+输入：    frame.fitted 队列 → FittedSnapshot (FeedbackManager 唯一订阅)
 处理：
-  1. snapshot.as_flat_dict()  ← 直接获取扁平字典
-  2. feedback_mgr.dispatch_raw(measurements)  ← 不再重建 AnalysisResult
+  1. snapshot.as_flat_dict()  ← 每帧只调用 1 次
+  2. 按 worker.measurement_key 取值 → asyncio.gather 并发分发
+  3. FeedbackWorker.process(value) → PidController.step → 目标发送 (v0.7)
+  4. 分发后发布 feedback.status 状态快照
 ```
 
-**关键变更**:
-- ✅ 不再重建 `AnalysisResult`（删除旧代码中的 proxy 构建）
-- ✅ `FeedbackManager.dispatch_raw()` 接收 `dict[str, float]` 直接作为 payload
-- ✅ 简化 `_resolve_value` 逻辑（统一从 `FittedSnapshot` 取值）
+**关键变更** (v0.5 → v0.6):
+- ✅ 删除 `dispatch_raw()` / `DataSubscription` / `FeedbackSlot`（不再重建 AnalysisResult）
+- ✅ FeedbackManager 持有唯一 `frame.fitted` 订阅，`FeedbackWorker` 被动接收不订阅 EventBus
+- ✅ 统一从 `FittedSnapshot` 取值（`_resolve_value` 逻辑移除）
 
 ---
 
@@ -482,7 +485,7 @@ def _on_frame(self, chunk):
 python -m pytest tests/ -v
 
 # 结果
-# 45 passed, 1 warning
+# 142 passed, 1 warning
 ```
 
 ### 性能测试

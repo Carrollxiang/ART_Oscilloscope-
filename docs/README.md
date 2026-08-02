@@ -12,8 +12,8 @@
 | 数据面 | `frame.raw` -> `MeasurementProcessor` -> `frame.fitted` |
 | 控制面 | 设备配置、测量规格、反馈 worker 命令均已走 EventBus |
 | 状态面 | `feedback.status` 事件驱动快照 + `runtime.metrics` 运行时指标 |
-| 反馈系统 | v0.6 Worker 架构已实现，状态读取由 EventBus 快照驱动，目标设备发送预留到 v0.7 |
-| 测试基线 | `85 passed` |
+| 反馈系统 | v0.6 Worker 架构已实现，状态读取由 EventBus 快照驱动；v0.7 目标设备发送（AD9910/RTMQ）已实现 |
+| 测试基线 | `142 passed` |
 | 推荐测试命令 | `& .\.venv\python.exe -m pytest -q` |
 
 ## 推荐阅读顺序
@@ -71,8 +71,14 @@
 
 ## 当前技术债
 
-- `TECH_STACK.md`、`ROADMAP.md` 中仍有部分 v0.5 项目结构和测试数量描述，需要后续统一清理。
+- `rpyc_pool` 的 `min_size`/`idle_timeout` 配置项尚未生效（无保底连接与空闲回收，预留后续实现）。
+- `DevicePanel` 通讯测试路径在 Qt 主线程直接 `ctypes` 加载 `Art_DAQ.dll` 并操作 `ArtDevice`（绕过 EventBus，属诊断功能刻意设计，未文档化）。
+- `MeasurementSpec.feature` 仅支持 Vpp/Vmax/Vmin/Mean；Vrms/Freq/Period 等特征未实现（默认 feature 已修正为 `Vpp`）。
+- 触发源（ai12/1V/上升沿）仍硬编码，UI 配置未实现。
+- `DeviceConfig` 默认值为 4 通道/10k 点，与 ScopeApp 运行时的 16 通道/15k 点配置不同（运行时显式覆盖，无实际影响）。
+- Phase 0 规划的 `acquisition/ring_buffer.py`、`watchdog.py` 未实现（目录为空）。
 - Mock 模式的完整 UI 操作长跑验证尚未形成自动化测试。
+- ✅ AD9910 反馈端到端已实测通过（连接池自死锁修复后, 2026/6）；RTMQ 端到端验证仍待服务就绪。
 
 ## 文档维护规则
 

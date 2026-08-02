@@ -2,13 +2,13 @@
 
 > **总体策略**: 每阶段产出是可独立运行验证的增量，不依赖硬件到位。数据模型先行 → 反馈系统验证 → UI 界面 → 硬件集成。
 >
-> **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，部分 v0.5 结构示例和测试数量不是最新状态。
+> **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，历史阶段的测试数量与结构示例为当时实测值，不代表当前基线。
 >
-> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；测试基线为 `85 passed`。
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；测试基线为 `142 passed`。
 
 ---
 
-## Phase 0 — 项目骨架 + 数据模型 (Day 1) ✅
+## Phase 0 — 项目骨架 + 数据模型 (Day 1) ⚠ 部分完成
 
 ### 目标
 
@@ -29,13 +29,13 @@ scope/
 │   │   ├── __init__.py
 │   │   ├── device.py            # AcquisitionDevice (ABC)
 │   │   └── simulator.py         # SimulatorDevice
-│   └── acquisition/
+│   └── acquisition/             # ⚠ 空目录: ring_buffer / watchdog 未实现
 │       ├── __init__.py
-│       ├── ring_buffer.py       # 环形缓冲区
-│       └── watchdog.py          # Watchdog 接口定义
+│       ├── ring_buffer.py       # 环形缓冲区 (未实现)
+│       └── watchdog.py          # Watchdog 接口定义 (未实现)
 └── tests/
     ├── test_simulator.py
-    └── test_ring_buffer.py
+    └── test_ring_buffer.py      # (未实现)
 ```
 
 ### 验证标准
@@ -241,7 +241,7 @@ scope/ui/
 scope/io/feedback_slots/
 ├── pid_slot.py              # PidFeedbackSlot + PidController + Target dataclasses
 scope/ui/panels/
-│── pid_feedback_dialog.py   # AD9910/RTMQ PID 配置对话框
+│── pid_feedback_dialog.py   # AD9910/RTMQ PID 配置对话框 (v0.6 已并入 feedback_panel.py 的 PidEditDialog)
 feedback_panel.py            # 扩展: + 添加 PID 按钮, idle/start/pause 三态
 
 docs/FEEDBACK_DESIGN_v0.5.md # 旧设计方案归档
@@ -390,8 +390,8 @@ scope/
 | 触发源 UI 配置 | 当前触发源 (ai12/1V/上升沿) 硬编码, 需 UI 支持修改 | 🔴 高 |
 | 更多测量特征 | Freq, Period, DutyCycle (需过零检测算法) | 🟡 中 |
 | 单点/连续模式切换 | 当前仅 FINITE 模式, 需 UI 支持 CONTINUOUS | 🟡 中 |
-| 反馈目标实现 | AD9910 / RTMQ 实际设备发送 (v0.7) | 🔴 高 |
-| 连接池管理 | 每个 worker 内部持有连接池 | 🟡 中 |
+| ~~反馈目标实现~~ | ✅ 已实现: `ad9910_sender.py` / `rtmq_sender.py` 已接入 FeedbackWorker (v0.7) | ✅ |
+| ~~连接池管理~~ | ✅ 已实现: `rpyc_pool.py` 全局共享连接池 (ConnectionPoolManager, 引用计数) | ✅ |
 | 更多触发类型 | 脉宽触发, 逻辑触发, 视频触发 | 🟢 低 |
 | 预设场景 | 保存/加载示波器配置 (通道设置, 触发条件, 反馈目标) | 🟢 低 |
 | 数据回放 | 加载 HDF5 文件 → 模拟实时采集 | 🟢 低 |
@@ -429,9 +429,9 @@ Phase 0: 数据模型 + 模拟器 ✅
                                │
                                └──→ v0.5 架构简化完成
                                       │
-                                      ├──→ Phase 7: 反馈系统重构 (规划中)
+                                      ├──→ Phase 7: 反馈系统重构 ✅
                                       │        │
-                                      │        └──→ v0.6 独立 worker 架构
+                                      │        └──→ v0.6 独立 worker 架构 ✅
                                       │
                                       └──→ Phase 8: 持续优化 (进行中)
 ```
@@ -465,7 +465,7 @@ Phase 0: 数据模型 + 模拟器 ✅
 python -m pytest tests/ -v
 
 # 期望结果
-# 45 passed, 1 warning
+# 142 passed, 1 warning
 ```
 
 ---
@@ -502,16 +502,19 @@ python -m scope.main
 | v0.4 | 2026/6/4 | 文档更新尝试 |
 | **v0.5** | **2026/6/5** | **数据模型重构 + Pipeline 删除** |
 | **v0.6** | **2026/6/17** | **反馈 Worker 架构 + 设备配置控制面 EventBus 化** |
+| **v0.7** | **2026/6** | **AD9910/RTMQ 目标设备发送 + rpyc 连接池 + 测试基线 136** |
+| **v0.7.1** | **2026/6** | **修复 rpyc 连接池自死锁（AD9910 反馈实测可用）+ 测试基线 142** |
 
 ---
 
 ## 当前状态
 
-- ✅ Phase 0-6 全部完成
+- ✅ Phase 0-6 全部完成 (Phase 0 的 acquisition/ring_buffer、watchdog 未实现, 见上)
 - ✅ Phase 7 反馈 Worker 架构核心已实现
+- ✅ v0.7 AD9910/RTMQ 目标设备发送已实现并接入 FeedbackWorker, rpyc 连接池就绪
 - ✅ 设备配置 UI 已发布 `config.change`，由 ConfigWorker 应用
 - ✅ 测量规格 UI 已发布 `measurement.specs.changed`，由 MeasurementConfigWorker 应用
 - ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
 - ✅ 反馈状态已发布 `feedback.status`，由 UIBridge 桥接到 FeedbackPanel / 状态栏
 - ✅ 运行时指标已发布 `runtime.metrics`，供后续诊断面板消费
-- ✅ 当前测试基线: 85/85 通过
+- ✅ 当前测试基线: 142/142 通过

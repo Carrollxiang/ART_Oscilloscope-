@@ -104,12 +104,12 @@
   - [x] `pause(self)` async
   - [x] `resume(self)` async
   - [x] `process(self, value: float)` async - 核心处理方法
-  - [x] `_send_to_target(self, delta: float)` async - v0.6 留空
+  - [x] `_send_to_target(self, delta: float)` async - v0.6 留空, v0.7 已实现真实发送
 
 **关键实现点**:
 - Worker **不订阅** EventBus，被动接收数据
 - `process()` 方法由 Manager 调用
-- v0.6 阶段 `_send_to_target()` 只记录日志
+- v0.6 阶段 `_send_to_target()` 只记录日志 (v0.7 已改为按 target 类型调用 Ad9910Sender/RtmqSender)
 
 ---
 
@@ -298,7 +298,7 @@
 ### 7.1 运行所有测试
 
 **任务**:
-- [x] `pytest tests/ -v` 全部通过 (85/85)
+- [x] `pytest tests/ -v` 全部通过 (136/136)
 - [x] 确保无 regressions
 
 ---
@@ -354,10 +354,10 @@
 
 ### v0.7（下一版本）
 
-- [ ] 实现 AD9910 目标设备
-- [ ] 实现 RTMQ 目标设备
-- [ ] 实现连接池（每个 worker 内部持有）
-- [ ] 完善错误处理和重连机制
+- [x] 实现 AD9910 目标设备
+- [x] 实现 RTMQ 目标设备
+- [x] 实现连接池（每个 worker 内部持有）
+- [~] 完善错误处理和重连机制（发送失败有 warning 日志与 sender_error 上报；自动重连未实现）
 
 ### v0.8（未来）
 
@@ -390,7 +390,7 @@
 - [ ] WorkerCard 拖拽排序
 
 ### 功能
-- [ ] 实现 AD9910 目标设备 (v0.7)
-- [ ] 实现 RTMQ 目标设备 (v0.7)
+- [x] 实现 AD9910 目标设备 (v0.7)
+- [x] 实现 RTMQ 目标设备 (v0.7)
 - [ ] 多级 PID（串级控制）
 - [ ] Web 界面监控

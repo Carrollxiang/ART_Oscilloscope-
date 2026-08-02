@@ -1,9 +1,9 @@
-# 技术栈与技术决策 (v0.5)
+# 技术栈与技术决策 (v0.7)
 
-> 最后更新: 2026/6/5  
+> 最后更新: 2026/6  
 > Python 版本: 3.10.20
 >
-> **整理状态**: 本文保留 v0.5 技术决策背景，部分项目结构、反馈目录和测试数量已过期。当前文档入口见 [README.md](./README.md)，当前反馈系统见 [FEEDBACK_SPEC.md](./FEEDBACK_SPEC.md)。
+> **整理状态**: 本文已按当前代码同步（v0.6/v0.7 反馈架构、目录结构、测试基线 136）。当前文档入口见 [README.md](./README.md)。
 
 ## 1. 语言与运行时
 
@@ -42,17 +42,18 @@
 
 ### rpyc 连接池
 
-`RpycConnectionPool` 是反馈系统的核心基础设施：
+`RpycConnectionPool` 是反馈系统的核心基础设施（v0.7 实现）：
 
 | 特性 | 说明 |
 |------|------|
 | 线程安全 | `threading.Condition` + `Lock` 保护借还操作 |
-| 温备 | `start()` 时预建 `min_size` 条连接 |
+| 全局共享 | `ConnectionPoolManager` 按 (ip,port) 分组, 引用计数归零自动关闭 |
 | 健康检查 | `acquire()` 时自动 ping，死连接从池中移除 |
-| 超时保护 | `acquire_timeout` 防死等，`idle_timeout` 自动回收空闲连接 |
+| 超时保护 | `connect_timeout`(建连) + `acquire_timeout`(借池) 防死等 |
 | 伸缩上限 | `max_size` 限制并发连接数，超限时 acquire 等待 |
+| 预留配置 | `min_size`(保底连接) / `idle_timeout`(空闲回收) 尚未生效 |
 
-所有反馈 slot 基于 asyncio 实现，rpyc 同步调用通过 `run_in_executor` 桥接。
+所有反馈 worker 基于 asyncio 实现，rpyc 同步调用通过 `run_in_executor` 桥接。
 
 ---
 
@@ -66,7 +67,7 @@
 
 ---
 
-## 5. 项目结构 (v0.5)
+## 5. 项目结构 (v0.7)
 
 ```
 project-root/
@@ -74,87 +75,87 @@ project-root/
 ├── pyproject.toml
 ├── requirements.txt
 ├── .gitignore
-├── test_hardware.py            # ART 硬件诊断工具 (无 GUI)
-├── start.bat                   # Windows 启动脚本 (硬件模式)
-├── start_mock.bat              # Windows 启动脚本 (Mock 模式)
+├── test_hardware.py            # ART 硬件诊断工具 (无 GUI, 未入库)
+├── start.bat / start_mock.bat  # 启动脚本 (硬件 / Mock)
 ├── activate_env.bat            # 激活虚拟环境
 │
 ├── artdaq/                     # ART 采集卡驱动 (NI-DAQmx 兼容封装, 已入库)
+├── feedback_example/           # rpyc 服务端参考示例 (ad9910 / RTMQ / DDS)
+├── config/                     # 默认配置 (default_config.json)
 │
 ├── scope/                      # 主包
 │   ├── __init__.py
 │   ├── main.py                 # 应用入口 (ScopeApp + 参数解析)
 │   │
-│   ├── model/                  # 数据模型 (v0.5 简化)
+│   ├── model/                  # 数据模型
 │   │   ├── __init__.py         # ✅ RawFrame (轻量数据模型)
-│   │   └── enums.py            # MeasurementFeature (4个基本量)
+│   │   └── enums.py            # MeasurementFeature (4个基本量) + SlotStatus
 │   │
-│   ├── hardware/               # 硬件抽象层
-│   │   ├── __init__.py
-│   │   ├── device.py           # AcquisitionDevice (ABC)
+│   ├── hardware/               # 硬件抽象层 (HAL)
+│   │   ├── __init__.py         # ✅ 导出 AcquisitionDevice/DeviceConfig/ArtDevice/SimulatorDevice
+│   │   ├── device.py           # AcquisitionDevice (ABC, 含 set_data_callback/make_raw_frame)
 │   │   ├── simulator.py        # ✅ SimulatorDevice (事件驱动 + 预生成帧)
 │   │   └── art_device.py       # ✅ ArtDevice (ART USB 卡)
 │   │
-│   ├── runtime/                # v0.5 核心运行时
+│   ├── runtime/                # 核心运行时 (v0.5/v0.6)
 │   │   ├── __init__.py
 │   │   ├── event_bus.py        # ✅ EventBus + BoundedQueue + DropStrategy
 │   │   ├── measurement_processor.py  # ✅ MeasurementProcessor (扁平执行)
 │   │   ├── measurement_spec.py       # ✅ MeasurementSpec (纯配置)
 │   │   ├── fitted_snapshot.py        # ✅ FittedSnapshot (测量结果)
-│   │   ├── feedback_worker.py        # ✅ FeedbackWorker (asyncio)
-│   │   └── config_worker.py          # ✅ ConfigWorker (asyncio)
+│   │   ├── pid_controller.py         # ✅ PidController (独立 PID 组件)
+│   │   ├── config_worker.py          # ✅ ConfigWorker (asyncio)
+│   │   ├── measurement_config_worker.py # ✅ 测量规格配置 Worker
+│   │   ├── config_change.py / measurement_change.py  # 控制面指令 (change_id 去重)
+│   │   ├── feedback_status.py        # ✅ feedback.status 快照
+│   │   └── runtime_metrics.py        # ✅ runtime.metrics 快照
 │   │
-│   ├── io/                     # 网络与反馈
+│   ├── io/                     # 反馈层 (v0.6/v0.7)
 │   │   ├── __init__.py
-│   │   ├── feedback_manager.py # ✅ FeedbackManager + dispatch_raw()
-│   │   └── feedback_slots/
-│   │       ├── __init__.py
-│   │       ├── base.py         # FeedbackSlot ABC + DataSubscription
-│   │       ├── null_slot.py    # ✅ 调试用 (只打日志)
-│   │       ├── pid_slot.py     # ✅ PidFeedbackSlot + PidController
-│   │       ├── rpyc_slot.py    # ✅ rpyc 通用推送
-│   │       └── rpyc_pool.py    # ✅ rpyc 连接池 (线程安全)
+│   │   ├── feedback_manager.py         # ✅ FeedbackManager (唯一订阅 + 生命周期)
+│   │   ├── feedback_worker.py          # ✅ FeedbackWorker (独立单元 + PID)
+│   │   ├── feedback_command.py         # ✅ 反馈控制命令 (7 种 action)
+│   │   ├── feedback_command_worker.py  # ✅ 反馈命令 Worker
+│   │   ├── ad9910_sender.py            # ✅ AD9910 目标发送器 (v0.7)
+│   │   ├── rtmq_sender.py              # ✅ RTMQ 目标发送器 (v0.7)
+│   │   └── rpyc_pool.py                # ✅ rpyc 连接池 (线程安全, v0.7)
 │   │
 │   ├── ui/                     # PyQt6 界面
 │   │   ├── __init__.py
 │   │   ├── main_window.py      # ✅ 主窗口控制器 + 信号桥接
 │   │   ├── main_window.ui      # Qt Designer 布局
-│   │   ├── ui_bridge.py        # ✅ 采集线程 → Qt 主线程桥接
+│   │   ├── ui_bridge.py        # ✅ 采集线程 → Qt 主线程桥接 (3 信号)
 │   │   ├── waveform_view.py    # pyqtgraph 波形 + 2列图例 + 降采样
-│   │   ├── mini_chart.py       # ✅ 迷你趋势图 (触发驱动)
+│   │   ├── mini_chart.py       # ✅ 迷你趋势图 (帧驱动)
 │   │   └── panels/
 │   │       ├── channel_panel.py       # 16 通道 2列
 │   │       ├── device_panel.py        # 设备设置 4列
 │   │       ├── measurement_panel.py   # ✅ 动态测量行
-│   │       ├── feedback_panel.py      # PID 反馈卡片
-│   │       └── pid_feedback_dialog.py # PID + AD9910/RTMQ 配置
+│   │       └── feedback_panel.py      # ✅ 反馈卡片 (含 PidEditDialog)
 │   │
 │   └── config/
 │       ├── __init__.py
 │       └── settings.py         # 配置保存/加载 (JSON)
 │
 ├── docs/                       # 文档
-│   ├── ARCHITECTURE.md         # ✅ v0.5 架构文档
+│   ├── README.md               # ✅ 文档入口 + 当前快照
+│   ├── ARCHITECTURE.md         # ✅ 系统架构 (v0.7)
 │   ├── ROADMAP.md              # ✅ 实施路线图
 │   ├── EVENTBUS_SPEC.md        # ✅ EventBus 规范
-│   ├── FEEDBACK_SPEC.md        # ✅ 当前反馈系统规范
+│   ├── FEEDBACK_SPEC.md        # ✅ 当前反馈系统规范 (v0.6/v0.7)
+│   ├── FEEDBACK_TODO.md        # ✅ 反馈重构任务清单
 │   ├── FEEDBACK_DESIGN_v0.5.md # ⚠️ 旧反馈设计归档
 │   ├── TECH_STACK.md           # ✅ 本文档
-│   └── CHECKLIST.md            # ✅ 实施清单
+│   └── CHECKLIST.md            # ⚠️ 历史归档 (v0.5 验收清单)
 │
-└── tests/
-    ├── test_phase0.py           # ✅ 数据模型 + 模拟器 (16 tests)
-    ├── test_feedback_slots.py   # ✅ 反馈系统 (10 tests)
-    ├── test_art_device.py       # ✅ ART 硬件适配 (18 tests)
-    └── pytest_cache/            # pytest 缓存 (可忽略)
+└── tests/                      # ✅ 12 个测试文件 / 136 tests (全单元测试)
 ```
 
-**v0.5 删除的文件**:
+**已删除/预留目录**:
 - ❌ `scope/processing/` (整个目录: pipeline.py, fft.py, filters.py, math_ops.py, measurements.py)
-- ❌ `scope/model/analysis_result.py`
-- ❌ `scope/runtime/fit_worker.py`
-- ❌ `scope/runtime/measurement_snapshot.py`
-- ❌ `scope/acquisition/` (预留目录)
+- ❌ `scope/model/analysis_result.py` / `scope/runtime/fit_worker.py` / `scope/runtime/measurement_snapshot.py`
+- ❌ `scope/io/feedback_slots/` (v0.6 删除: base.py, null_slot.py, pid_slot.py, rpyc_slot.py, rpyc_pool.py)
+- ⚠️ `scope/acquisition/` 空目录残留 (ring_buffer / watchdog 未实现)
 
 ---
 
@@ -209,7 +210,7 @@ project-root/
 | 数据包大小 | ~1KB | **~100 bytes** |
 | 测量延迟 | 5-20ms | **< 5ms** |
 | 代码行数 | ~6000 | **~4000** |
-| 测试通过率 | 72/72 | **45/45** |
+| 测试通过率 | 72/72 (v0.3) | **136/136 (v0.7 当前基线)** |
 
 ### 8.3 技术债务清理
 
@@ -271,19 +272,28 @@ start_mock.bat
 python -m pytest tests/ -v
 
 # 期望结果
-# 45 passed, 1 warning
+# 142 passed, 1 warning
 ```
 
 ### 测试覆盖率
 
 | 测试文件 | 测试数 | 通过 |
 |----------|--------|------|
+| test_feedback_worker.py | 29 | ✅ 100% |
+| test_feedback_manager.py | 19 | ✅ 100% |
+| test_art_device.py | 18 | ✅ 100% (mock artdaq) |
+| test_ad9910_sender.py | 16 | ✅ 100% |
 | test_phase0.py | 16 | ✅ 100% |
-| test_feedback_slots.py | 10 | ✅ 100% |
-| test_art_device.py | 18 | ✅ 100%* |
-| **总计** | **44** | **✅ 100%** |
+| test_rpyc_pool.py | 17 | ✅ 100% |
+| test_pid_controller.py | 11 | ✅ 100% |
+| test_rtmq_sender.py | 6 | ✅ 100% |
+| test_feedback_command_worker.py | 5 | ✅ 100% |
+| test_config_manager.py | 2 | ✅ 100% |
+| test_measurement_config_worker.py | 2 | ✅ 100% |
+| test_channel_panel_source.py | 1 | ✅ 100% |
+| **总计** | **142** | **✅ 100%** |
 
-*注: test_art_device.py 部分测试需要硬件支持
+*注: 全部为纯单元测试（artdaq 以 mock 替代），无需真实硬件。硬件诊断用根目录 `test_hardware.py`。
 
 ---
 

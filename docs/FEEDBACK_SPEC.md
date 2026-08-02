@@ -1,7 +1,7 @@
-# 反馈系统架构规范 (v0.6)
+# 反馈系统架构规范 (v0.6/v0.7)
 
-> 状态: ✅ 已实现 (v0.6)  
-> 最后更新: 2026/6/5
+> 状态: ✅ 已实现 (v0.6 Worker 架构; v0.7 目标设备发送 + rpyc 连接池)  
+> 最后更新: 2026/6
 
 ---
 
@@ -178,7 +178,7 @@ class FeedbackConfig:
     worker_id: str               # 唯一标识符
     measurement_key: str         # 订阅的测量项 key，如 "CH1_vpp"
     pid_config: PidConfig        # PID 控制器参数
-    target: Optional[TargetConfig] = None  # 目标设备配置（v0.6 暂不实现）
+    target: Optional[TargetConfig] = None  # 目标设备配置（v0.7 已实现: Ad9910Target / RtmqTarget）
 ```
 
 **接口**:
@@ -241,17 +241,16 @@ class FeedbackWorker:
             logger.error(f'FeedbackWorker "{self.worker_id}" error: {e}')
     
     async def _send_to_target(self, delta: float):
-        """发送调整指令到目标设备（v0.6 不实现）"""
-        # TODO: v0.7 实现 AD9910 / RTMQ 目标发送
-        logger.debug(f'Worker "{self.worker_id}" delta={delta:.6f}')
-        pass
+        """发送调整指令到目标设备（v0.7 已实现真实发送）"""
+        # v0.7: 按 target 类型分发到 Ad9910Sender.adjust_delta / RtmqSender.adjust_delta
+        # 发送失败仅记录 warning，并上报 sender_error 到 feedback.status
 ```
 
 **关键设计**:
 - ✅ **被动接收**: 不主动订阅 EventBus，由 Manager 调用
 - ✅ **无队列管理**: Manager 统一管理订阅和分发
 - ✅ **状态管理**: IDLE / RUNNING / PAUSED / ERROR
-- ✅ **目标设备扩展**: 预留接口，v0.7 实现
+- ✅ **目标设备发送**: v0.7 已实现（Ad9910Sender / RtmqSender，经全局 rpyc 连接池）
 
 ---
 
@@ -345,7 +344,7 @@ class FeedbackManager:
                 "worker_id": w.worker_id,
                 "measurement_key": w._config.measurement_key,
                 "pid_config": dataclasses.asdict(w._config.pid_config),
-                "target": None,  # v0.7 实现
+                "target": target_to_dict(w._config.target),  # v0.7 已实现
             }
             for w in self._workers.values()
         ]
@@ -429,7 +428,7 @@ class FeedbackManager:
 
 ---
 
-## 4. 目标设备接口（v0.7 预留）
+## 4. 目标设备接口（v0.7 已实现）
 
 ### 4.1 目标配置
 
@@ -453,21 +452,25 @@ class RtmqTarget:
 TargetConfig = Ad9910Target | RtmqTarget
 ```
 
-### 4.2 连接池（v0.7）
+### 4.2 发送器与连接池（v0.7 已实现）
 
-**每个 worker 内部持有连接池**:
+**发送器** (`scope/io/ad9910_sender.py` / `scope/io/rtmq_sender.py`):
+
+- `Ad9910Sender`: 按 `Ad9910Mapping.mode` 将 PID delta 映射为频率/幅度调整，经 rpyc 调用 `get_ad9910_service()` 下发
+- `RtmqSender`: delta 直接作为目标值，经 rpyc 调用 `set_sideband(card_index, sbg_channel, value)`（远端接口为假设，参考 `feedback_example/RTMQ_rpyc_server.py`）
+
+**连接池** (`scope/io/rpyc_pool.py`):
 
 ```python
-class FeedbackWorker:
-    def __init__(self, config: FeedbackConfig):
-        self._connection_pool = None  # v0.7 实现
-    
-    async def _ensure_connection(self):
-        """确保连接池已创建"""
-        if self._connection_pool is None and self._target:
-            # 根据 target 创建 RpycConnectionPool
-            pass
+class RpycConnectionPool:
+    """单 (ip,port) 连接池: 线程安全借还、acquire 时 ping 健康检查、超时控制"""
+
+class ConnectionPoolManager:
+    """全局单例: 按 (ip,port) 分组共享连接池, 引用计数归零自动关闭"""
 ```
+
+- 发送器通过 `ConnectionPoolManager.acquire_pool(ip, port, pool_config)` 获取共享池，不再每 worker 私有持有
+- 已知限制: `min_size` / `idle_timeout` 配置项尚未生效（无保底连接与空闲回收）
 
 ---
 
@@ -578,9 +581,12 @@ def load_from_file(main_window, filepath: str) -> bool:
 | 测试文件 | 测试内容 |
 |----------|----------|
 | `test_pid_controller.py` (✅ 11 tests) | PID 计算正确性、窗口限制、限幅、死区 |
-| `test_feedback_worker.py` (✅ 15 tests) | Worker 生命周期、状态切换、process() 调用 |
-| `test_feedback_manager.py` (✅ 16 tests) | Manager 生命周期、配置导入导出、并发分发、批量状态发布 |
-| `test_feedback_command_worker.py` (✅ 4 tests) | feedback.worker.command 应用、批量加载清空 |
+| `test_feedback_worker.py` (✅ 29 tests) | Worker 生命周期、状态切换、process()、目标发送分发、失败冷却/in-flight |
+| `test_feedback_manager.py` (✅ 19 tests) | Manager 生命周期、配置导入导出、并发分发、批量状态发布 |
+| `test_feedback_command_worker.py` (✅ 5 tests) | feedback.worker.command 应用、批量加载清空 |
+| `test_ad9910_sender.py` (✅ 16 tests) | AD9910 发送器: 频率/幅度映射、delta 调整、限幅 |
+| `test_rpyc_pool.py` (✅ 17 tests) | 连接池: 借还/复用/超时/健康检查/引用计数/取消安全/自死锁回归 |
+| `test_rtmq_sender.py` (✅ 6 tests) | RTMQ 发送器: set_sideband 目标值下发 |
 
 ### 7.2 集成测试
 
@@ -608,9 +614,20 @@ def load_from_file(main_window, filepath: str) -> bool:
 | 版本 | 状态 | 功能 |
 |------|------|------|
 | **v0.5** | ✅ 已完成 | FeedbackSlot + FeedbackManager（旧架构） |
-| **v0.6** | **✅ 已实现** | **独立 worker + 共享订阅 + PID 封装 (当前版本)** |
-| **v0.7** | 🔲 未来 | 目标设备实现（AD9910 / RTMQ） |
-| **v0.8** | 🔲 未来 | 连接池 + 批量发送 |
+| **v0.6** | **✅ 已实现** | **独立 worker + 共享订阅 + PID 封装** |
+| **v0.7** | **✅ 已实现** | **目标设备发送（AD9910 / RTMQ）+ rpyc 连接池** |
+| **v0.7.1** | **✅ 已修复** | **连接池自死锁修复 (AD9910 反馈实测可用) + 失败冷却/in-flight** |
+| **v0.8** | 🔲 未来 | 批量发送 + Web 界面监控 + 多级 PID |
+
+### 8.1 修复记录 (v0.7.1)
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| DDS 反馈连接后无业务调用（server 只有 accepted/welcome） | `RpycConnectionPool._acquire_sync` 持 `threading.Lock`（不可重入）调用 `_create_connection`，其 `logger.debug` 访问 `self.size`（需同一把锁）→ 自死锁 | 建连移出锁（三阶段 + `_creating` 计数）；debug 日志改用无锁计数 |
+| process 被取消导致业务调用中断 | `_dispatch_loop` 对 process 施加 `wait_for(1.5s)`，无法中断 executor 线程 | 移除 wait_for；网络超时由连接池 `connect_timeout`/`acquire_timeout` 兜底；worker in-flight 防重叠 |
+| 启动探测卡 UI | `_startup_rpyc_ping` 在 Qt 主线程同步 `rpyc.connect`（最坏 ~18s） | 移入 asyncio executor |
+| 连接失败每帧重试 | 无冷却机制 | `RETRY_COOLDOWN_S=5s` 失败冷却 |
+| acquire 被取消后连接泄漏 | executor 建连无法被 asyncio 取消 | `asyncio.shield` + 清理协程归还 |
 
 ---
 

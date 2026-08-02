@@ -1,4 +1,4 @@
-# TODO — EventBus v0.4 重构状态 + 反馈系统 v0.6
+# TODO — EventBus v0.4 重构状态 + 反馈系统 v0.6/v0.7
 
 > 更新于 Phase 1~6 代码实施完成后。见 docs/EVENTBUS_SPEC.md 架构设计。
 
@@ -87,9 +87,29 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **85/85 测试通过** (新增反馈状态批量发布回归测试)
+- **142/142 测试通过** (新增 v0.7.1 连接池自死锁/取消安全/失败冷却回归测试)
 
 ### 待完成
 - [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`
 - [x] **FeedbackPanel.on_status_update()** — 从 `feedback.status` 快照更新 worker 卡片
 - [ ] Mock 模式完整测试（添加 worker、暂停/恢复、配置保存/加载）
+
+---
+
+## ✅ 已完成 — 反馈目标设备发送 v0.7
+
+### 新增文件
+- `scope/io/ad9910_sender.py` — Ad9910Sender: set_frequency / set_amplitude / adjust_delta (16 测试)
+- `scope/io/rtmq_sender.py` — RtmqSender: set_sideband 目标值下发 (6 测试)
+- `scope/io/rpyc_pool.py` — RpycConnectionPool + ConnectionPoolManager (线程安全 / 引用计数 / 取消安全, 17 测试)
+- `tests/test_ad9910_sender.py` / `tests/test_rpyc_pool.py` / `tests/test_rtmq_sender.py`
+
+### 核心变更
+- FeedbackWorker._send_to_target 由 v0.6 仅日志 → v0.7 真实 rpyc 调用 (Ad9910 / RTMQ 按 target 类型分发)
+- FeedbackCommand 新增 update_target 命令, FeedbackPanel 支持编辑目标设备
+- 连接池全局共享 (ConnectionPoolManager 引用计数, 归零自动关闭)
+
+### 已知限制
+- `RtmqSender.set_sideband` 远端接口为假设 (feedback_example/RTMQ_rpyc_server.py 可作对照)
+- `rpyc_pool` 的 min_size / idle_timeout 配置项未生效 (预留)
+- 真实设备端到端验证待硬件/服务就绪
