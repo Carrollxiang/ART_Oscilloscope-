@@ -98,26 +98,83 @@
     }
   ],
   "device": {
-    "sample_rate": 30000,
-    "record_length": 15000,
-    "channels_enabled": [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15
-    ]
+    "params": {
+      "device_name": "Dev42",
+      "ai_channels": "ai0:15",
+      "terminal_config": "NRSE",
+      "read_timeout": 5.0,
+      "trigger_source": "ai12",
+      "trigger_slope": "rising",
+      "trigger_level": 1.0
+    },
+    "config": {
+      "sample_rate": 30000,
+      "channels_enabled": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "vertical_ranges": [
+        5.0,
+        5.0,
+        5.0,
+        5.0
+      ],
+      "channel_min_vals": [
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0,
+        -10.0
+      ],
+      "channel_max_vals": [
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0,
+        10.0
+      ],
+      "trigger_source": 0,
+      "trigger_level": 0.0,
+      "trigger_slope": "rising",
+      "record_length": 15000
+    },
+    "duration": 0.5
   },
   "measurements": [
     {
@@ -265,5 +322,27 @@
       "end_ms": 103.0
     }
   ],
-  "feedback_workers": []
+  "feedback_workers": [
+    {
+      "worker_id": "w1",
+      "measurement_key": "m18",
+      "pid_config": {
+        "preset_value": 1.9,
+        "kp": 0.03,
+        "ki": 0.0,
+        "kd": 0.0,
+        "i_limit": 0.1,
+        "output_limit": 0.1,
+        "window_size": 10,
+        "deadband": 0.02
+      },
+      "target": {
+        "ip": "192.168.1.20",
+        "port": 3251,
+        "device_id": 2113,
+        "profile": 1,
+        "type": "Ad9910Target"
+      }
+    }
+  ]
 }
