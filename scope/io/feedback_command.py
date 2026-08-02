@@ -14,7 +14,7 @@ from typing import Literal, Optional
 from scope.runtime.pid_controller import PidConfig
 from .feedback_worker import FeedbackConfig
 
-FeedbackAction = Literal["add", "pause", "resume", "remove", "update_pid", "load_batch"]
+FeedbackAction = Literal["add", "pause", "resume", "remove", "update_pid", "update_target", "load_batch"]
 
 
 @dataclass

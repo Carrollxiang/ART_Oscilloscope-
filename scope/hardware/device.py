@@ -96,6 +96,21 @@ class AcquisitionDevice(ABC):
         """
         ...
 
+    @abstractmethod
+    def set_data_callback(self, callback: Callable[[np.ndarray], None]):
+        """
+        注册数据回调 — 统一事件驱动接口。
+        设备在每帧采集完成后调用 callback(chunk)，上层据此发布 RawFrame。
+        """
+        ...
+
+    @abstractmethod
+    def make_raw_frame(self, chunk: np.ndarray) -> "RawFrame":
+        """
+        将采集到的 chunk (shape=(channels, samples)) 包装为 RawFrame。
+        """
+        ...
+
     # ── 配置 ───────────────────────────────────────────────────
 
     @abstractmethod

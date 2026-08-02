@@ -6,17 +6,24 @@ FeedbackWorker — 独立反馈单元
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from scope.model.enums import SlotStatus
 from scope.runtime.pid_controller import PidConfig, PidController
 
+
 logger = logging.getLogger(__name__)
 
+# 发送失败后的冷却时间: 冷却期内跳过发送, 避免每帧重复尝试
+# 占用 executor 线程 (建连失败最坏 ~18s)。
+RETRY_COOLDOWN_S: float = 5.0
 
-# ── 目标设备配置（v0.7 预留） ──────────────────────────────────
+
+# ── 目标设备配置 ──────────────────────────────────────────
 
 @dataclass
 class Ad9910Target:
@@ -39,6 +46,35 @@ class RtmqTarget:
 TargetConfig = Ad9910Target | RtmqTarget
 
 
+def target_to_dict(target: Optional[TargetConfig]) -> Optional[dict[str, Any]]:
+    """将 TargetConfig 序列化为字典（含 type 字段用于反序列化）。"""
+    if target is None:
+        return None
+    d = dataclasses.asdict(target)
+    d["type"] = type(target).__name__  # "Ad9910Target" | "RtmqTarget"
+    return d
+
+
+def target_from_dict(d: Optional[dict[str, Any]]) -> Optional[TargetConfig]:
+    """从字典反序列化 TargetConfig（不修改输入 dict）。"""
+    if d is None:
+        return None
+    t = d.get("type", None)
+    if t == "Ad9910Target":
+        return Ad9910Target(
+            ip=d["ip"], port=d["port"],
+            device_id=d.get("device_id", 0), profile=d.get("profile", 0),
+        )
+    elif t == "RtmqTarget":
+        return RtmqTarget(
+            ip=d["ip"], port=d["port"],
+            card_index=d.get("card_index", 0), sbg_channel=d.get("sbg_channel", 0),
+        )
+    else:
+        logger.warning("unknown target type: %s", t)
+        return None
+
+
 @dataclass
 class FeedbackConfig:
     """反馈 worker 配置"""
@@ -56,9 +92,14 @@ class FeedbackWorker:
         self._pid = PidController(config.pid_config)
         self._status = SlotStatus.IDLE
         self._target = config.target
+        self._sender: Optional[Ad9910Sender] = None
+        self._sender_error: str = ""
         self._last_value: Optional[float] = None
         self._last_error: Optional[float] = None
         self._frames_processed: int = 0
+        self._first_send_logged: bool = False
+        self._processing: bool = False          # 上一帧发送未完成时跳过本帧
+        self._next_retry_ts: float = 0.0        # 发送失败冷却截止 (monotonic)
 
     # ── 属性 ────────────────────────────────────────────────────
 
@@ -91,6 +132,10 @@ class FeedbackWorker:
     def frames_processed(self) -> int:
         return self._frames_processed
 
+    @property
+    def target(self) -> Optional[TargetConfig]:
+        return self._target
+
     def update_pid_config(self, pid_config: PidConfig):
         """运行时更新 PID 参数，重置控制器状态"""
         self._config.pid_config = pid_config
@@ -103,11 +148,22 @@ class FeedbackWorker:
         """启动 worker"""
         self._status = SlotStatus.RUNNING
         self._pid.reset()
-        logger.info(f'FeedbackWorker "{self.worker_id}" started')
+        self._sender_error = ""
+        self._first_send_logged = False
+        self._sender = self._create_sender()
+        chain = type(self._target).__name__ if self._target else "none"
+        status = "(sender OK)" if self._sender or self._target is None else "(sender FAILED)"
+        logger.info(
+            'FeedbackWorker "%s" started (target=%s) %s',
+            self.worker_id, chain, status,
+        )
 
     async def stop(self):
-        """停止 worker"""
+        """停止 worker，释放目标设备连接。"""
         self._status = SlotStatus.IDLE
+        if self._sender:
+            await self._sender.close()
+            self._sender = None
         logger.info(f'FeedbackWorker "{self.worker_id}" stopped')
 
     async def pause(self):
@@ -135,27 +191,133 @@ class FeedbackWorker:
 
         if self._status != SlotStatus.RUNNING:
             return
+        if self._processing:
+            # 上一帧仍在发送中 (网络慢/不可达), 跳过本帧避免并发堆积
+            return
+        if time.monotonic() < self._next_retry_ts:
+            # 发送失败冷却期, 跳过发送 (last_value 仍更新)
+            return
 
+        self._processing = True
         try:
             delta = self._pid.step(value)
             self._frames_processed += 1
             if delta is not None and self._target:
-                await self._send_to_target(delta)
+                ok = await self._send_to_target(delta)
+                if not ok:
+                    self._next_retry_ts = time.monotonic() + RETRY_COOLDOWN_S
             elif delta is not None:
                 logger.debug(
                     f'Worker "{self.worker_id}" computed delta={delta:.6f} '
                     f"(no target configured)"
                 )
         except Exception as e:
+            self._next_retry_ts = time.monotonic() + RETRY_COOLDOWN_S
             logger.error(f'FeedbackWorker "{self.worker_id}" error: {e}', exc_info=True)
+        finally:
+            self._processing = False
 
-    async def _send_to_target(self, delta: float):
+    async def _send_to_target(self, delta: float) -> bool:
         """
-        发送调整指令到目标设备（v0.7 实现）。
+        发送调整指令到目标设备。
 
         Args:
             delta: PID 计算出的调整量
+
+        Returns:
+            True 发送成功; False 无 sender/发送失败 (用于失败冷却)
         """
-        # TODO: v0.7 实现 AD9910 / RTMQ 目标发送
-        logger.debug(f'Worker "{self.worker_id}" delta={delta:.6f}')
-        pass
+        if self._sender is None or not self._target:
+            logger.debug(f'Worker "{self.worker_id}" delta={delta:.6f} (no sender)')
+            return False
+
+        try:
+            if isinstance(self._target, Ad9910Target):
+                ok = await self._sender.adjust_delta(delta)
+                if ok:
+                    if not self._first_send_logged:
+                        self._first_send_logged = True
+                        logger.info(
+                            'Worker "%s" 首次反馈成功 → AD9910 %s:%d delta=%+.6f',
+                            self.worker_id, self._target.ip, self._target.port, delta,
+                        )
+                    else:
+                        logger.debug(
+                            'Worker "%s" delta=%+.6f → AD9910 %s:%d',
+                            self.worker_id, delta,
+                            self._target.ip, self._target.port,
+                        )
+                else:
+                    logger.warning(
+                        'Worker "%s" AD9910 发送失败 delta=%+.6f',
+                        self.worker_id, delta,
+                    )
+                return ok
+            elif isinstance(self._target, RtmqTarget):
+                ok = await self._sender.adjust_delta(delta)
+                if ok:
+                    if not self._first_send_logged:
+                        self._first_send_logged = True
+                        logger.info(
+                            'Worker "%s" 首次反馈成功 → RTMQ %s:%d card=%d ch=%d delta=%+.6f',
+                            self.worker_id, self._target.ip, self._target.port,
+                            self._target.card_index, self._target.sbg_channel, delta,
+                        )
+                    else:
+                        logger.debug(
+                            'Worker "%s" delta=%+.6f → RTMQ %s:%d card=%d ch=%d',
+                            self.worker_id, delta,
+                            self._target.ip, self._target.port,
+                            self._target.card_index, self._target.sbg_channel,
+                        )
+                else:
+                    logger.warning(
+                        'Worker "%s" RTMQ 发送失败 delta=%+.6f',
+                        self.worker_id, delta,
+                    )
+                return ok
+        except Exception as e:
+            logger.error(
+                'Worker "%s" 发送异常: %s', self.worker_id, e, exc_info=True,
+            )
+            return False
+        return False
+
+    def _create_sender(self) -> Optional[Ad9910Sender]:
+        """
+        根据目标配置创建发送器实例。
+
+        使用 lazy import 避免循环依赖。
+        失败时记录错误并设置 self._sender_error，返回 None。
+        """
+        if self._target is None:
+            return None
+
+        try:
+            if isinstance(self._target, Ad9910Target):
+                from scope.io.ad9910_sender import Ad9910Sender  # noqa: F811
+                return Ad9910Sender(
+                    ip=self._target.ip,
+                    port=self._target.port,
+                    device_id=self._target.device_id,
+                    profile=self._target.profile,
+                )
+
+            if isinstance(self._target, RtmqTarget):
+                from scope.io.rtmq_sender import RtmqSender
+                return RtmqSender(
+                    ip=self._target.ip,
+                    port=self._target.port,
+                    card_index=self._target.card_index,
+                    sbg_channel=self._target.sbg_channel,
+                )
+        except Exception as e:
+            self._sender_error = str(e)
+            logger.error(
+                'Worker "%s" 创建 sender 失败 (%s): %s',
+                self.worker_id,
+                type(self._target).__name__,
+                e,
+            )
+
+        return None

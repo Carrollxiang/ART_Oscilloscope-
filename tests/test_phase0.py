@@ -165,11 +165,11 @@ def test_measurement_spec_creation():
         channel=0,
         start_ms=10.0,
         end_ms=100.0,
-        feature="Vrms",
+        feature="Vpp",
     )
     assert spec.tag == "CH1_power"
     assert spec.channel == 0
-    assert spec.feature == "Vrms"
+    assert spec.feature == "Vpp"
 
 
 def test_measurement_spec_validation():
@@ -177,6 +177,8 @@ def test_measurement_spec_validation():
     # 有效
     spec = MeasurementSpec(tag="test", channel=0)
     assert spec.channel == 0
+    # 默认 feature 为 Vpp (受支持的枚举值)
+    assert spec.feature == "Vpp"
     
     # 无效: 负通道
     with pytest.raises(ValueError):

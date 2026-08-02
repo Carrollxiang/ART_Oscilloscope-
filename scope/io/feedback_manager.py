@@ -18,7 +18,14 @@ from scope.model.enums import SlotStatus
 from scope.runtime import EventBus
 from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.runtime.pid_controller import PidConfig
-from .feedback_worker import FeedbackConfig, FeedbackWorker
+from .feedback_worker import (
+    Ad9910Target,
+    FeedbackConfig,
+    FeedbackWorker,
+    RtmqTarget,
+    target_from_dict,
+    target_to_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +129,25 @@ class FeedbackManager:
         else:
             raise KeyError(f'worker_id "{worker_id}" not found')
 
+    async def update_worker_target(self, worker_id: str, target):
+        """更新指定 worker 的目标设备（停止→更新→重启 sender）"""
+        async with self._lock:
+            worker = self._workers.get(worker_id)
+        if not worker:
+            raise KeyError(f'worker_id "{worker_id}" not found')
+
+        await worker.stop()
+        worker._target = target
+        worker._sender = worker._create_sender()
+        worker._status = SlotStatus.RUNNING
+        await worker.start()
+        self._publish_status()
+        logger.info(
+            'FeedbackWorker "%s" target updated to %s',
+            worker_id,
+            type(target).__name__ if target else "none",
+        )
+
     # ── 配置管理 ───────────────────────────────────────────────
 
     def get_config(self) -> list[dict]:
@@ -131,7 +157,7 @@ class FeedbackManager:
                 "worker_id": w.worker_id,
                 "measurement_key": w.measurement_key,
                 "pid_config": dataclasses.asdict(w.pid_config),
-                "target": None,  # v0.7 实现
+                "target": target_to_dict(w.target),
             }
             for w in self._workers.values()
         ]
@@ -150,7 +176,7 @@ class FeedbackManager:
                 worker_id=item["worker_id"],
                 measurement_key=item["measurement_key"],
                 pid_config=pid_config,
-                target=None,
+                target=target_from_dict(item.get("target")),
             )
             await self.add_worker(worker_config, publish=False)
 
@@ -181,6 +207,12 @@ class FeedbackManager:
                                     tasks.append(worker.process(value))
 
                     if tasks:
+                        # 注意: 不能对 process 施加帧级 wait_for 超时。
+                        # rpyc 建连/调用最坏可达 18s (3s × 6 次退避重试),
+                        # 取消无法中断 executor 线程中的同步调用, 只会导致
+                        # 连接泄漏与业务调用静默丢失。网络超时由连接池自身
+                        # (connect_timeout / acquire_timeout) 兜底, 并发
+                        # 堆积由 FeedbackWorker 的 in-flight 标志防重叠。
                         await asyncio.gather(*tasks, return_exceptions=True)
 
                     self._publish_status()
@@ -211,6 +243,7 @@ class FeedbackManager:
         for w in workers:
             if w.status == SlotStatus.RUNNING:
                 running_count += 1
+            chain_type, target_info = _extract_target_info(w.target)
             worker_statuses.append(FeedbackWorkerStatus(
                 worker_id=w.worker_id,
                 status=w.status.value,
@@ -228,6 +261,9 @@ class FeedbackManager:
                 output_limit=w.pid_config.output_limit,
                 i_limit=w.pid_config.i_limit,
                 window_size=w.pid_config.window_size,
+                chain_type=chain_type,
+                target_info=target_info,
+                sender_error=w._sender_error,
             ))
         return FeedbackStatusSnapshot(
             workers=worker_statuses,
@@ -268,3 +304,21 @@ class FeedbackManager:
             if w.status == SlotStatus.RUNNING
         )
         return running, len(self._workers)
+
+    def get_worker_target(self, worker_id: str):
+        """获取指定 worker 的 target config（UI 编辑用）。"""
+        worker = self._workers.get(worker_id)
+        return worker.target if worker else None
+
+
+# ── 辅助函数 ─────────────────────────────────────────────────
+
+def _extract_target_info(target) -> tuple[str, str]:
+    """从 TargetConfig 提取 (chain_type, target_info)"""
+    if target is None:
+        return ("none", "")
+    if isinstance(target, Ad9910Target):
+        return ("ad9910", f"{target.ip}:{target.port}")
+    if isinstance(target, RtmqTarget):
+        return ("rtmq", f"{target.ip}:{target.port}")
+    return ("unknown", "")

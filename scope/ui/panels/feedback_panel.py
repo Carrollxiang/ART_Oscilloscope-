@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from scope.runtime.pid_controller import PidConfig
 from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.io.feedback_command import FeedbackCommand
-from scope.io.feedback_worker import FeedbackConfig
+from scope.io.feedback_worker import Ad9910Target, FeedbackConfig, RtmqTarget
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,12 @@ class WorkerCard(QFrame):
         self._meas_label.setMinimumWidth(80)
         header_layout.addWidget(self._meas_label)
 
+        # 链路标签
+        self._chain_label = QLabel("")
+        self._chain_label.setStyleSheet("color: #5577AA; font-size: 10px; font-weight: bold;")
+        self._chain_label.setMinimumWidth(60)
+        header_layout.addWidget(self._chain_label)
+
         # 目标值
         header_layout.addWidget(QLabel("目标:"))
         self._preset_label = QLabel("—")
@@ -178,6 +184,12 @@ class WorkerCard(QFrame):
         pid_row.addStretch()
         pid_row.addWidget(self._frames_label)
         body_layout.addLayout(pid_row)
+
+        # sender 错误提示
+        self._sender_error_label = QLabel("")
+        self._sender_error_label.setStyleSheet("color: #CC5555; font-size: 10px; font-style: italic;")
+        self._sender_error_label.setVisible(False)
+        body_layout.addWidget(self._sender_error_label)
 
         # 按钮行
         btn_row = QHBoxLayout()
@@ -241,10 +253,20 @@ class WorkerCard(QFrame):
         data fields:
             status, measurement_key, preset_value, deadband,
             last_value, last_error, errors_std, errors_count,
-            frames_processed, kp, ki, kd, window_size
+            frames_processed, kp, ki, kd, window_size,
+            chain_type, target_info
         """
         status = data.get("status", "idle")
         self._meas_label.setText(data.get("measurement_key", ""))
+
+        # 链路标签
+        ct = data.get("chain_type", "none")
+        if ct == "ad9910":
+            self._chain_label.setText(f"[AD9910]")
+        elif ct == "rtmq":
+            self._chain_label.setText(f"[RTMQ]")
+        else:
+            self._chain_label.setText("")
 
         # 状态灯
         if status == "running":
@@ -273,6 +295,14 @@ class WorkerCard(QFrame):
         self._deadband_label.setText(f"死区: {_fmt(data.get('deadband', 0), 6)}")
         self._frames_label.setText(f"帧: {data.get('frames_processed', 0)}")
 
+        # sender 错误
+        sender_err = data.get("sender_error", "")
+        if sender_err:
+            self._sender_error_label.setText(f"⚠ sender: {sender_err}")
+            self._sender_error_label.setVisible(True)
+        else:
+            self._sender_error_label.setVisible(False)
+
         # 按钮显隐
         is_running = status == "running"
         is_paused = status == "paused"
@@ -289,20 +319,21 @@ class FeedbackDialog(QDialog):
 
     def __init__(self, parent=None, measurement_keys: list[str] | None = None,
                  measurement_display_map: dict[str, str] | None = None,
-                 existing_measurement_keys: set[str] | None = None):
+                 existing_measurement_keys: set[str] | None = None,
+                 target=None):
         super().__init__(parent)
         self.setWindowTitle("添加反馈 Worker")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(440)
 
         self._measurement_keys = measurement_keys or []
         self._meas_display_map = measurement_display_map or {}
         self._existing_meas_keys: set[str] = existing_measurement_keys or set()
         self._result_config: Optional[FeedbackConfig] = None
         self._worker_id_internal: str = "w0"
+        self._result_target = target
 
         layout = QVBoxLayout(self)
 
-        # 表单
         form = QFormLayout()
         form.setSpacing(6)
 
@@ -315,6 +346,14 @@ class FeedbackDialog(QDialog):
         self._meas_key.lineEdit().setPlaceholderText("输入或选择测量项")
         form.addRow("测量项:", self._meas_key)
 
+        # 反馈链路
+        self._chain_combo = QComboBox()
+        self._chain_combo.addItem("无 (仅测试)", "none")
+        self._chain_combo.addItem("AD9910", "ad9910")
+        self._chain_combo.addItem("RTMQ", "rtmq")
+        self._chain_combo.currentIndexChanged.connect(self._on_chain_changed)
+        form.addRow("反馈链路:", self._chain_combo)
+
         self._preset = QDoubleSpinBox()
         self._preset.setRange(-1000.0, 1000.0)
         self._preset.setDecimals(4)
@@ -322,64 +361,36 @@ class FeedbackDialog(QDialog):
         form.addRow("目标值:", self._preset)
         layout.addLayout(form)
 
+        # 目标设备配置（动态显隐）
+        self._target_group = self._make_target_group()
+        layout.addWidget(self._target_group)
+
         pid_group = QFrame()
         pid_group.setFrameShape(QFrame.Shape.StyledPanel)
         pid_group.setStyleSheet("QFrame { border: 1px solid #333; border-radius: 3px; padding: 6px; }")
         pid_layout = QFormLayout(pid_group)
         pid_layout.setSpacing(4)
 
-        self._kp = QDoubleSpinBox()
-        self._kp.setRange(0.0, 10000.0)
-        self._kp.setDecimals(6)
-        self._kp.setValue(0.03)
-        self._kp.setSingleStep(0.01)
+        self._kp = QDoubleSpinBox(); self._kp.setRange(0, 10000); self._kp.setDecimals(6); self._kp.setValue(0.03); self._kp.setSingleStep(0.01)
         pid_layout.addRow("Kp:", self._kp)
-
-        self._ki = QDoubleSpinBox()
-        self._ki.setRange(0.0, 10000.0)
-        self._ki.setDecimals(6)
-        self._ki.setValue(0.0)
-        self._ki.setSingleStep(0.01)
+        self._ki = QDoubleSpinBox(); self._ki.setRange(0, 10000); self._ki.setDecimals(6); self._ki.setValue(0); self._ki.setSingleStep(0.01)
         pid_layout.addRow("Ki:", self._ki)
-
-        self._kd = QDoubleSpinBox()
-        self._kd.setRange(0.0, 10000.0)
-        self._kd.setDecimals(6)
-        self._kd.setValue(0.0)
-        self._kd.setSingleStep(0.01)
+        self._kd = QDoubleSpinBox(); self._kd.setRange(0, 10000); self._kd.setDecimals(6); self._kd.setValue(0); self._kd.setSingleStep(0.01)
         pid_layout.addRow("Kd:", self._kd)
-
-        self._output_limit = QDoubleSpinBox()
-        self._output_limit.setRange(0.0, 1000.0)
-        self._output_limit.setDecimals(6)
-        self._output_limit.setValue(0.1)
+        self._output_limit = QDoubleSpinBox(); self._output_limit.setRange(0, 1000); self._output_limit.setDecimals(6); self._output_limit.setValue(0.1)
         pid_layout.addRow("输出限幅:", self._output_limit)
-
-        self._i_limit = QDoubleSpinBox()
-        self._i_limit.setRange(0.0, 1000.0)
-        self._i_limit.setDecimals(6)
-        self._i_limit.setValue(0.1)
+        self._i_limit = QDoubleSpinBox(); self._i_limit.setRange(0, 1000); self._i_limit.setDecimals(6); self._i_limit.setValue(0.1)
         pid_layout.addRow("积分限幅:", self._i_limit)
-
-        self._window_size = QSpinBox()
-        self._window_size.setRange(1, 10000)
-        self._window_size.setValue(10)
+        self._window_size = QSpinBox(); self._window_size.setRange(1, 10000); self._window_size.setValue(10)
         pid_layout.addRow("窗口大小:", self._window_size)
-
-        self._deadband = QDoubleSpinBox()
-        self._deadband.setRange(0.0, 1000.0)
-        self._deadband.setDecimals(6)
-        self._deadband.setValue(0.0)
-        self._deadband.setSingleStep(0.001)
+        self._deadband = QDoubleSpinBox(); self._deadband.setRange(0, 1000); self._deadband.setDecimals(6); self._deadband.setValue(0); self._deadband.setSingleStep(0.001)
         pid_layout.addRow("死区:", self._deadband)
 
-        # PID 组加标题
         pid_title = QLabel("PID 参数")
         pid_title.setStyleSheet("color: #888; font-weight: bold; font-size: 11px;")
         layout.addWidget(pid_title)
         layout.addWidget(pid_group)
 
-        # 按钮
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -387,37 +398,95 @@ class FeedbackDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self._on_chain_changed()
+
+    def _make_target_group(self):
+        group = QFrame()
+        group.setFrameShape(QFrame.Shape.StyledPanel)
+        group.setStyleSheet("QFrame { border: 1px solid #444; border-radius: 3px; padding: 6px; }")
+        glayout = QVBoxLayout(group); glayout.setContentsMargins(4,4,4,4); glayout.setSpacing(4)
+        title = QLabel("目标设备配置"); title.setStyleSheet("color: #888; font-weight: bold; font-size: 11px;")
+        glayout.addWidget(title)
+        from PyQt6.QtWidgets import QStackedWidget
+        self._target_stack = QStackedWidget()
+        self._target_stack.addWidget(self._make_none_page())
+        self._target_stack.addWidget(self._make_ad9910_page())
+        self._target_stack.addWidget(self._make_rtmq_page())
+        glayout.addWidget(self._target_stack)
+        return group
+
+    def _make_none_page(self):
+        w = QWidget(); wl = QVBoxLayout(w); wl.setContentsMargins(0,0,0,0)
+        lbl = QLabel("无目标设备 — PID 输出仅记录不发送")
+        lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;"); wl.addWidget(lbl)
+        return w
+
+    def _make_ad9910_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._ad9910_ip = QLineEdit(); self._ad9910_ip.setPlaceholderText("192.168.1.100"); self._ad9910_ip.setText("192.168.1.100")
+        form.addRow("IP:", self._ad9910_ip)
+        self._ad9910_port = QSpinBox(); self._ad9910_port.setRange(1,65535); self._ad9910_port.setValue(3251)
+        form.addRow("端口:", self._ad9910_port)
+        self._ad9910_dev_id = QLineEdit(); self._ad9910_dev_id.setPlaceholderText("hex, 如 0x0D11"); self._ad9910_dev_id.setText("0x0D11")
+        form.addRow("Device ID:", self._ad9910_dev_id)
+        self._ad9910_profile = QSpinBox(); self._ad9910_profile.setRange(0,7); self._ad9910_profile.setValue(0)
+        form.addRow("Profile:", self._ad9910_profile)
+        return w
+
+    def _make_rtmq_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._rtmq_ip = QLineEdit(); self._rtmq_ip.setPlaceholderText("192.168.1.100"); self._rtmq_ip.setText("192.168.1.100")
+        form.addRow("IP:", self._rtmq_ip)
+        self._rtmq_port = QSpinBox(); self._rtmq_port.setRange(1,65535); self._rtmq_port.setValue(18861)
+        form.addRow("端口:", self._rtmq_port)
+        self._rtmq_card = QSpinBox(); self._rtmq_card.setRange(0,255); self._rtmq_card.setValue(0)
+        form.addRow("板卡号:", self._rtmq_card)
+        self._rtmq_channel = QSpinBox(); self._rtmq_channel.setRange(0,255); self._rtmq_channel.setValue(0)
+        form.addRow("边带通道:", self._rtmq_channel)
+        return w
+
+    def _on_chain_changed(self):
+        chain = self._chain_combo.currentData()
+        if chain == "ad9910":
+            self._target_stack.setCurrentIndex(1); self._target_group.setVisible(True)
+        elif chain == "rtmq":
+            self._target_stack.setCurrentIndex(2); self._target_group.setVisible(True)
+        else:
+            self._target_stack.setCurrentIndex(0); self._target_group.setVisible(False)
+
+    def _build_target(self):
+        chain = self._chain_combo.currentData()
+        if chain == "ad9910":
+            dev_str = self._ad9910_dev_id.text().strip()
+            try:
+                device_id = int(dev_str, 16)
+            except ValueError:
+                device_id = 0
+            return Ad9910Target(ip=self._ad9910_ip.text().strip(), port=self._ad9910_port.value(),
+                                device_id=device_id, profile=self._ad9910_profile.value())
+        elif chain == "rtmq":
+            return RtmqTarget(ip=self._rtmq_ip.text().strip(), port=self._rtmq_port.value(),
+                              card_index=self._rtmq_card.value(), sbg_channel=self._rtmq_channel.value())
+        return None
+
     def _on_accept(self):
-        """验证并保存配置"""
         worker_id = self._worker_id_internal
         meas_key = self._meas_key.currentData() or self._meas_key.currentText().strip()
-
         if not meas_key:
-            self._meas_key.lineEdit().setPlaceholderText("⚠️ 测量项不能为空")
-            return
-
+            self._meas_key.lineEdit().setPlaceholderText("⚠️ 测量项不能为空"); return
         if meas_key in self._existing_meas_keys:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "重复订阅",
-                f"测量项 \"{meas_key}\" 已被其他 Worker 订阅。\n请选择不同的测量项。"
-            )
-            return
-
+            QMessageBox.warning(self, "重复订阅",
+                                f"测量项 \"{meas_key}\" 已被其他 Worker 订阅。\n请选择不同的测量项。"); return
         pid_config = PidConfig(
-            preset_value=self._preset.value(),
-            kp=self._kp.value(),
-            ki=self._ki.value(),
-            kd=self._kd.value(),
-            i_limit=self._i_limit.value(),
+            preset_value=self._preset.value(), kp=self._kp.value(), ki=self._ki.value(),
+            kd=self._kd.value(), i_limit=self._i_limit.value(),
             output_limit=self._output_limit.value(),
-            window_size=self._window_size.value(),
-            deadband=self._deadband.value(),
+            window_size=self._window_size.value(), deadband=self._deadband.value(),
         )
         self._result_config = FeedbackConfig(
-            worker_id=worker_id,
-            measurement_key=meas_key,
-            pid_config=pid_config,
+            worker_id=worker_id, measurement_key=meas_key,
+            pid_config=pid_config, target=self._build_target(),
         )
         self.accept()
 
@@ -431,98 +500,152 @@ class FeedbackDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 
 class PidEditDialog(QDialog):
-    """编辑已有 Worker 的 PID 参数（不含 worker_id / 测量项）"""
+    """编辑已有 Worker 的 PID 参数和反馈链路"""
 
-    def __init__(self, parent, pid_config: PidConfig):
+    def __init__(self, parent, pid_config: PidConfig, target=None):
         super().__init__(parent)
-        self.setWindowTitle("编辑 PID 参数")
-        self.setMinimumWidth(360)
+        self.setWindowTitle("编辑反馈 Worker")
+        self.setMinimumWidth(440)
         self._result_config: Optional[PidConfig] = None
+        self._result_target = target
 
         layout = QVBoxLayout(self)
+
+        form = QFormLayout(); form.setSpacing(6)
+        self._chain_combo = QComboBox()
+        self._chain_combo.addItem("无 (仅测试)", "none")
+        self._chain_combo.addItem("AD9910", "ad9910")
+        self._chain_combo.addItem("RTMQ", "rtmq")
+        self._chain_combo.currentIndexChanged.connect(self._on_chain_changed)
+        form.addRow("反馈链路:", self._chain_combo)
+        layout.addLayout(form)
+
+        self._target_group = self._make_target_group()
+        layout.addWidget(self._target_group)
 
         pid_group = QFrame()
         pid_group.setFrameShape(QFrame.Shape.StyledPanel)
         pid_group.setStyleSheet("QFrame { border: 1px solid #333; border-radius: 3px; padding: 6px; }")
-        pid_layout = QFormLayout(pid_group)
-        pid_layout.setSpacing(4)
+        pid_layout = QFormLayout(pid_group); pid_layout.setSpacing(4)
 
-        self._preset = QDoubleSpinBox()
-        self._preset.setRange(-1000.0, 1000.0)
-        self._preset.setDecimals(4)
-        self._preset.setValue(pid_config.preset_value)
+        self._preset = QDoubleSpinBox(); self._preset.setRange(-1000,1000); self._preset.setDecimals(4); self._preset.setValue(pid_config.preset_value)
         pid_layout.addRow("目标值:", self._preset)
-
-        self._kp = QDoubleSpinBox()
-        self._kp.setRange(0.0, 10000.0)
-        self._kp.setDecimals(6)
-        self._kp.setValue(pid_config.kp)
-        self._kp.setSingleStep(0.01)
+        self._kp = QDoubleSpinBox(); self._kp.setRange(0,10000); self._kp.setDecimals(6); self._kp.setValue(pid_config.kp); self._kp.setSingleStep(0.01)
         pid_layout.addRow("Kp:", self._kp)
-
-        self._ki = QDoubleSpinBox()
-        self._ki.setRange(0.0, 10000.0)
-        self._ki.setDecimals(6)
-        self._ki.setValue(pid_config.ki)
-        self._ki.setSingleStep(0.01)
+        self._ki = QDoubleSpinBox(); self._ki.setRange(0,10000); self._ki.setDecimals(6); self._ki.setValue(pid_config.ki); self._ki.setSingleStep(0.01)
         pid_layout.addRow("Ki:", self._ki)
-
-        self._kd = QDoubleSpinBox()
-        self._kd.setRange(0.0, 10000.0)
-        self._kd.setDecimals(6)
-        self._kd.setValue(pid_config.kd)
-        self._kd.setSingleStep(0.01)
+        self._kd = QDoubleSpinBox(); self._kd.setRange(0,10000); self._kd.setDecimals(6); self._kd.setValue(pid_config.kd); self._kd.setSingleStep(0.01)
         pid_layout.addRow("Kd:", self._kd)
-
-        self._output_limit = QDoubleSpinBox()
-        self._output_limit.setRange(0.0, 1000.0)
-        self._output_limit.setDecimals(6)
-        self._output_limit.setValue(pid_config.output_limit)
+        self._output_limit = QDoubleSpinBox(); self._output_limit.setRange(0,1000); self._output_limit.setDecimals(6); self._output_limit.setValue(pid_config.output_limit)
         pid_layout.addRow("输出限幅:", self._output_limit)
-
-        self._i_limit = QDoubleSpinBox()
-        self._i_limit.setRange(0.0, 1000.0)
-        self._i_limit.setDecimals(6)
-        self._i_limit.setValue(pid_config.i_limit)
+        self._i_limit = QDoubleSpinBox(); self._i_limit.setRange(0,1000); self._i_limit.setDecimals(6); self._i_limit.setValue(pid_config.i_limit)
         pid_layout.addRow("积分限幅:", self._i_limit)
-
-        self._window_size = QSpinBox()
-        self._window_size.setRange(1, 10000)
-        self._window_size.setValue(pid_config.window_size)
+        self._window_size = QSpinBox(); self._window_size.setRange(1,10000); self._window_size.setValue(pid_config.window_size)
         pid_layout.addRow("窗口大小:", self._window_size)
-
-        self._deadband = QDoubleSpinBox()
-        self._deadband.setRange(0.0, 1000.0)
-        self._deadband.setDecimals(6)
-        self._deadband.setValue(pid_config.deadband)
-        self._deadband.setSingleStep(0.001)
+        self._deadband = QDoubleSpinBox(); self._deadband.setRange(0,1000); self._deadband.setDecimals(6); self._deadband.setValue(pid_config.deadband); self._deadband.setSingleStep(0.001)
         pid_layout.addRow("死区:", self._deadband)
 
         layout.addWidget(pid_group)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._on_accept); buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        self._prefill_target(target)
+        self._on_chain_changed()
+
+    def _make_target_group(self):
+        group = QFrame()
+        group.setFrameShape(QFrame.Shape.StyledPanel); group.setStyleSheet("QFrame { border: 1px solid #444; border-radius: 3px; padding: 6px; }")
+        glayout = QVBoxLayout(group); glayout.setContentsMargins(4,4,4,4); glayout.setSpacing(4)
+        title = QLabel("目标设备配置"); title.setStyleSheet("color: #888; font-weight: bold; font-size: 11px;"); glayout.addWidget(title)
+        from PyQt6.QtWidgets import QStackedWidget
+        self._target_stack = QStackedWidget()
+        self._target_stack.addWidget(self._make_none_page())
+        self._target_stack.addWidget(self._make_ad9910_page())
+        self._target_stack.addWidget(self._make_rtmq_page())
+        glayout.addWidget(self._target_stack)
+        return group
+
+    def _make_none_page(self):
+        w = QWidget(); wl = QVBoxLayout(w); wl.setContentsMargins(0,0,0,0)
+        lbl = QLabel("无目标设备 — PID 输出仅记录不发送")
+        lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;"); wl.addWidget(lbl)
+        return w
+
+    def _make_ad9910_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._ad9910_ip = QLineEdit(); self._ad9910_ip.setPlaceholderText("192.168.1.100"); self._ad9910_ip.setText("192.168.1.100")
+        form.addRow("IP:", self._ad9910_ip)
+        self._ad9910_port = QSpinBox(); self._ad9910_port.setRange(1,65535); self._ad9910_port.setValue(3251)
+        form.addRow("端口:", self._ad9910_port)
+        self._ad9910_dev_id = QLineEdit(); self._ad9910_dev_id.setPlaceholderText("hex, 如 0x0D11"); self._ad9910_dev_id.setText("0x0D11")
+        form.addRow("Device ID:", self._ad9910_dev_id)
+        self._ad9910_profile = QSpinBox(); self._ad9910_profile.setRange(0,7); self._ad9910_profile.setValue(0)
+        form.addRow("Profile:", self._ad9910_profile)
+        return w
+
+    def _make_rtmq_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._rtmq_ip = QLineEdit(); self._rtmq_ip.setPlaceholderText("192.168.1.100"); self._rtmq_ip.setText("192.168.1.100")
+        form.addRow("IP:", self._rtmq_ip)
+        self._rtmq_port = QSpinBox(); self._rtmq_port.setRange(1,65535); self._rtmq_port.setValue(18861)
+        form.addRow("端口:", self._rtmq_port)
+        self._rtmq_card = QSpinBox(); self._rtmq_card.setRange(0,255); self._rtmq_card.setValue(0)
+        form.addRow("板卡号:", self._rtmq_card)
+        self._rtmq_channel = QSpinBox(); self._rtmq_channel.setRange(0,255); self._rtmq_channel.setValue(0)
+        form.addRow("边带通道:", self._rtmq_channel)
+        return w
+
+    def _prefill_target(self, target):
+        if isinstance(target, Ad9910Target):
+            self._chain_combo.setCurrentIndex(1)
+            self._ad9910_ip.setText(target.ip); self._ad9910_port.setValue(target.port)
+            self._ad9910_dev_id.setText(hex(target.device_id)); self._ad9910_profile.setValue(target.profile)
+        elif isinstance(target, RtmqTarget):
+            self._chain_combo.setCurrentIndex(2)
+            self._rtmq_ip.setText(target.ip); self._rtmq_port.setValue(target.port)
+            self._rtmq_card.setValue(target.card_index); self._rtmq_channel.setValue(target.sbg_channel)
+
+    def _on_chain_changed(self):
+        chain = self._chain_combo.currentData()
+        if chain == "ad9910":
+            self._target_stack.setCurrentIndex(1); self._target_group.setVisible(True)
+        elif chain == "rtmq":
+            self._target_stack.setCurrentIndex(2); self._target_group.setVisible(True)
+        else:
+            self._target_stack.setCurrentIndex(0); self._target_group.setVisible(False)
+
+    def _build_target(self):
+        chain = self._chain_combo.currentData()
+        if chain == "ad9910":
+            dev_str = self._ad9910_dev_id.text().strip()
+            try: device_id = int(dev_str, 16)
+            except ValueError: device_id = 0
+            return Ad9910Target(ip=self._ad9910_ip.text().strip(), port=self._ad9910_port.value(),
+                                device_id=device_id, profile=self._ad9910_profile.value())
+        elif chain == "rtmq":
+            return RtmqTarget(ip=self._rtmq_ip.text().strip(), port=self._rtmq_port.value(),
+                              card_index=self._rtmq_card.value(), sbg_channel=self._rtmq_channel.value())
+        return None
 
     def _on_accept(self):
         self._result_config = PidConfig(
-            preset_value=self._preset.value(),
-            kp=self._kp.value(),
-            ki=self._ki.value(),
-            kd=self._kd.value(),
-            i_limit=self._i_limit.value(),
+            preset_value=self._preset.value(), kp=self._kp.value(), ki=self._ki.value(),
+            kd=self._kd.value(), i_limit=self._i_limit.value(),
             output_limit=self._output_limit.value(),
-            window_size=self._window_size.value(),
-            deadband=self._deadband.value(),
+            window_size=self._window_size.value(), deadband=self._deadband.value(),
         )
+        self._result_target = self._build_target()
         self.accept()
 
     @property
     def result_config(self) -> Optional[PidConfig]:
         return self._result_config
+
+    @property
+    def result_target(self):
+        return self._result_target
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -689,6 +812,9 @@ class FeedbackPanel(QWidget):
                 "ki": ws.ki,
                 "kd": ws.kd,
                 "window_size": ws.window_size,
+                "chain_type": ws.chain_type,
+                "target_info": ws.target_info,
+                "sender_error": ws.sender_error,
             }
 
             if wid in self._card_widgets:
@@ -721,7 +847,7 @@ class FeedbackPanel(QWidget):
         self._publish_feedback_command("remove", worker_id)
 
     def _on_edit_worker(self, worker_id: str):
-        """弹出 PID 编辑对话框"""
+        """弹出编辑对话框（PID + 链路）"""
         if not self._last_status:
             return
 
@@ -735,14 +861,34 @@ class FeedbackPanel(QWidget):
             output_limit=wdata.output_limit, i_limit=wdata.i_limit,
             window_size=wdata.window_size, deadband=wdata.deadband,
         )
-        dlg = PidEditDialog(self, pid_config=current)
-        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_config:
-            self._publish_feedback_command(
-                action="update_pid",
-                worker_id=worker_id,
-                pid_config=dlg.result_config,
-            )
-            logger.info(f"Worker '{worker_id}' PID 参数更新已提交")
+        # 获取当前 target
+        current_target = None
+        if self._feedback_mgr:
+            try:
+                current_target = self._feedback_mgr.get_worker_target(worker_id)
+            except Exception:
+                pass
+
+        dlg = PidEditDialog(self, pid_config=current, target=current_target)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.result_config:
+                self._publish_feedback_command(
+                    action="update_pid",
+                    worker_id=worker_id,
+                    pid_config=dlg.result_config,
+                )
+                logger.info(f"Worker '{worker_id}' PID 参数更新已提交")
+            new_target = dlg.result_target
+            # 只有 target 真正变化时才发送 update_target 命令
+            if new_target != current_target:
+                cfg = FeedbackConfig(worker_id=worker_id, measurement_key=wdata.measurement_key,
+                                     pid_config=current, target=new_target)
+                self._publish_feedback_command(
+                    action="update_target",
+                    worker_id=worker_id,
+                    config=cfg,
+                )
+                logger.info(f"Worker '{worker_id}' 目标设备更新已提交")
 
     def _publish_feedback_command(
         self,

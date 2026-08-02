@@ -125,3 +125,35 @@ async def test_skip_old_command(sample_config):
 
     assert manager.get_active_count() == (1, 1)
     assert worker.metrics["commands_skipped"] == 1
+
+
+async def test_update_target(sample_config):
+    """update_target action changes worker's target device"""
+    from scope.io.feedback_worker import Ad9910Target
+
+    worker, manager = make_worker()
+    await worker._apply_command(
+        FeedbackCommand(
+            action="add",
+            worker_id="w1",
+            config=sample_config,
+            change_id=1,
+        )
+    )
+
+    ad9910 = Ad9910Target(ip="10.0.0.1", port=3251, device_id=0x0D11)
+    await worker._apply_command(
+        FeedbackCommand(
+            action="update_target",
+            worker_id="w1",
+            config=FeedbackConfig(
+                worker_id="w1", measurement_key="m0",
+                pid_config=PidConfig(preset_value=1.0),
+                target=ad9910,
+            ),
+            change_id=2,
+        )
+    )
+
+    assert isinstance(manager.get_worker_target("w1"), Ad9910Target)
+    assert manager.get_worker_target("w1").ip == "10.0.0.1"

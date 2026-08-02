@@ -31,6 +31,9 @@ class FeedbackWorkerStatus:
     output_limit: float
     i_limit: float
     window_size: int
+    chain_type: str = "none"          # "none" | "ad9910" | "rtmq"
+    target_info: str = ""              # e.g. "192.168.1.100:3251"
+    sender_error: str = ""             # sender 创建失败时的错误信息
 
 
 @dataclass

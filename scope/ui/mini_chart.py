@@ -36,7 +36,6 @@ class MiniChartData:
         self._maxlen = maxlen
         self._buf: dict[str, deque] = {}
         self._colors: dict[str, QColor] = {}
-        self._count = 0
         self._ci = 0
 
     def add(self, key: str, value: float):
@@ -45,18 +44,17 @@ class MiniChartData:
             self._colors[key] = TRACE_COLORS[self._ci % len(TRACE_COLORS)]
             self._ci += 1
         self._buf[key].append(value)
-        self._count += 1
 
     def add_batch(self, data: dict[str, float]):
         for k, v in data.items():
             self.add(k, v)
 
     def trace(self, key: str) -> tuple[np.ndarray, np.ndarray]:
+        """返回 key 的 (x, y) 数据。x 轴为 0 起的帧序号，每条 trace 独立计数。"""
         if key not in self._buf or not self._buf[key]:
             return np.array([]), np.array([])
         b = self._buf[key]
-        offset = self._count - len(b)
-        x = np.arange(offset, offset + len(b), dtype=np.float64)
+        x = np.arange(len(b), dtype=np.float64)
         return x, np.array(b, dtype=np.float64)
 
     def keys(self):
@@ -73,8 +71,9 @@ class MiniChartData:
             del self._colors[key]
 
     @property
-    def count(self):
-        return self._count
+    def max_len(self) -> int:
+        """所有 trace 中最大的数据长度（帧数）。"""
+        return max((len(b) for b in self._buf.values()), default=0)
 
 
 class MiniChartWidget(QWidget):
@@ -202,7 +201,7 @@ class MiniChartWidget(QWidget):
                 self._curves[key].hide()
 
         # 自动 X 轴 (仅在用户未手动缩放时)
-        n = self._data.count
+        n = self._data.max_len
         if n > 0:
             vb = self.plot.plotItem.vb
             # 检查用户是否手动拖拽过 (viewRange 变化了就不自动调)

@@ -80,6 +80,7 @@ class ArtDevice(AcquisitionDevice):
         self._done_event = threading.Event()
         self._acquire_thread: Optional[threading.Thread] = None
         self._data_callback: Optional[Callable[[np.ndarray], None]] = None
+        self._first_acquisition = True   # 首次采集 INFO，后续 rearm 用 DEBUG
 
     # ── 生命周期 ────────────────────────────────────────────────
 
@@ -191,11 +192,16 @@ class ArtDevice(AcquisitionDevice):
                     trigger_slope=slope,
                     trigger_level=self._trigger_level,
                 )
-                logger.info(
-                    f"硬件触发: src={trig_ch}, "
-                    f"level={self._trigger_level}V, "
-                    f"slope={self._trigger_slope}"
-                )
+                if self._first_acquisition:
+                    logger.info(
+                        f"硬件触发: src={trig_ch}, "
+                        f"level={self._trigger_level}V, "
+                        f"slope={self._trigger_slope}"
+                    )
+                else:
+                    logger.debug(
+                        f"rearm 触发: src={trig_ch}"
+                    )
 
             # 4. 注册 DONE 事件回调 (硬件触发 → 采集完成 → 回调)
             task.register_done_event(self._on_task_done)
@@ -213,11 +219,18 @@ class ArtDevice(AcquisitionDevice):
                 )
                 self._acquire_thread.start()
 
-            logger.info(
-                f"采集已启动: {cfg.sample_rate/1e3:.1f}kSa/s, "
-                f"{cfg.record_length}samples/ch, "
-                f"{len(cfg.channels_enabled)}ch"
-            )
+            if self._first_acquisition:
+                logger.info(
+                    f"采集已启动: {cfg.sample_rate/1e3:.1f}kSa/s, "
+                    f"{cfg.record_length}samples/ch, "
+                    f"{len(cfg.channels_enabled)}ch"
+                )
+                self._first_acquisition = False
+            else:
+                logger.debug(
+                    f"rearm: {cfg.sample_rate/1e3:.1f}kSa/s, "
+                    f"{cfg.record_length}samples/ch"
+                )
 
         except Exception as e:
             self._running = False
@@ -298,6 +311,7 @@ class ArtDevice(AcquisitionDevice):
 
     def configure(self, config: DeviceConfig):
         self._config = config
+        self._first_acquisition = True  # 重配置后首次采集打 INFO
         n_ch = len(config.channels_enabled)
         while len(self._config.vertical_ranges) < n_ch:
             self._config.vertical_ranges.append(5.0)

@@ -29,6 +29,8 @@ from scope.runtime import EventBus, DropStrategy, MeasurementConfigWorker, Measu
 from scope.runtime import RuntimeMetricsSnapshot
 from scope.ui.ui_bridge import UIBridge
 from scope.runtime.config_worker import ConfigWorker
+from scope.config.settings import ConfigManager
+from scope.io.feedback_command import FeedbackCommand
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +38,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("scope")
+
+# 抑制 artdaq 原生库的重复日志（每帧都会触发）
+logging.getLogger("artdaq").setLevel(logging.WARNING)
 
 
 class ScopeApp:
@@ -203,6 +208,13 @@ class ScopeApp:
         # 4. 启动 MeasurementProcessor
         self._processor.start()
 
+        # 4.5 自动加载上次保存的反馈 Worker 配置
+        self._auto_load_feedback_workers()
+
+        # 4.6 启动后 rpyc 连接探测（延迟确保 worker 已加载）
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(2000, self._startup_rpyc_ping)
+
         # 5. 注册数据回调 (统一事件驱动)
         self.device.set_data_callback(self._on_frame)
 
@@ -239,6 +251,94 @@ class ScopeApp:
         self._async_loop.call_soon_threadsafe(self._async_loop.stop)
 
         logger.info("ScopeApp 已停止")
+
+    def _auto_load_feedback_workers(self):
+        """启动时自动加载全部配置（channels + device + measurements + feedback_workers）。"""
+        config_path = ConfigManager.default_filepath()
+        try:
+            from pathlib import Path
+            if not Path(config_path).exists():
+                return
+            config = ConfigManager.load_json(config_path)
+
+            # 1. 通道配置（回填 UI）
+            if 'channels' in config and hasattr(self.main_win, 'channel_panel'):
+                self.main_win.channel_panel.set_config(config['channels'])
+
+            # 2. 设备配置（回填 UI，不 apply 硬件 — 用户可能不在真实硬件环境）
+            if 'device' in config and hasattr(self.main_win, 'device_panel'):
+                self.main_win.device_panel.set_config(config['device'])
+
+            # 3. 测量配置 — 关键！必须先加载测量项，反馈 Worker 才能匹配 measurement_key
+            if 'measurements' in config and hasattr(self.main_win, 'measure_panel'):
+                self.main_win.measure_panel.set_config(config['measurements'])
+                logger.info("自动加载 %d 个测量项", len(config['measurements']))
+
+            # 4. 反馈 Worker — 延迟一小段确保 MeasurementProcessor 已处理 specs
+            fw = config.get("feedback_workers")
+            if fw:
+                from PyQt6.QtCore import QTimer
+                def _delayed_load():
+                    self._event_bus.publish(
+                        "feedback.worker.command",
+                        FeedbackCommand(
+                            action="load_batch",
+                            worker_id="_auto_",
+                            config_list=fw,
+                            change_id=0,
+                        ),
+                    )
+                    logger.info("自动加载 %d 个反馈 Worker", len(fw))
+                # 500ms 延迟确保 MeasurementProcessor 线程已处理多帧
+                QTimer.singleShot(500, _delayed_load)
+
+        except Exception as e:
+            logger.warning("自动加载配置跳过: %s", e)
+
+    def _startup_rpyc_ping(self):
+        """启动后探测目标设备的 rpyc 连通性。
+
+        在 Qt 主线程(QTimer 回调)中被调用, 但实际连接改为调度到
+        asyncio loop 的 executor 线程执行, 避免 rpyc.connect
+        (最坏 3s × 6 次 ≈ 18s) 阻塞 UI。
+        """
+        try:
+            import rpyc  # noqa: F401
+        except ImportError:
+            logger.warning("rpyc 未安装，跳过连通性探测")
+            return
+        self._async_loop.call_soon_threadsafe(
+            lambda: self._async_loop.create_task(self._async_rpyc_ping())
+        )
+
+    async def _async_rpyc_ping(self):
+        """在 asyncio loop 中执行 rpyc 连通性探测 (建连在 executor 线程)。"""
+        loop = asyncio.get_running_loop()
+        workers = list(self.feedback_mgr._workers.items())
+        for wid, w in workers:
+            if w.target is None:
+                continue
+            try:
+                await loop.run_in_executor(None, self._ping_one_target, w)
+            except Exception as e:
+                logger.warning("rpyc 探测任务异常 %s: %s", wid, e)
+        self.feedback_mgr._publish_status()
+
+    def _ping_one_target(self, worker):
+        """同步探测单个目标 (在 executor 线程中执行)。"""
+        wid = worker.worker_id
+        target = worker.target
+        try:
+            import rpyc
+            conn = rpyc.connect(target.ip, target.port,
+                                config={"sync_request_timeout": 2.0})
+            conn.ping()
+            conn.close()
+            logger.info("rpyc ✓ %s → %s:%d", wid, target.ip, target.port)
+            worker._sender_error = ""
+        except Exception as e:
+            worker._sender_error = f"rpyc 不可达: {e}"
+            logger.warning("rpyc ✗ %s → %s:%d: %s", wid, target.ip, target.port, e)
 
     def _on_frame(self, chunk: np.ndarray):
         """

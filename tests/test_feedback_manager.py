@@ -135,6 +135,7 @@ class TestConfigManagement:
         assert config[0]["measurement_key"] == "CH1_vpp"
         assert config[0]["pid_config"]["preset_value"] == 3.3
         assert config[0]["pid_config"]["kp"] == 0.1
+        assert config[0]["target"] is None  # 无 target
 
     async def test_load_config(self, mgr):
         """导入配置重建 worker"""
@@ -215,3 +216,49 @@ class TestWorkerList:
         running, total = mgr.get_active_count()
         assert running == 0
         assert total == 1
+
+
+# ── Target 管理 ─────────────────────────────────────────────────
+
+class TestWorkerTarget:
+    async def test_get_worker_target_none(self, mgr):
+        """无 target 时返回 None"""
+        assert mgr.get_worker_target("nonexistent") is None
+
+    async def test_get_worker_target_ad9910(self, mgr):
+        """获取 AD9910 target"""
+        from scope.io.feedback_worker import Ad9910Target
+        cfg = FeedbackConfig(
+            worker_id="ad9910-w", measurement_key="CH1_vpp",
+            pid_config=PidConfig(preset_value=3.3),
+            target=Ad9910Target(ip="10.0.0.1", port=3251, device_id=0x0D11),
+        )
+        await mgr.add_worker(cfg)
+        target = mgr.get_worker_target("ad9910-w")
+        assert isinstance(target, Ad9910Target)
+        assert target.ip == "10.0.0.1"
+
+    async def test_update_worker_target(self, mgr):
+        """更新 target：无→AD9910→RTMQ"""
+        from scope.io.feedback_worker import Ad9910Target, RtmqTarget
+
+        cfg = FeedbackConfig(
+            worker_id="tgt-test", measurement_key="CH1_vpp",
+            pid_config=PidConfig(preset_value=3.3),
+            target=None,
+        )
+        await mgr.add_worker(cfg)
+
+        # 更新到 AD9910
+        ad9910 = Ad9910Target(ip="192.168.1.1", port=3251, device_id=0x0D11)
+        await mgr.update_worker_target("tgt-test", ad9910)
+        assert isinstance(mgr.get_worker_target("tgt-test"), Ad9910Target)
+
+        # 更新到 RTMQ
+        rtmq = RtmqTarget(ip="192.168.1.2", port=18861, card_index=1, sbg_channel=2)
+        await mgr.update_worker_target("tgt-test", rtmq)
+        assert isinstance(mgr.get_worker_target("tgt-test"), RtmqTarget)
+
+        # 更新到 None
+        await mgr.update_worker_target("tgt-test", None)
+        assert mgr.get_worker_target("tgt-test") is None

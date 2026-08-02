@@ -85,6 +85,13 @@ class FeedbackCommandWorker:
                     command.worker_id,
                     command.pid_config,
                 )
+            elif command.action == "update_target":
+                if command.config is None or command.config.target is None:
+                    raise ValueError("update_target command requires config with target")
+                await self._feedback_manager.update_worker_target(
+                    command.worker_id,
+                    command.config.target,
+                )
             elif command.action == "load_batch":
                 if command.config_list is None:
                     raise ValueError("load_batch requires config_list")

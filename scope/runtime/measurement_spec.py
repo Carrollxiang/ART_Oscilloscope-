@@ -37,7 +37,7 @@ class MeasurementSpec:
     channel: int
     start_ms: float = 0.0
     end_ms: float = 0.0
-    feature: str = "Vrms"
+    feature: str = "Vpp"
     semantic: str = ""
     
     def __post_init__(self):

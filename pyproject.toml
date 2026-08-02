@@ -46,6 +46,7 @@ all = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+norecursedirs = ["scripts", ".venv", "artdaq"]
 
 [tool.ruff]
 line-length = 100
