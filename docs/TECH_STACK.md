@@ -272,7 +272,7 @@ start_mock.bat
 python -m pytest tests/ -v
 
 # 期望结果
-# 142 passed, 1 warning
+# 156 passed, 1 warning
 ```
 
 ### 测试覆盖率
@@ -281,17 +281,17 @@ python -m pytest tests/ -v
 |----------|--------|------|
 | test_feedback_worker.py | 29 | ✅ 100% |
 | test_feedback_manager.py | 19 | ✅ 100% |
-| test_art_device.py | 18 | ✅ 100% (mock artdaq) |
+| test_art_device.py | 22 | ✅ 100% (mock artdaq) |
 | test_ad9910_sender.py | 16 | ✅ 100% |
 | test_phase0.py | 16 | ✅ 100% |
 | test_rpyc_pool.py | 17 | ✅ 100% |
 | test_pid_controller.py | 11 | ✅ 100% |
 | test_rtmq_sender.py | 6 | ✅ 100% |
 | test_feedback_command_worker.py | 5 | ✅ 100% |
-| test_config_manager.py | 2 | ✅ 100% |
+| test_config_manager.py | 4 | ✅ 100% |
 | test_measurement_config_worker.py | 2 | ✅ 100% |
 | test_channel_panel_source.py | 1 | ✅ 100% |
-| **总计** | **142** | **✅ 100%** |
+| **总计** | **156** | **✅ 100%** |
 
 *注: 全部为纯单元测试（artdaq 以 mock 替代），无需真实硬件。硬件诊断用根目录 `test_hardware.py`。
 

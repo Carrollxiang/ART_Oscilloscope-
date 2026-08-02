@@ -4,7 +4,7 @@
 >
 > **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，历史阶段的测试数量与结构示例为当时实测值，不代表当前基线。
 >
-> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；测试基线为 `142 passed`。
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；测试基线为 `156 passed`。
 
 ---
 
@@ -465,7 +465,7 @@ Phase 0: 数据模型 + 模拟器 ✅
 python -m pytest tests/ -v
 
 # 期望结果
-# 142 passed, 1 warning
+# 156 passed, 1 warning
 ```
 
 ---
@@ -503,7 +503,10 @@ python -m scope.main
 | **v0.5** | **2026/6/5** | **数据模型重构 + Pipeline 删除** |
 | **v0.6** | **2026/6/17** | **反馈 Worker 架构 + 设备配置控制面 EventBus 化** |
 | **v0.7** | **2026/6** | **AD9910/RTMQ 目标设备发送 + rpyc 连接池 + 测试基线 136** |
-| **v0.7.1** | **2026/6** | **修复 rpyc 连接池自死锁（AD9910 反馈实测可用）+ 测试基线 142** |
+| **v0.7.1** | **2026/6** | **修复 rpyc 连接池自死锁（AD9910 反馈实测可用）+ 测试基线 142**
+| **v0.7.2** | **2026/6** | **PID 单帧误差保护 + 误差趋势自动暂停 + 测试基线 150**
+| **v0.7.3** | **2026/6** | **rearm 失败自动重试恢复 + Task 泄漏清理 + 测试基线 154** |
+| **v0.7.4** | **2026/6** | **启动自动加载回退项目默认配置 (反馈 Worker 可随默认配置自动创建) + 测试基线 156** |
 
 ---
 
@@ -517,4 +520,4 @@ python -m scope.main
 - ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
 - ✅ 反馈状态已发布 `feedback.status`，由 UIBridge 桥接到 FeedbackPanel / 状态栏
 - ✅ 运行时指标已发布 `runtime.metrics`，供后续诊断面板消费
-- ✅ 当前测试基线: 142/142 通过
+- ✅ 当前测试基线: 156/156 通过

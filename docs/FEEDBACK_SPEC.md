@@ -97,6 +97,8 @@ class PidConfig:
     output_limit: float = 0.1    # 输出限幅
     window_size: int = 10        # 误差窗口大小
     deadband: float = 0.0        # 死区（|error| < deadband 返回 None）
+    max_error_ratio: float = 0.30  # 单帧误差保护: |error|/|preset| 超阈值 → 跳过该帧 (0=禁用; preset=0 跳过)
+    trend_window: int = 5          # 误差趋势检查: 每 N 次成功反馈, 末误差>首误差 → 自动暂停 (0=禁用)
 ```
 
 **接口**:
@@ -157,6 +159,8 @@ output = P + I + D （限幅）
 - ✅ **积分限幅**: 防止积分饱和
 - ✅ **固定帧间隔**: 假设帧间隔固定（500ms），不考虑 dt
 - ✅ **死区支持**: 小误差时不输出（避免频繁调整）
+- ✅ **单帧误差保护** (v0.7.2): 示波器偶发卡顿会产生单帧错误测量值, `|error|/|preset| > max_error_ratio` 时跳过该帧不发送, 避免参数大幅跳跃
+- ✅ **误差趋势检测** (v0.7.2): 每 `trend_window` 次成功反馈检查一次, 若 `|末误差| > |首误差|` (不降反增) 则自动暂停 worker 并记录原因, 由用户手动恢复
 
 ---
 
