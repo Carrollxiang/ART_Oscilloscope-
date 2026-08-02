@@ -261,9 +261,13 @@ class FeedbackManager:
                 output_limit=w.pid_config.output_limit,
                 i_limit=w.pid_config.i_limit,
                 window_size=w.pid_config.window_size,
+                max_error_ratio=w.pid_config.max_error_ratio,
+                trend_window=w.pid_config.trend_window,
                 chain_type=chain_type,
                 target_info=target_info,
                 sender_error=w._sender_error,
+                stop_reason=w.stop_reason,
+                frames_skipped=w.frames_skipped,
             ))
         return FeedbackStatusSnapshot(
             workers=worker_statuses,

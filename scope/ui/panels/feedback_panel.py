@@ -191,6 +191,13 @@ class WorkerCard(QFrame):
         self._sender_error_label.setVisible(False)
         body_layout.addWidget(self._sender_error_label)
 
+        # 自动暂停原因提示 (误差趋势变差等)
+        self._stop_reason_label = QLabel("")
+        self._stop_reason_label.setStyleSheet("color: #FFA500; font-size: 10px; font-style: italic;")
+        self._stop_reason_label.setWordWrap(True)
+        self._stop_reason_label.setVisible(False)
+        body_layout.addWidget(self._stop_reason_label)
+
         # 按钮行
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -293,7 +300,19 @@ class WorkerCard(QFrame):
         self._kd_label.setText(f"Kd: {_fmt(data.get('kd', 0), 4)}")
         self._window_label.setText(f"窗口: {data.get('window_size', '—')}")
         self._deadband_label.setText(f"死区: {_fmt(data.get('deadband', 0), 6)}")
-        self._frames_label.setText(f"帧: {data.get('frames_processed', 0)}")
+        skipped = data.get('frames_skipped', 0)
+        frames_text = f"帧: {data.get('frames_processed', 0)}"
+        if skipped:
+            frames_text += f" (跳过 {skipped})"
+        self._frames_label.setText(frames_text)
+
+        # 自动暂停原因 (误差趋势变差等)
+        stop_reason = data.get("stop_reason", "")
+        if stop_reason:
+            self._stop_reason_label.setText(f"⛔ {stop_reason}")
+            self._stop_reason_label.setVisible(True)
+        else:
+            self._stop_reason_label.setVisible(False)
 
         # sender 错误
         sender_err = data.get("sender_error", "")
@@ -385,6 +404,12 @@ class FeedbackDialog(QDialog):
         pid_layout.addRow("窗口大小:", self._window_size)
         self._deadband = QDoubleSpinBox(); self._deadband.setRange(0, 1000); self._deadband.setDecimals(6); self._deadband.setValue(0); self._deadband.setSingleStep(0.001)
         pid_layout.addRow("死区:", self._deadband)
+        self._max_error_ratio = QDoubleSpinBox(); self._max_error_ratio.setRange(0, 1); self._max_error_ratio.setDecimals(2); self._max_error_ratio.setValue(0.30); self._max_error_ratio.setSingleStep(0.05)
+        self._max_error_ratio.setToolTip("单帧 |误差|/|目标| 超过该值时跳过该帧 (0 = 禁用)")
+        pid_layout.addRow("误差保护:", self._max_error_ratio)
+        self._trend_window = QSpinBox(); self._trend_window.setRange(0, 1000); self._trend_window.setValue(5)
+        self._trend_window.setToolTip("每 N 次反馈检查误差趋势, 不降反增则自动暂停 (0 = 禁用)")
+        pid_layout.addRow("趋势检查:", self._trend_window)
 
         pid_title = QLabel("PID 参数")
         pid_title.setStyleSheet("color: #888; font-weight: bold; font-size: 11px;")
@@ -483,6 +508,8 @@ class FeedbackDialog(QDialog):
             kd=self._kd.value(), i_limit=self._i_limit.value(),
             output_limit=self._output_limit.value(),
             window_size=self._window_size.value(), deadband=self._deadband.value(),
+            max_error_ratio=self._max_error_ratio.value(),
+            trend_window=self._trend_window.value(),
         )
         self._result_config = FeedbackConfig(
             worker_id=worker_id, measurement_key=meas_key,
@@ -544,6 +571,12 @@ class PidEditDialog(QDialog):
         pid_layout.addRow("窗口大小:", self._window_size)
         self._deadband = QDoubleSpinBox(); self._deadband.setRange(0,1000); self._deadband.setDecimals(6); self._deadband.setValue(pid_config.deadband); self._deadband.setSingleStep(0.001)
         pid_layout.addRow("死区:", self._deadband)
+        self._max_error_ratio = QDoubleSpinBox(); self._max_error_ratio.setRange(0,1); self._max_error_ratio.setDecimals(2); self._max_error_ratio.setValue(pid_config.max_error_ratio); self._max_error_ratio.setSingleStep(0.05)
+        self._max_error_ratio.setToolTip("单帧 |误差|/|目标| 超过该值时跳过该帧 (0 = 禁用)")
+        pid_layout.addRow("误差保护:", self._max_error_ratio)
+        self._trend_window = QSpinBox(); self._trend_window.setRange(0,1000); self._trend_window.setValue(pid_config.trend_window)
+        self._trend_window.setToolTip("每 N 次反馈检查误差趋势, 不降反增则自动暂停 (0 = 禁用)")
+        pid_layout.addRow("趋势检查:", self._trend_window)
 
         layout.addWidget(pid_group)
 
@@ -635,6 +668,8 @@ class PidEditDialog(QDialog):
             kd=self._kd.value(), i_limit=self._i_limit.value(),
             output_limit=self._output_limit.value(),
             window_size=self._window_size.value(), deadband=self._deadband.value(),
+            max_error_ratio=self._max_error_ratio.value(),
+            trend_window=self._trend_window.value(),
         )
         self._result_target = self._build_target()
         self.accept()
@@ -860,6 +895,8 @@ class FeedbackPanel(QWidget):
             kp=wdata.kp, ki=wdata.ki, kd=wdata.kd,
             output_limit=wdata.output_limit, i_limit=wdata.i_limit,
             window_size=wdata.window_size, deadband=wdata.deadband,
+            max_error_ratio=wdata.max_error_ratio,
+            trend_window=wdata.trend_window,
         )
         # 获取当前 target
         current_target = None

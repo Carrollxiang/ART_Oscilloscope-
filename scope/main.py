@@ -215,6 +215,9 @@ class ScopeApp:
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(2000, self._startup_rpyc_ping)
 
+        # 4.7 设备健康事件 → 日志 + UI 状态栏 (重试/停摆提示)
+        self.device.on_health_event = self._on_device_health_event
+
         # 5. 注册数据回调 (统一事件驱动)
         self.device.set_data_callback(self._on_frame)
 
@@ -253,13 +256,26 @@ class ScopeApp:
         logger.info("ScopeApp 已停止")
 
     def _auto_load_feedback_workers(self):
-        """启动时自动加载全部配置（channels + device + measurements + feedback_workers）。"""
-        config_path = ConfigManager.default_filepath()
+        """启动时自动加载全部配置（channels + device + measurements + feedback_workers）。
+
+        配置来源优先级:
+          1. 用户目录配置 (~/.digital_scope/config.json)
+          2. 项目默认配置 (config/default_config.json) — 用户配置不存在时回退
+        反馈 Worker 段同样回退: 用户配置存在但无 feedback_workers 时,
+        使用项目默认配置的 feedback_workers。
+        """
         try:
             from pathlib import Path
-            if not Path(config_path).exists():
+            config_path = ConfigManager.default_filepath()
+            if Path(config_path).exists():
+                config = ConfigManager.load_json(config_path)
+            else:
+                # 回退: 用户配置不存在 → 项目默认配置
+                config = ConfigManager.load_project_default_config()
+                if config:
+                    logger.info("用户配置不存在, 使用项目默认配置")
+            if not config:
                 return
-            config = ConfigManager.load_json(config_path)
 
             # 1. 通道配置（回填 UI）
             if 'channels' in config and hasattr(self.main_win, 'channel_panel'):
@@ -276,6 +292,9 @@ class ScopeApp:
 
             # 4. 反馈 Worker — 延迟一小段确保 MeasurementProcessor 已处理 specs
             fw = config.get("feedback_workers")
+            if not fw:
+                # 用户配置无反馈段时, 回退项目默认配置的反馈段
+                fw = ConfigManager.load_project_default_config().get("feedback_workers")
             if fw:
                 from PyQt6.QtCore import QTimer
                 def _delayed_load():
@@ -339,6 +358,20 @@ class ScopeApp:
         except Exception as e:
             worker._sender_error = f"rpyc 不可达: {e}"
             logger.warning("rpyc ✗ %s → %s:%d: %s", wid, target.ip, target.port, e)
+
+    def _on_device_health_event(self, event):
+        """设备健康事件 → 日志 + Qt 主线程状态栏提示。"""
+        if event.state == "stopped":
+            logger.error(f"[设备健康] {event.message}")
+        elif event.state in ("resetting", "recovering"):
+            logger.warning(f"[设备健康] {event.message}")
+        else:
+            logger.info(f"[设备健康] {event.message}")
+        if self.main_win is not None:
+            try:
+                self.main_win.device_health_signal.emit(event.message)
+            except Exception:
+                pass
 
     def _on_frame(self, chunk: np.ndarray):
         """

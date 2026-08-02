@@ -30,6 +30,10 @@ DEFAULT_RATE = 30_000
 DEFAULT_SAMPLES = 5000
 DEFAULT_TIMEOUT = 5.0
 
+# rearm 失败恢复参数
+REARM_RETRY_ATTEMPTS = 3     # 退避重试次数
+REARM_RETRY_DELAY_S = 1.0    # 重试基础间隔 (秒, 按次递增)
+
 
 class ArtDevice(AcquisitionDevice):
     """
@@ -124,7 +128,7 @@ class ArtDevice(AcquisitionDevice):
         self._close_task()
         logger.info("ArtDevice 已关闭")
 
-    def start_acquisition(self):
+    def start_acquisition(self, mark_stopped: bool = True):
         """
         配置并启动采集。
 
@@ -134,6 +138,11 @@ class ArtDevice(AcquisitionDevice):
           3. 配置采样时钟
           4. 配置硬件触发 (可选)
           5. 启动 Task
+
+        Args:
+            mark_stopped: 失败时是否将 _running 置 False。
+                首次启动应置停摆 (True); rearm 重试路径传 False,
+                保持采集线程存活以便恢复后无缝续帧。
         """
         cfg = self._config
         if cfg is None:
@@ -233,7 +242,16 @@ class ArtDevice(AcquisitionDevice):
                 )
 
         except Exception as e:
-            self._running = False
+            if mark_stopped:
+                self._running = False
+            # 清理已创建但未启动成功的 Task, 避免 DAQmx 资源泄漏
+            # (泄漏会导致后续建 Task 报 -50103 resource reserved)
+            if self._task is not None:
+                try:
+                    self._task.close()
+                except Exception:
+                    pass
+                self._task = None
             logger.error(f"启动采集失败: {e}")
             raise
 
@@ -246,6 +264,9 @@ class ArtDevice(AcquisitionDevice):
                 self._task.stop()
             except Exception as e:
                 logger.warning(f"stop_task 出错: {e}")
+            finally:
+                # 兜底释放 Task 资源, 避免 -50103 (resource reserved)
+                self._close_task()
         logger.info("采集已停止")
 
     # ── 数据流 ─────────────────────────────────────────────────
@@ -298,14 +319,55 @@ class ArtDevice(AcquisitionDevice):
 
         FINITE 模式下每帧采集完成后 Task 自动停止。
         重建整个 Task 以重新等待下一次硬件触发。
+
+        失败时自动恢复: 先退避重试重建 Task (瞬态 -50103 通常一次
+        重试即恢复), 仍失败则设备级 reset() 后重试; 最终失败才停摆
+        并上报健康事件。重试期间 _running 保持 True, 采集线程继续
+        等 DONE 事件, 恢复后无缝续帧。
         """
         if not self._running:
             return
+
+        # 1. 直接重建 (瞬态错误通常直接成功)
         try:
             self._close_task()
-            self.start_acquisition()
+            self.start_acquisition(mark_stopped=False)
+            return
+        except Exception:
+            pass
+
+        # 2. 退避重试
+        for attempt in range(1, REARM_RETRY_ATTEMPTS + 1):
+            time.sleep(REARM_RETRY_DELAY_S * attempt)
+            try:
+                self._close_task()
+                self.start_acquisition(mark_stopped=False)
+                self._fire_health(
+                    "healthy", attempt, f"rearm 重试成功 (第 {attempt} 次)"
+                )
+                logger.info("rearm 重试成功 (第 %d 次)", attempt)
+                return
+            except Exception as e:
+                logger.warning("rearm 重试失败 (第 %d 次): %s", attempt, e)
+
+        # 3. 设备级 reset 后再试
+        try:
+            logger.warning("rearm 多次失败, 尝试设备 reset")
+            self.reset()
+            self.start_acquisition(mark_stopped=False)
+            self._fire_health("healthy", 0, "设备 reset 后 rearm 成功")
+            logger.info("设备 reset 后 rearm 成功")
+            return
         except Exception as e:
-            logger.error(f"rearm 失败: {e}")
+            logger.error(f"设备 reset 后 rearm 仍失败: {e}")
+
+        # 4. 最终失败: 停摆并上报健康事件
+        self._running = False
+        self._fire_health(
+            "stopped", REARM_RETRY_ATTEMPTS,
+            "rearm 最终失败, 采集已停摆 (请检查设备连接)",
+        )
+        logger.error("rearm 最终失败, 采集已停摆")
 
     # ── 配置 ───────────────────────────────────────────────────
 
@@ -395,6 +457,16 @@ class ArtDevice(AcquisitionDevice):
         if self._task is not None:
             try:
                 self._task.close()
+            except Exception as e:
+                # close 失败意味着 DAQmx 资源未释放,
+                # 下次建 Task 会报 -50103 (resource reserved)
+                logger.warning(f"关闭 Task 失败 (资源可能未释放): {e}")
+            self._task = None
+
+    def _fire_health(self, state: str, attempt: int, message: str):
+        """触发设备健康状态事件 (若上层注册了回调)。"""
+        if self._on_health_event:
+            try:
+                self._on_health_event(DeviceHealthEvent(state, attempt, message))
             except Exception:
                 pass
-            self._task = None

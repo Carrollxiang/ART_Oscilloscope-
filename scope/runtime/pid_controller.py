@@ -23,6 +23,8 @@ class PidConfig:
     output_limit: float = 0.1              # 输出限幅
     window_size: int = 10                  # 误差窗口大小
     deadband: float = 0.0                  # 死区（|error| < deadband 返回 None）
+    max_error_ratio: float = 0.30          # 单帧误差保护: |error|/|preset| > 该值 → 跳过该帧 (0=禁用; preset=0 时跳过)
+    trend_window: int = 5                  # 误差趋势检查窗口: 每 N 次反馈检查, 末误差 > 首误差 → 暂停 worker (0=禁用)
 
 
 class PidController:

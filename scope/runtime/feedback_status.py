@@ -31,9 +31,13 @@ class FeedbackWorkerStatus:
     output_limit: float
     i_limit: float
     window_size: int
+    max_error_ratio: float = 0.30       # 单帧误差保护阈值 (0=禁用)
+    trend_window: int = 5               # 误差趋势检查窗口 (0=禁用)
     chain_type: str = "none"          # "none" | "ad9910" | "rtmq"
     target_info: str = ""              # e.g. "192.168.1.100:3251"
     sender_error: str = ""             # sender 创建失败时的错误信息
+    stop_reason: str = ""              # 自动暂停原因 (误差趋势变差等, 空=未自动暂停)
+    frames_skipped: int = 0            # 单帧误差保护跳过的帧数
 
 
 @dataclass

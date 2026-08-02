@@ -298,7 +298,7 @@ class TestWorkerSendCooldown:
         from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
         w = FeedbackWorker(FeedbackConfig(
             worker_id="cd1", measurement_key="m1",
-            pid_config=PidConfig(preset_value=3.3),
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.0, trend_window=0),
             target=Ad9910Target(ip="127.0.0.1", port=1),
         ))
         await w.start()
@@ -324,7 +324,7 @@ class TestWorkerSendCooldown:
         from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
         w = FeedbackWorker(FeedbackConfig(
             worker_id="cd2", measurement_key="m1",
-            pid_config=PidConfig(preset_value=3.3),
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.0, trend_window=0),
             target=Ad9910Target(ip="127.0.0.1", port=1),
         ))
         await w.start()
@@ -351,7 +351,7 @@ class TestWorkerSendCooldown:
         from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
         w = FeedbackWorker(FeedbackConfig(
             worker_id="cd3", measurement_key="m1",
-            pid_config=PidConfig(preset_value=3.3),
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.0, trend_window=0),
             target=Ad9910Target(ip="127.0.0.1", port=1),
         ))
         await w.start()
@@ -363,3 +363,186 @@ class TestWorkerSendCooldown:
         await w.process(1.0)
         assert w._processing is False
         assert w._next_retry_ts == 0.0, "成功不应进入冷却"
+
+
+# ── 单帧误差保护 / 误差趋势检测 (v0.7.2) ────────────────────────
+
+class TestErrorProtection:
+    """单帧大幅误差保护: |误差|/|目标| > max_error_ratio → 跳过该帧"""
+
+    @staticmethod
+    def _make_sender(impl):
+        s = type("S", (), {})()
+        s.adjust_delta = impl
+        return s
+
+    async def test_oversized_error_skips_frame(self):
+        """误差比超阈值 → 跳过该帧不发送, worker 保持 RUNNING"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="ep1", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.30),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        calls = []
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        # preset=3.3, measured=0.5 → |误差|/|目标| = 2.8/3.3 ≈ 85% > 30% → 跳过
+        await w.process(0.5)
+        assert len(calls) == 0, "异常帧不应发送"
+        assert w.status == SlotStatus.RUNNING, "worker 应保持运行"
+        assert w.frames_skipped == 1
+        # 但 last_value 仍更新 (UI 可观察)
+        assert w.last_value == 0.5
+
+    async def test_normal_error_sends(self):
+        """正常误差帧正常发送"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="ep2", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.30),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        calls = []
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        await w.process(3.0)          # 误差 0.3/3.3 ≈ 9% < 30% → 发送
+        assert len(calls) == 1
+        assert w.frames_skipped == 0
+
+    async def test_preset_zero_skips_ratio_check(self):
+        """preset=0 时跳过比例保护 (不除零), 正常计算发送"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="ep3", measurement_key="m1",
+            pid_config=PidConfig(preset_value=0.0, max_error_ratio=0.30),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        calls = []
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        await w.process(1.0)
+        assert len(calls) == 1, "preset=0 不应触发比例保护"
+
+    async def test_ratio_disabled_when_zero(self):
+        """max_error_ratio=0 时保护禁用"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="ep4", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, max_error_ratio=0.0),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        calls = []
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        await w.process(0.1)          # 误差比 ~97%, 但保护禁用 → 发送
+        assert len(calls) == 1
+
+
+class TestErrorTrend:
+    """误差趋势检测: 每 trend_window 次反馈, 末误差 > 首误差 → 暂停"""
+
+    @staticmethod
+    def _make_sender(impl):
+        s = type("S", (), {})()
+        s.adjust_delta = impl
+        return s
+
+    async def test_trend_worse_pauses_worker(self):
+        """误差不降反增 → 5 次后自动暂停并记录原因"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="tr1", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, trend_window=5),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        async def ok_send(delta):
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        # 误差: 0.1, 0.2, 0.3, 0.4, 0.5 → 末 > 首 → 暂停
+        for v in (3.2, 3.1, 3.0, 2.9, 2.8):
+            await w.process(v)
+        assert w.status == SlotStatus.PAUSED, "误差变差应自动暂停"
+        assert w.stop_reason, "应记录暂停原因"
+        assert "不降反增" in w.stop_reason
+        assert w.frames_processed == 5
+
+    async def test_trend_improving_keeps_running(self):
+        """误差持续下降 → 保持运行"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="tr2", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, trend_window=5),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        async def ok_send(delta):
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        # 误差: 0.9, 0.7, 0.5, 0.3, 0.1 → 持续下降 → 不暂停
+        for v in (2.4, 2.6, 2.8, 3.0, 3.2):
+            await w.process(v)
+        assert w.status == SlotStatus.RUNNING
+        assert w.stop_reason == ""
+
+    async def test_resume_clears_stop_reason(self):
+        """手动恢复后清除暂停原因与趋势窗口, 可继续反馈"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="tr3", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, trend_window=3),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        calls = []
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        for v in (3.2, 3.1, 3.0):      # 误差递增 → 3 次后暂停
+            await w.process(v)
+        assert w.status == SlotStatus.PAUSED
+
+        await w.resume()
+        assert w.status == SlotStatus.RUNNING
+        assert w.stop_reason == ""
+        before = len(calls)
+        await w.process(3.1)           # 恢复后正常反馈
+        assert len(calls) == before + 1, "恢复后应继续发送"
+
+    async def test_trend_disabled_when_zero(self):
+        """trend_window=0 时趋势检测禁用"""
+        from scope.io.feedback_worker import FeedbackWorker, Ad9910Target
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="tr4", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, trend_window=0),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        await w.start()
+        async def ok_send(delta):
+            return True
+        w._sender = self._make_sender(ok_send)
+
+        for v in (3.2, 3.1, 3.0, 2.9, 2.8, 2.7, 2.6):
+            await w.process(v)
+        assert w.status == SlotStatus.RUNNING, "禁用时应持续运行"

@@ -276,3 +276,78 @@ class TestArtDeviceAnalysisResult:
             assert result.sequence_num == i
 
         device.stop_acquisition()
+
+
+# ── rearm 失败恢复 / 资源清理 (v0.7.3) ─────────────────────────
+
+class TestArtDeviceRecovery:
+    """start 失败清理 / rearm 退避重试 / 最终失败停摆"""
+
+    def test_start_failure_cleans_task(self, device, mock_artdaq):
+        """start_acquisition 失败 → 已创建 Task 被清理 (无 -50103 泄漏)"""
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        mock_task.start.side_effect = RuntimeError("resource reserved")
+
+        with pytest.raises(RuntimeError):
+            device.start_acquisition()
+        assert device._task is None, "失败后 Task 应被清理"
+        assert device._running is False
+
+    def test_rearm_retry_recovers(self, device, mock_artdaq, monkeypatch):
+        """rearm 失败一次后重试成功 → 恢复运行, 不中断"""
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        # 第一次 rearm: start() 抛 -50103 类错误; 重试时成功
+        mock_task.start.side_effect = [RuntimeError("resource reserved"), None]
+        device.rearm()                      # 不应抛异常
+        assert device._running is True, "重试成功后应保持运行"
+        assert device._task is not None
+        device.stop_acquisition()
+        mock_task.start.side_effect = None
+
+    def test_rearm_retry_keeps_running_flag(self, device, mock_artdaq, monkeypatch):
+        """重试期间 _running 保持 True (采集线程存活, 可无缝续帧)"""
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        mock_task.start.side_effect = [RuntimeError("x"), RuntimeError("x"), None]
+        device.rearm()
+        assert device._running is True
+        device.stop_acquisition()
+        mock_task.start.side_effect = None
+
+    def test_rearm_final_failure_stops_with_health(self, device, mock_artdaq, monkeypatch):
+        """rearm 持续失败 (重试+reset 均失败) → 停摆并上报健康事件"""
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        events = []
+        device.on_health_event = lambda ev: events.append(ev.state)
+        mock_task.start.side_effect = RuntimeError("resource reserved")  # 永远失败
+        device.rearm()
+        assert device._running is False, "最终失败应停摆"
+        assert "stopped" in events, "应上报 stopped 健康事件"
+        device.stop_acquisition()
+        mock_task.start.side_effect = None

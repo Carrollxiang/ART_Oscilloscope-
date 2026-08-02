@@ -324,23 +324,25 @@
   ],
   "feedback_workers": [
     {
-      "worker_id": "w1",
+      "worker_id": "w0",
       "measurement_key": "m18",
       "pid_config": {
-        "preset_value": 1.9,
+        "preset_value": 1.6,
         "kp": 0.03,
         "ki": 0.0,
         "kd": 0.0,
         "i_limit": 0.1,
         "output_limit": 0.1,
         "window_size": 10,
-        "deadband": 0.02
+        "deadband": 0.01,
+        "max_error_ratio": 0.3,
+        "trend_window": 5
       },
       "target": {
         "ip": "192.168.1.20",
         "port": 3251,
         "device_id": 2113,
-        "profile": 1,
+        "profile": 0,
         "type": "Ad9910Target"
       }
     }

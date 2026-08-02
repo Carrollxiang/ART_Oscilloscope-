@@ -11,8 +11,8 @@ from typing import Optional
 
 import numpy as np
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QTableWidgetItem, QLabel
 
 from scope.model import RawFrame
 from scope.runtime import ConfigChange, FittedSnapshot, FeedbackStatusSnapshot
@@ -44,6 +44,9 @@ class MainWindow(QMainWindow):
       - 数据流: AnalysisResult → update_display()
     """
 
+    # 设备健康事件 → 状态栏 (跨线程: 从采集线程 emit, Qt 队列到主线程)
+    device_health_signal = pyqtSignal(str)
+
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
                  async_loop=None, event_bus=None):
         super().__init__()
@@ -54,6 +57,12 @@ class MainWindow(QMainWindow):
 
         # ── 加载 UI ──
         uic.loadUi(UI_PATH, self)
+
+        # ── 设备健康提示 (状态栏右侧) ──
+        self._health_label = QLabel("")
+        self._health_label.setStyleSheet("color: #FFA500; font-size: 11px;")
+        self.statusBar().addPermanentWidget(self._health_label)
+        self.device_health_signal.connect(self._on_device_health)
 
         # ── 波形视图 (替换 waveformContainer) ──
         self.waveform = WaveformView(self.waveformContainer, channel_count=16)
@@ -289,6 +298,14 @@ class MainWindow(QMainWindow):
             self.statusSampling.setText(f"采样率: {sample_rate}")
             self.statusFrames.setText(f"帧 #: {frame.sequence_num}")
             self.statusTrigger.setText(f"触发: {frame.n_channels}ch")
+
+    def _on_device_health(self, message: str):
+        """设备健康事件 → 状态栏提示 (重试中橙色, 停摆红色)。"""
+        self._health_label.setText(f"⚙ {message}")
+        if "停摆" in message or "失败" in message:
+            self._health_label.setStyleSheet("color: #FF4444; font-size: 11px;")
+        else:
+            self._health_label.setStyleSheet("color: #FFA500; font-size: 11px;")
 
     def _on_ui_feedback_status(self, snapshot: FeedbackStatusSnapshot):
         """反馈状态更新 → 反馈面板 + 状态栏。"""
