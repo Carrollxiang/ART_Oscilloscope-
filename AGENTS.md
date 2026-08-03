@@ -72,7 +72,7 @@ Use the project conda environment, not the global Python installation:
 Current expected result:
 
 ```text
-161 passed
+171 passed
 ```
 
 ## Documentation Rules

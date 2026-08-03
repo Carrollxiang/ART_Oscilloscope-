@@ -109,6 +109,7 @@ class AcquisitionDevice(ABC):
 - 硬件触发由 `task.triggers.start_trigger.cfg_anlg_edge_start_trig()` 配置
 - 采集模式: `AcquisitionType.FINITE` (有限点采集), 触发后采集 `samps_per_chan` 个点后自动停止
 - `rearm()` 每帧读取后重建整个 Task (调用 `_close_task()` + `start_acquisition()`), 重新等待触发
+- 采集模式 (v0.8): `DeviceConfig.acquisition_mode` — **continuous**(默认): 一次性 Task 连续采集, `TriggerDetector` 软件触发帧化(帧起点=检测到的沿, 帧长=record_length), 消除每帧重建 Task 的 USB 配置风暴, 长期稳定; **finite**(可选): 原 FINITE + 硬件触发逐帧重建 (每帧触发对齐)
 - `read_timeout` 超时抛 `TimeoutError` → 上层捕获后跳过此帧继续下一帧
 - **运行配置** (ScopeApp): 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V (由 `main.py` 显式构造；`DeviceConfig` dataclass 默认值为 4 通道/10k 点)
 - **DLL 路径**: `C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64\Art_DAQ.dll`
@@ -727,17 +728,18 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 |----------|--------|--------|
 | `test_feedback_worker.py` | 29 | ✅ 100% |
 | `test_feedback_manager.py` | 19 | ✅ 100% |
-| `test_art_device.py` | 27 | ✅ 100% (mock artdaq, 无需硬件) |
+| `test_art_device.py` | 29 | ✅ 100% (mock artdaq, 无需硬件) |
 | `test_ad9910_sender.py` | 16 | ✅ 100% |
 | `test_phase0.py` | 16 | ✅ 100% |
 | `test_rpyc_pool.py` | 17 | ✅ 100% |
+| `test_trigger_detector.py` | 8 | ✅ 100% |
 | `test_pid_controller.py` | 11 | ✅ 100% |
 | `test_rtmq_sender.py` | 6 | ✅ 100% |
 | `test_feedback_command_worker.py` | 5 | ✅ 100% |
 | `test_config_manager.py` | 4 | ✅ 100% |
 | `test_measurement_config_worker.py` | 2 | ✅ 100% |
 | `test_channel_panel_source.py` | 1 | ✅ 100% |
-| **总计** | **161** | **✅ 100%** |
+| **总计** | **171** | **✅ 100%** |
 
 ---
 

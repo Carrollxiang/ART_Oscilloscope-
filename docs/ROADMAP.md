@@ -4,7 +4,7 @@
 >
 > **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，历史阶段的测试数量与结构示例为当时实测值，不代表当前基线。
 >
-> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；测试基线为 `161 passed`。
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；测试基线为 `171 passed`。
 
 ---
 
@@ -465,7 +465,7 @@ Phase 0: 数据模型 + 模拟器 ✅
 python -m pytest tests/ -v
 
 # 期望结果
-# 161 passed, 1 warning
+# 171 passed, 1 warning
 ```
 
 ---
@@ -509,6 +509,7 @@ python -m scope.main
 | **v0.7.4** | **2026/6** | **启动自动加载回退项目默认配置 (反馈 Worker 可随默认配置自动创建) + 测试基线 156** |
 | **v0.7.5** | **2026/6** | **ArtDAQ_ResetDevice 设备级重置 + 停摆自动重连 (替代手动重启) + 测试基线 160** |
 | **v0.7.6** | **2026/6** | **驱动卡死检测 (ResetDevice 连续失败) → 保存配置自动重启程序 + 测试基线 161** |
+| **v0.8** | **2026/8** | **CONTINUOUS 采集模式 (默认) + TriggerDetector 软件触发帧化, 真机长跑稳定; FINITE 保留 + 测试基线 171** |
 
 ---
 
@@ -522,4 +523,4 @@ python -m scope.main
 - ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
 - ✅ 反馈状态已发布 `feedback.status`，由 UIBridge 桥接到 FeedbackPanel / 状态栏
 - ✅ 运行时指标已发布 `runtime.metrics`，供后续诊断面板消费
-- ✅ 当前测试基线: 161/161 通过
+- ✅ 当前测试基线: 171/171 通过

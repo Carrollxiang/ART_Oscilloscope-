@@ -87,7 +87,7 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **161/161 测试通过** (新增 v0.7.6 驱动卡死自动重启回归测试)
+- **171/171 测试通过** (新增 v0.8 CONTINUOUS 采集与软件触发帧化测试)
 
 ### 待完成
 - [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`
