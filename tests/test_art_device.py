@@ -458,3 +458,71 @@ class TestAutoReconnect:
         assert device._reconnect_thread.is_alive() is False, "fatal 后重连线程应退出"
         device.stop_acquisition()
         mock_task.start.side_effect = None
+
+
+# ── CONTINUOUS 模式 (v0.8): 一次性 Task + 软件触发帧化 ───────────
+
+class TestContinuousMode:
+    """CONTINUOUS 采集: 连续读取 + TriggerDetector 软件帧化"""
+
+    def test_continuous_uses_continuous_timing(self, device, mock_artdaq):
+        """acquisition_mode=continuous → cfg_samp_clk_timing 用 CONTINUOUS"""
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+        config = DeviceConfig(
+            sample_rate=10000, record_length=2000,
+            acquisition_mode="continuous",
+        )
+        device.configure(config)
+        device.start_acquisition()
+        args, kwargs = mock_task.timing.cfg_samp_clk_timing.call_args
+        assert kwargs.get("sample_mode") is device._AcquisitionType.CONTINUOUS
+        # ART 驱动要求 samps_per_chan >= 2; 连续模式用作缓冲大小 (2 倍帧长)
+        assert kwargs.get("samps_per_chan") == max(config.record_length * 2, 1024)
+        device.stop_acquisition()
+
+    def test_continuous_worker_produces_triggered_frames(self, device, mock_artdaq):
+        """连续数据流 → 软件触发帧化 → 回调收到帧 (起点=沿)"""
+        from unittest.mock import MagicMock
+        from scope.hardware import DeviceConfig
+        _, mock_task = mock_artdaq
+
+        frame_len = 2000
+        block = max(frame_len // 4, 512)       # 512 (与 _continuous_worker 一致)
+        n_ch = 16
+        total = 9000
+        # ch12 方波: 0→1 上升沿在 0 和 4000 (电平 0.5)
+        trig = np.zeros(total, dtype=np.float32)
+        trig[0:2000] = 1.0
+        trig[4000:6000] = 1.0
+        data = np.zeros((n_ch, total), dtype=np.float32)
+        data[12] = trig
+        chunks = [data[:, s:s + block] for s in range(0, total, block)]
+
+        calls = {"n": 0}
+        def fake_read(number_of_samples_per_channel=None, timeout=None):
+            if calls["n"] >= len(chunks):
+                device._running = False        # 数据耗尽 → 停 worker
+                raise RuntimeError("数据耗尽")
+            c = chunks[calls["n"]]
+            calls["n"] += 1
+            return c.tolist()
+        mock_task.read = MagicMock(side_effect=fake_read)
+
+        config = DeviceConfig(
+            sample_rate=10000, record_length=frame_len,
+            acquisition_mode="continuous",
+        )
+        device.configure(config)
+        received = []
+        device.set_data_callback(lambda ch: received.append(ch))
+        device.start_acquisition()
+        device._acquire_thread.join(timeout=10)
+
+        assert len(received) == 2, f"应收到 2 帧 (沿在 0 与 4000), 实际 {len(received)}"
+        for f in received:
+            assert f.shape == (n_ch, frame_len), f"帧形状 {f.shape}"
+        # 帧起点 = 沿: 第 0 帧从 trig[0]=1 开始, 第 1 帧从 trig[4000]=1 开始
+        assert received[0][12, 0] == 1.0
+        assert received[1][12, 0] == 1.0
+        device.stop_acquisition()

@@ -289,6 +289,7 @@ class DevicePanel(QWidget):
             channels_enabled=list(range(n_ch)),
             channel_min_vals=[-10.0] * n_ch,
             channel_max_vals=[10.0] * n_ch,
+            acquisition_mode=self.cmbSampleMode.currentData().lower(),
         )
 
     def get_state(self) -> dict:
@@ -336,6 +337,13 @@ class DevicePanel(QWidget):
                 self.cmbTrigSlope.setCurrentIndex(i)
                 break
         self.spinTrigLevel.setValue(params.get("trigger_level", 1.0))
+
+        # 采集模式 (连续/有限), 默认 continuous
+        mode = str(cfg.get("acquisition_mode", "continuous")).lower()
+        for i in range(self.cmbSampleMode.count()):
+            if self.cmbSampleMode.itemData(i).lower() == mode:
+                self.cmbSampleMode.setCurrentIndex(i)
+                break
 
     def set_config(self, state: dict):
         """恢复设备配置（兼容旧版扁平 dict 和新版嵌套 state）。"""

@@ -172,7 +172,8 @@
       "trigger_source": 0,
       "trigger_level": 0.0,
       "trigger_slope": "rising",
-      "record_length": 15000
+      "record_length": 15000,
+      "acquisition_mode": "continuous"
     },
     "duration": 0.5
   },

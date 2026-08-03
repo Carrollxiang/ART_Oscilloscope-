@@ -20,6 +20,7 @@ from scope.hardware.device import (
     DeviceInfo,
     DeviceHealthEvent,
 )
+from scope.hardware.trigger_detector import TriggerDetector
 from scope.model import RawFrame
 
 logger = logging.getLogger(__name__)
@@ -188,11 +189,21 @@ class ArtDevice(AcquisitionDevice):
                     max_val=cfg.channel_max_vals[ch_idx],
                 )
 
-            # 2. 采样时钟 — 有限点采集，由硬件触发或 QTimer 驱动
+            # 2. 采样时钟 — 按采集模式配置
+            #    continuous: 连续采集 + 软件触发帧化 (长期稳定, 不重建 Task);
+            #                samps_per_chan 作为缓冲大小 (ART 驱动要求 >= 2)
+            #    finite:     有限点采集 + 硬件触发 (每帧重建 Task, 逐帧对齐)
+            mode = getattr(cfg, "acquisition_mode", "continuous")
+            if mode == "continuous":
+                sample_mode = self._AcquisitionType.CONTINUOUS
+                samps_per_chan = max(cfg.record_length * 2, 1024)
+            else:
+                sample_mode = self._AcquisitionType.FINITE
+                samps_per_chan = cfg.record_length
             task.timing.cfg_samp_clk_timing(
                 rate=cfg.sample_rate,
-                sample_mode=self._AcquisitionType.FINITE,
-                samps_per_chan=cfg.record_length,
+                sample_mode=sample_mode,
+                samps_per_chan=samps_per_chan,
             )
 
             # 3. 硬件触发 (可选)
@@ -219,14 +230,16 @@ class ArtDevice(AcquisitionDevice):
                         f"rearm 触发: src={trig_ch}"
                     )
 
-            # 4. 注册 DONE 事件回调 (硬件触发 → 采集完成 → 回调)
-            task.register_done_event(self._on_task_done)
+            # 4. DONE 事件仅 FINITE 模式注册
+            #    (CONTINUOUS 模式由 _continuous_worker 软件触发帧化, 无 DONE 语义)
+            if mode == "finite":
+                task.register_done_event(self._on_task_done)
 
             # 5. 启动
             task.start()
             self._running = True
 
-            # 6. 启动采集工作线程 (等待 DONE 事件 → 读取 → 回调 → rearm)
+            # 6. 启动采集工作线程
             if self._acquire_thread is None or not self._acquire_thread.is_alive():
                 self._acquire_thread = threading.Thread(
                     target=self._acquire_worker,
@@ -237,14 +250,14 @@ class ArtDevice(AcquisitionDevice):
 
             if self._first_acquisition:
                 logger.info(
-                    f"采集已启动: {cfg.sample_rate/1e3:.1f}kSa/s, "
+                    f"采集已启动 [{mode}]: {cfg.sample_rate/1e3:.1f}kSa/s, "
                     f"{cfg.record_length}samples/ch, "
                     f"{len(cfg.channels_enabled)}ch"
                 )
                 self._first_acquisition = False
             else:
                 logger.debug(
-                    f"rearm: {cfg.sample_rate/1e3:.1f}kSa/s, "
+                    f"rearm [{mode}]: {cfg.sample_rate/1e3:.1f}kSa/s, "
                     f"{cfg.record_length}samples/ch"
                 )
 
@@ -281,7 +294,7 @@ class ArtDevice(AcquisitionDevice):
 
     def read_chunk(self) -> np.ndarray:
         """
-        从 ART 卡读取一帧数据。
+        从 ART 卡读取一帧数据 (FINITE 模式整帧读取)。
 
         Returns:
             ndarray, shape=(channels, samples), dtype=float32, 单位: 伏特
@@ -291,27 +304,39 @@ class ArtDevice(AcquisitionDevice):
         """
         if not self._running or self._task is None:
             raise RuntimeError("采集未运行")
-
-        cfg = self._config
-        n_samples = cfg.record_length
-
         try:
-            # artdaq.Task.read() 返回 list of lists:
-            #   [[ch1_s1, ch1_s2, ...], [ch2_s1, ch2_s2, ...]]
-            raw_data = self._task.read(
-                number_of_samples_per_channel=n_samples,
-                timeout=self._read_timeout,
-            )
+            data = self._read_raw(self._config.record_length)
         except Exception as e:
             raise TimeoutError(f"ART 读取超时: {e}") from e
+        self._seq += 1
+        return data
 
-        # list of lists → numpy array (channels, samples), float32
+    def _read_raw(self, n_samples: int) -> np.ndarray:
+        """
+        读取 n_samples 个样本 (channels, n_samples) float32。
+
+        artdaq.Task.read() 返回 list of lists:
+          [[ch1_s1, ch1_s2, ...], [ch2_s1, ch2_s2, ...]]
+        失败抛异常 (由调用方转换为 TimeoutError)。
+        """
+        raw_data = self._task.read(
+            number_of_samples_per_channel=n_samples,
+            timeout=self._read_timeout,
+        )
         data = np.array(raw_data, dtype=np.float32)
         if data.ndim == 1:
             data = data.reshape(1, -1)
-
-        self._seq += 1
         return data
+
+    def _trigger_channel_index(self) -> int:
+        """从触发源名 (如 "ai12") 解析通道索引。"""
+        s = str(self._trigger_source).lower()
+        if s.startswith("ai"):
+            try:
+                return int(s[2:])
+            except ValueError:
+                pass
+        return 0
 
     def make_raw_frame(self, chunk: np.ndarray) -> RawFrame:
         """将原始数据组装成 RawFrame。"""
@@ -453,10 +478,20 @@ class ArtDevice(AcquisitionDevice):
 
     def _acquire_worker(self):
         """
-        采集工作线程: 等待硬件触发 → DONE 事件 → 读取数据 → 回调 → rearm。
-
-        无轮询, 完全事件驱动。无触发信号时线程挂起在 Event.wait()。
+        采集工作线程入口, 按采集模式分派:
+          - continuous: 连续读取 + 软件触发帧化 (不重建 Task)
+          - finite:     等 DONE 事件 → 读整帧 → 回调 → rearm (原逻辑)
         """
+        mode = "continuous"
+        if self._config is not None:
+            mode = getattr(self._config, "acquisition_mode", "continuous")
+        if mode == "continuous":
+            self._continuous_worker()
+        else:
+            self._finite_worker()
+
+    def _finite_worker(self):
+        """FINITE 模式: 等 DONE → 读整帧 → 回调 → rearm。"""
         while self._running:
             self._done_event.wait(timeout=0.5)  # 0.5s 心跳, 防止死等
             if not self._running:
@@ -475,6 +510,47 @@ class ArtDevice(AcquisitionDevice):
 
             # rearm: 重建 Task, 注册新 DONE 回调, 等待下一次触发
             self.rearm()
+
+    def _continuous_worker(self):
+        """
+        CONTINUOUS 模式: 循环读取数据块 → 软件触发帧化 → 回调。
+
+        一次性 Task 连续采集 (硬件触发仅启动一次), 帧边界由
+        TriggerDetector 在数据流中检测上升沿确定, 帧长 = record_length。
+        读取连续失败时重建 Task (与 rearm 恢复链共用); 重建失败则
+        停摆并走自动重连/自动重启兜底。
+        """
+        cfg = self._config
+        if cfg is None:
+            return
+        frame_len = cfg.record_length
+        block = max(frame_len // 4, 512)
+        detector = TriggerDetector(
+            trigger_channel=self._trigger_channel_index(),
+            level=self._trigger_level,
+            frame_length=frame_len,
+            slope=self._trigger_slope,
+        )
+        consecutive_failures = 0
+
+        while self._running:
+            try:
+                chunk = self._read_raw(block)
+            except Exception as e:
+                logger.error(f"读取失败: {e}")
+                consecutive_failures += 1
+                time.sleep(0.5)
+                if consecutive_failures >= 2 and self._running:
+                    consecutive_failures = 0
+                    # 重建 Task (连续模式重新配置), 失败则停摆走恢复链
+                    self.rearm()
+                continue
+            consecutive_failures = 0
+
+            for frame in detector.feed(chunk):
+                self._seq += 1
+                if self._data_callback:
+                    self._data_callback(frame)
 
     def _close_task(self):
         if self._task is not None:

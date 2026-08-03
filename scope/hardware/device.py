@@ -26,6 +26,7 @@ class DeviceConfig:
     trigger_level: float = 0.0
     trigger_slope: str = "rising"
     record_length: int = 10_000          # 每帧采样点
+    acquisition_mode: str = "continuous" # "continuous"(默认, 软件触发帧化) | "finite"(硬件触发每帧重建)
 
 
 @dataclass
