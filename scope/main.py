@@ -199,6 +199,8 @@ class ScopeApp:
             async_loop=self._async_loop,
             event_bus=self._event_bus
         )
+        # 驱动卡死 → 自动重启 (信号跨线程队列到 Qt 主线程执行)
+        self.main_win.app_restart_requested.connect(self._schedule_app_restart)
         self.main_win.show()
 
         # 3. 创建 UIBridge 并连接信号
@@ -360,9 +362,20 @@ class ScopeApp:
             logger.warning("rpyc ✗ %s → %s:%d: %s", wid, target.ip, target.port, e)
 
     def _on_device_health_event(self, event):
-        """设备健康事件 → 日志 + Qt 主线程状态栏提示。"""
+        """设备健康事件 → 日志 + Qt 主线程状态栏提示。
+
+        state="fatal" 表示驱动会话卡死 (进程内无法恢复),
+        保存配置后自动重启程序。
+        """
         if event.state == "stopped":
             logger.error(f"[设备健康] {event.message}")
+        elif event.state == "fatal":
+            logger.error(f"[设备健康] {event.message}")
+            if self.main_win is not None:
+                # 经 Qt 信号队列到主线程再执行保存+重启
+                self.main_win.app_restart_requested.emit(event.message)
+            else:
+                self._schedule_app_restart(event.message)
         elif event.state in ("resetting", "recovering"):
             logger.warning(f"[设备健康] {event.message}")
         else:
@@ -372,6 +385,27 @@ class ScopeApp:
                 self.main_win.device_health_signal.emit(event.message)
             except Exception:
                 pass
+
+    def _schedule_app_restart(self, message: str):
+        """驱动会话卡死: 保存当前配置后, 3 秒内自动重启程序。"""
+        try:
+            ok = ConfigManager.save_to_file(
+                self.main_win, ConfigManager.default_filepath(),
+            )
+            logger.info("重启前配置保存 %s", "成功" if ok else "失败(继续重启)")
+        except Exception as e:
+            logger.warning(f"重启前保存配置异常: {e}")
+
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(3000, self._restart_app)
+        logger.error("%s — 3 秒后自动重启程序", message)
+
+    def _restart_app(self):
+        """用当前解释器与参数重启程序 (替换当前进程映像)。"""
+        import os
+        import sys
+        logger.info("自动重启程序: %s %s", sys.executable, " ".join(sys.argv))
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
     def _on_frame(self, chunk: np.ndarray):
         """

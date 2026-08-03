@@ -215,8 +215,9 @@ class TestArtDeviceWatchdog:
         assert device.ping() is False
         device.stop_acquisition()
 
-    def test_reset(self, device):
-        """reset 应能重建 Task。"""
+    def test_reset(self, device, monkeypatch):
+        """reset 应调用 ArtDAQ_ResetDevice 设备级重置。"""
+        _install_mock_lib(monkeypatch)
         assert device.reset() is True
 
     def test_restore_state(self, device):
@@ -349,5 +350,111 @@ class TestArtDeviceRecovery:
         device.rearm()
         assert device._running is False, "最终失败应停摆"
         assert "stopped" in events, "应上报 stopped 健康事件"
+        device.stop_acquisition()
+        mock_task.start.side_effect = None
+
+
+# ── 设备级重置 (ArtDAQ_ResetDevice) / 自动重连 (v0.7.5) ────────
+
+def _install_mock_lib(monkeypatch, reset_ret=0):
+    """在 mock artdaq 环境下安装 artdaq._lib.lib_importer 桩 (ArtDAQ_ResetDevice)。"""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+    fake_lib = types.ModuleType("artdaq._lib")
+    importer = MagicMock()
+    importer.windll._library.ArtDAQ_ResetDevice.return_value = reset_ret
+    fake_lib.lib_importer = importer
+    monkeypatch.setitem(sys.modules, "artdaq._lib", fake_lib)
+    return importer
+
+
+class TestDeviceLevelReset:
+    """reset() 应调用 DLL 的 ArtDAQ_ResetDevice (真正的设备级重置)"""
+
+    def test_reset_calls_device_reset_api(self, device, monkeypatch):
+        importer = _install_mock_lib(monkeypatch)
+        assert device.reset() is True
+        importer.windll._library.ArtDAQ_ResetDevice.assert_called_once_with(b"Dev42")
+
+    def test_reset_failure_returns_false(self, device, monkeypatch):
+        importer = _install_mock_lib(monkeypatch, reset_ret=1)
+        assert device.reset() is False
+
+
+class TestAutoReconnect:
+    """停摆后自动重连: 设备恢复后自动恢复采集 (替代手动重启)"""
+
+    def test_rearm_final_failure_starts_reconnect(self, device, mock_artdaq, monkeypatch):
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _install_mock_lib(monkeypatch)
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+        monkeypatch.setattr(art_mod, "RECONNECT_INTERVAL_S", 0.05)
+        _, mock_task = mock_artdaq
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        mock_task.start.side_effect = RuntimeError("resource reserved")
+        device.rearm()
+        assert device._running is False, "最终失败应停摆"
+        assert device._reconnect_thread is not None, "应启动重连线程"
+        assert device._reconnect_thread.is_alive(), "重连线程应运行中"
+        device.stop_acquisition()
+        mock_task.start.side_effect = None
+
+    def test_reconnect_recovers_automatically(self, device, mock_artdaq, monkeypatch):
+        import time
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _install_mock_lib(monkeypatch)
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+        monkeypatch.setattr(art_mod, "RECONNECT_INTERVAL_S", 0.05)
+        _, mock_task = mock_artdaq
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        events = []
+        device.on_health_event = lambda ev: events.append(ev.state)
+        # rearm 阶段共 5 次 start 调用(直接+重试3+reset后1)全部失败,
+        # 之后重连线程的 start 调用成功 → 自动恢复
+        mock_task.start.side_effect = [RuntimeError("x")] * 5 + [None]
+        device.rearm()
+        assert device._running is False
+
+        deadline = time.time() + 5
+        while time.time() < deadline and not device._running:
+            time.sleep(0.05)
+        assert device._running is True, "自动重连应恢复采集"
+        assert "recovering" in events, "应上报 recovering 事件"
+        assert "healthy" in events, "恢复后应上报 healthy 事件"
+        device.stop_acquisition()
+        mock_task.start.side_effect = None
+
+    def test_reconnect_fatal_after_consecutive_failures(self, device, mock_artdaq, monkeypatch):
+        """ResetDevice 连续失败 → 达到阈值后上报 fatal 事件并停止重连 (等待程序重启)"""
+        import time
+        import scope.hardware.art_device as art_mod
+        from scope.hardware import DeviceConfig
+        _install_mock_lib(monkeypatch, reset_ret=1)   # ArtDAQ_ResetDevice 永远失败 (-50302 类)
+        monkeypatch.setattr(art_mod, "REARM_RETRY_DELAY_S", 0.01)
+        monkeypatch.setattr(art_mod, "RECONNECT_INTERVAL_S", 0.05)
+        _, mock_task = mock_artdaq
+        config = DeviceConfig(sample_rate=10000, record_length=100)
+        device.configure(config)
+        device.start_acquisition()
+
+        events = []
+        device.on_health_event = lambda ev: events.append(ev.state)
+        mock_task.start.side_effect = RuntimeError("resource reserved")
+        device.rearm()                     # 停摆 + 启动重连
+
+        deadline = time.time() + 5
+        while time.time() < deadline and (device._reconnect_thread is None or device._reconnect_thread.is_alive()):
+            time.sleep(0.05)
+        assert "fatal" in events, f"应上报 fatal 事件: {events}"
+        assert device._reconnect_thread.is_alive() is False, "fatal 后重连线程应退出"
         device.stop_acquisition()
         mock_task.start.side_effect = None

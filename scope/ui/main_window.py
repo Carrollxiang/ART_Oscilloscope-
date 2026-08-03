@@ -46,6 +46,8 @@ class MainWindow(QMainWindow):
 
     # 设备健康事件 → 状态栏 (跨线程: 从采集线程 emit, Qt 队列到主线程)
     device_health_signal = pyqtSignal(str)
+    # 驱动卡死 → 请求自动重启 (由 ScopeApp 连接, 在主线程执行)
+    app_restart_requested = pyqtSignal(str)
 
     def __init__(self, feedback_manager: Optional[FeedbackManager] = None,
                  async_loop=None, event_bus=None):

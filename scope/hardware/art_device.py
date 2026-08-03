@@ -33,6 +33,8 @@ DEFAULT_TIMEOUT = 5.0
 # rearm 失败恢复参数
 REARM_RETRY_ATTEMPTS = 3     # 退避重试次数
 REARM_RETRY_DELAY_S = 1.0    # 重试基础间隔 (秒, 按次递增)
+RECONNECT_INTERVAL_S = 5.0   # 停摆后自动重连间隔 (秒)
+RECONNECT_FATAL_THRESHOLD = 3  # 重连连续失败次数达到该值 → 判定驱动卡死, 需重启程序
 
 
 class ArtDevice(AcquisitionDevice):
@@ -86,6 +88,10 @@ class ArtDevice(AcquisitionDevice):
         self._data_callback: Optional[Callable[[np.ndarray], None]] = None
         self._first_acquisition = True   # 首次采集 INFO，后续 rearm 用 DEBUG
 
+        # 自动重连 (停摆后周期尝试设备级重置 + 重建采集)
+        self._reconnect_stop = threading.Event()
+        self._reconnect_thread: Optional[threading.Thread] = None
+
     # ── 生命周期 ────────────────────────────────────────────────
 
     def open(self) -> bool:
@@ -122,6 +128,7 @@ class ArtDevice(AcquisitionDevice):
     def close(self):
         """关闭 Task。"""
         self._running = False
+        self._reconnect_stop.set()  # 停止自动重连
         self._done_event.set()  # 唤醒 worker 使其退出
         if self._acquire_thread and self._acquire_thread.is_alive():
             self._acquire_thread.join(timeout=2.0)
@@ -258,6 +265,7 @@ class ArtDevice(AcquisitionDevice):
     def stop_acquisition(self):
         """停止采集。"""
         self._running = False
+        self._reconnect_stop.set()  # 停止自动重连
         self._done_event.set()  # 唤醒 worker
         if self._task is not None:
             try:
@@ -361,13 +369,14 @@ class ArtDevice(AcquisitionDevice):
         except Exception as e:
             logger.error(f"设备 reset 后 rearm 仍失败: {e}")
 
-        # 4. 最终失败: 停摆并上报健康事件
+        # 4. 最终失败: 停摆并上报健康事件, 启动自动重连
         self._running = False
         self._fire_health(
             "stopped", REARM_RETRY_ATTEMPTS,
             "rearm 最终失败, 采集已停摆 (请检查设备连接)",
         )
-        logger.error("rearm 最终失败, 采集已停摆")
+        logger.error("rearm 最终失败, 采集已停摆, 启动自动重连")
+        self._start_reconnect_loop()
 
     # ── 配置 ───────────────────────────────────────────────────
 
@@ -398,14 +407,28 @@ class ArtDevice(AcquisitionDevice):
             return False
 
     def reset(self) -> bool:
-        """关闭并重建 Task。"""
+        """
+        设备级 USB 重置 (ArtDAQ_ResetDevice), 释放被保留的硬件资源。
+
+        -50103 (resource reserved) 表示设备端资源被保留, 仅重建 Task
+        无法解决; 必须调用 DLL 的 ArtDAQ_ResetDevice 才能真正释放。
+        """
         try:
             self._close_task()
-            self._task = self._artdaq.Task()
-            logger.info("USB reset OK")
+            import ctypes
+            from artdaq._lib import lib_importer
+            raw = lib_importer.windll._library
+            func = raw.ArtDAQ_ResetDevice
+            func.argtypes = [ctypes.c_char_p]
+            func.restype = ctypes.c_int
+            ret = func(self._device_name.encode('ascii'))
+            if ret != 0:
+                logger.error(f"ArtDAQ_ResetDevice 失败, 错误码 {ret}")
+                return False
+            logger.info("设备级重置成功 (ArtDAQ_ResetDevice)")
             return True
         except Exception as e:
-            logger.error(f"USB reset 失败: {e}")
+            logger.error(f"设备重置失败: {e}")
             return False
 
     def restore_state(self, config: DeviceConfig):
@@ -470,3 +493,71 @@ class ArtDevice(AcquisitionDevice):
                 self._on_health_event(DeviceHealthEvent(state, attempt, message))
             except Exception:
                 pass
+
+    def _start_reconnect_loop(self):
+        """停摆后启动后台自动重连 (设备恢复后自动恢复采集, 替代手动重启)。"""
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            return
+        self._reconnect_stop.clear()
+        self._reconnect_thread = threading.Thread(
+            target=self._reconnect_worker,
+            daemon=True,
+            name="art-reconnect",
+        )
+        self._reconnect_thread.start()
+        logger.info("自动重连线程已启动 (每 %.0fs 尝试一次)", RECONNECT_INTERVAL_S)
+
+    def _reconnect_worker(self):
+        """后台重连: 周期执行 设备级重置 + 重建采集, 成功即恢复。
+
+        连续失败达到 RECONNECT_FATAL_THRESHOLD 次 → 判定驱动会话卡死
+        (设备在线但 DLL 无法访问, 如 -50302), 进程内无法恢复,
+        上报 fatal 健康事件并停止重连, 由上层自动重启程序。
+        """
+        failures = 0
+        while not self._reconnect_stop.is_set():
+            if self._reconnect_stop.wait(RECONNECT_INTERVAL_S):
+                return
+            if self._running:
+                return
+            logger.info("自动重连: 设备级重置 + 重建采集...")
+            self._fire_health("recovering", 0, "采集已停摆, 正在自动重连...")
+            if not self.reset():
+                failures += 1
+                if failures >= RECONNECT_FATAL_THRESHOLD:
+                    self._fire_health(
+                        "fatal", failures,
+                        f"驱动会话卡死 (ArtDAQ_ResetDevice 连续失败 {failures} 次), 需重启程序",
+                    )
+                    logger.error(
+                        "自动重连连续失败 %d 次, 判定驱动会话卡死, 等待程序重启",
+                        failures,
+                    )
+                    return
+                logger.warning(
+                    "自动重连: 设备级重置失败 (%d/%d), 继续等待",
+                    failures, RECONNECT_FATAL_THRESHOLD,
+                )
+                continue
+            try:
+                self.start_acquisition(mark_stopped=False)
+            except Exception as e:
+                failures += 1
+                if failures >= RECONNECT_FATAL_THRESHOLD:
+                    self._fire_health(
+                        "fatal", failures,
+                        f"驱动会话卡死 (重建采集连续失败 {failures} 次), 需重启程序",
+                    )
+                    logger.error(
+                        "自动重连连续失败 %d 次, 判定驱动会话卡死, 等待程序重启",
+                        failures,
+                    )
+                    return
+                logger.warning(
+                    f"自动重连: 重建采集失败: {e} ({failures}/{RECONNECT_FATAL_THRESHOLD})"
+                )
+                continue
+            failures = 0
+            self._fire_health("healthy", 0, "自动重连成功, 采集已恢复")
+            logger.info("自动重连成功, 采集已恢复")
+            return
