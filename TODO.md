@@ -87,7 +87,7 @@
 - `tests/test_feedback_slots.py`
 
 ### 测试覆盖
-- **156/156 测试通过** (新增 v0.7.4 默认配置回退加载回归测试)
+- **161/161 测试通过** (新增 v0.7.6 驱动卡死自动重启回归测试)
 
 ### 待完成
 - [x] **FeedbackDialog 升级** — 已实现配置表单，调用 `feedback_manager.add_worker()`
