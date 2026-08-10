@@ -13,7 +13,7 @@
 | 控制面 | 设备配置、测量规格、反馈 worker 命令均已走 EventBus |
 | 状态面 | `feedback.status` 事件驱动快照 + `runtime.metrics` 运行时指标 |
 | 反馈系统 | v0.6 Worker 架构已实现，状态读取由 EventBus 快照驱动；v0.7 目标设备发送（AD9910/RTMQ）已实现 |
-| 测试基线 | `171 passed` |
+| 测试基线 | `184 passed` |
 | 推荐测试命令 | `& .\.venv\python.exe -m pytest -q` |
 
 ## 推荐阅读顺序

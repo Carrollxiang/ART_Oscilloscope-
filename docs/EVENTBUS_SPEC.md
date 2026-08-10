@@ -110,6 +110,13 @@ class EventBus:
     def subscribe(self, topic: str) -> BoundedQueue
         """返回一个新的 BoundedQueue，追加到 topic 的 subscriber 列表。"""
 
+    def unsubscribe(self, topic: str, queue: BoundedQueue)  # v0.8.2
+        """取消订阅: 移除该 topic 下的指定队列 (残留数据随之释放)。
+
+        幂等: 队列不存在或 topic 未注册时静默返回; topic 本身保留注册。
+        用于 start/stop 幂等与资源清理, 防止重复订阅累积队列。
+        """
+
     def metrics(self) -> dict[str, QueueStats]
         """所有 topic 的运行时指标快照。"""
 ```
@@ -118,6 +125,7 @@ class EventBus:
 - `publish()` 和 `subscribe()` 都是 O(1) 操作
 - 每个 `(topic, subscriber)` 获得独立的 `BoundedQueue`，各自独立消费进度
 - `publish()` 遍历 topic 下所有 subscriber 队列依次 `put()`
+- `unsubscribe()` 幂等；队列退订后 `publish()` 不再向其写入（v0.8.2 新增）
 
 ---
 
@@ -485,7 +493,7 @@ def _on_frame(self, chunk):
 python -m pytest tests/ -v
 
 # 结果
-# 171 passed, 1 warning
+# 184 passed, 1 warning
 ```
 
 ### 性能测试

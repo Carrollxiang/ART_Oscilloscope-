@@ -302,6 +302,21 @@ class EventBus:
             self._topics[topic].append((q, cfg))
             return q
 
+    def unsubscribe(self, topic: str, queue: BoundedQueue):
+        """
+        取消订阅: 移除该 topic 下的指定队列 (队列中残留数据随之释放)。
+
+        幂等: 队列不存在或 topic 未注册时静默返回。
+        topic 本身保留注册 (可再次 subscribe)。
+        """
+        with self._lock:
+            subscribers = self._topics.get(topic)
+            if not subscribers:
+                return
+            self._topics[topic] = [
+                (q, cfg) for q, cfg in subscribers if q is not queue
+            ]
+
     def publish(self, topic: str, item: Any):
         """
         向 topic 的所有 subscriber 队列写入数据。

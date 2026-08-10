@@ -272,7 +272,7 @@ start_mock.bat
 python -m pytest tests/ -v
 
 # 期望结果
-# 171 passed, 1 warning
+# 184 passed, 1 warning
 ```
 
 ### 测试覆盖率
@@ -292,7 +292,7 @@ python -m pytest tests/ -v
 | test_config_manager.py | 4 | ✅ 100% |
 | test_measurement_config_worker.py | 2 | ✅ 100% |
 | test_channel_panel_source.py | 1 | ✅ 100% |
-| **总计** | **171** | **✅ 100%** |
+| **总计** | **184** | **✅ 100%** |
 
 *注: 全部为纯单元测试（artdaq 以 mock 替代），无需真实硬件。硬件诊断用根目录 `test_hardware.py`。
 

@@ -560,24 +560,12 @@ class UIBridge(QObject):
     signal_feedback_status = pyqtSignal(object) # FeedbackStatusSnapshot (v0.6)
     
     def poll(self):
-        """非阻塞轮询队列，有数据则 emit"""
-        # 1. 原始帧（主波形）
-        raw = self._raw_queue.get_nowait()
-        while raw is not None:
-            self.signal_raw_frame.emit(raw)
-            raw = self._raw_queue.get_nowait()
-        
-        # 2. 拟合结果（测量面板 + MiniChart）
-        fitted = self._fitted_queue.get_nowait()
-        while fitted is not None:
-            self.signal_fitted.emit(fitted)
-            fitted = self._fitted_queue.get_nowait()
-
-        # 3. 反馈状态快照（FeedbackPanel / 状态栏）
-        status = self._status_queue.get_nowait()
-        while status is not None:
-            self.signal_feedback_status.emit(status)
-            status = self._status_queue.get_nowait()
+        """非阻塞轮询队列，有数据则 emit (v0.8.2: 丢旧留新)"""
+        # 每个队列只取最新一项转发, 丢弃中间积压的旧帧,
+        # 避免 Qt 主线程处理不过来时事件队列无限积压 (内存增长)
+        self._poll_latest(self._raw_queue, self.signal_raw_frame, ...)
+        self._poll_latest(self._fitted_queue, self.signal_fitted, ...)
+        self._poll_latest(self._status_queue, self.signal_feedback_status, ...)
 ```
 
 ### 7.2 面板构成
@@ -739,7 +727,7 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `test_config_manager.py` | 4 | ✅ 100% |
 | `test_measurement_config_worker.py` | 2 | ✅ 100% |
 | `test_channel_panel_source.py` | 1 | ✅ 100% |
-| **总计** | **171** | **✅ 100%** |
+| **总计** | **184** | **✅ 100%** |
 
 ---
 

@@ -80,39 +80,31 @@ class UIBridge(QObject):
         """
         非阻塞轮询三个队列，有数据则 emit QSignal。
 
+        队列中积压的旧帧直接丢弃，只转发最新一帧 (丢旧留新)，
+        避免 Qt 主线程处理不过来时事件队列无限积压导致内存增长。
+
         每个 emit 被 try/except 包裹，确保单个信号处理异常
         不会中断整个 poll 循环或传播到采集线程。
         """
-        # 1. 原始帧（主波形）
-        raw = self._raw_queue.get_nowait()
-        while raw is not None:
-            try:
-                self.signal_raw_frame.emit(raw)
-                self._raw_emitted += 1
-            except Exception as e:
-                self._raw_errors += 1
-                logger.error(f"UIBridge signal_raw_frame 处理异常: {e}", exc_info=True)
-            # 队列中可能积压了旧帧，丢弃旧的只留最新的
-            raw = self._raw_queue.get_nowait()
+        self._poll_latest(self._raw_queue, self.signal_raw_frame,
+                          "_raw_emitted", "_raw_errors", "signal_raw_frame")
+        self._poll_latest(self._fitted_queue, self.signal_fitted,
+                          "_fitted_emitted", "_fitted_errors", "signal_fitted")
+        self._poll_latest(self._status_queue, self.signal_feedback_status,
+                          "_status_emitted", "_status_errors", "signal_feedback_status")
 
-        # 2. 拟合结果（测量面板 + MiniChart）
-        fitted = self._fitted_queue.get_nowait()
-        while fitted is not None:
+    def _poll_latest(self, queue, signal, counter_attr: str, error_attr: str, name: str):
+        """取队列中最新一项并 emit（丢弃中间积压的旧帧）。"""
+        latest = None
+        while True:
+            item = queue.get_nowait()
+            if item is None:
+                break
+            latest = item
+        if latest is not None:
             try:
-                self.signal_fitted.emit(fitted)
-                self._fitted_emitted += 1
+                signal.emit(latest)
+                setattr(self, counter_attr, getattr(self, counter_attr) + 1)
             except Exception as e:
-                self._fitted_errors += 1
-                logger.error(f"UIBridge signal_fitted 处理异常: {e}", exc_info=True)
-            fitted = self._fitted_queue.get_nowait()
-
-        # 3. 反馈状态（反馈面板 + 状态栏）
-        status = self._status_queue.get_nowait()
-        while status is not None:
-            try:
-                self.signal_feedback_status.emit(status)
-                self._status_emitted += 1
-            except Exception as e:
-                self._status_errors += 1
-                logger.error(f"UIBridge signal_feedback_status 处理异常: {e}", exc_info=True)
-            status = self._status_queue.get_nowait()
+                setattr(self, error_attr, getattr(self, error_attr) + 1)
+                logger.error(f"UIBridge {name} 处理异常: {e}", exc_info=True)

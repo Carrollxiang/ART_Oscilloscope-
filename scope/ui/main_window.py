@@ -139,6 +139,18 @@ class MainWindow(QMainWindow):
         # ── 信号连接 ──
         self._connect_actions()
 
+        # ── 显示合并刷新 (QTimer 节流 + 丢旧留新) ──
+        # 采集线程到达的 raw/fitted 先缓存, 由 20Hz 定时器统一刷新,
+        # 避免高频 emit 导致 Qt 事件队列积压/渲染层对象累积 (内存增长)。
+        self._latest_frame = None
+        self._latest_fitted = None
+        self._ui_dirty = False
+        self._time_axis_cache: tuple = None  # ((sample_rate, n_samples), np.ndarray)
+        self._ui_flush_timer = QTimer()
+        self._ui_flush_timer.setInterval(50)  # 20Hz 显示上限
+        self._ui_flush_timer.timeout.connect(self._flush_ui)
+        self._ui_flush_timer.start()
+
         # 订阅测量项删除事件
         if self._event_bus:
             self._measurement_remove_queue = self._event_bus.subscribe("measurement.remove")
@@ -247,39 +259,75 @@ class MainWindow(QMainWindow):
         ui_bridge.signal_feedback_status.connect(self._on_ui_feedback_status)
 
     def _on_ui_raw_frame(self, frame: RawFrame):
-        """原始帧更新 → 主波形。"""
-        try:
-            t = frame.time_axis()
-            for ch in range(frame.n_channels):
-                visible = self.waveform.is_channel_visible(ch)
-                color = self.channel_panel.get_channel_color(ch)
-                self.waveform.update_waveform(
-                    ch=ch,
-                    time_axis=t,
-                    data=frame.data[ch],
-                    enabled=visible,
-                    color=color,
-                )
-            self._update_status_bar(frame)
-        except Exception as e:
-            logger.error(f"原始帧更新异常: {e}", exc_info=True)
+        """原始帧到达 → 缓存最新帧, 由 _flush_ui 节流刷新波形。"""
+        self._latest_frame = frame
+        self._ui_dirty = True
 
     def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
-        """拟合结果更新 → 测量面板 + MiniChart。"""
+        """拟合结果到达 → 测量面板立即更新 (轻量), MiniChart 缓存后合并刷新。"""
         try:
             if hasattr(self, 'measure_panel'):
                 self.measure_panel.update_from_fitted(fitted_snapshot)
-
-            flat = fitted_snapshot.as_flat_dict()
-            if flat and hasattr(self, 'mini_chart') and hasattr(self, 'measure_panel'):
-                self.mini_chart.set_display_names(self.measure_panel.get_display_name_mapping())
-                self.mini_chart.add_data(flat)
-                self.mini_chart.refresh_now()
-                if fitted_snapshot.sequence_num % 10 == 1:
-                    logger.debug(f"MiniChart updated: {len(flat)} items, seq={fitted_snapshot.sequence_num}")
-
+            self._latest_fitted = fitted_snapshot
+            self._ui_dirty = True
         except Exception as e:
             logger.error(f"拟合结果更新异常: {e}", exc_info=True)
+
+    def _flush_ui(self):
+        """合并刷新: 波形 + MiniChart (20Hz 上限, 丢旧留新)。"""
+        if not self._ui_dirty:
+            return
+        self._ui_dirty = False
+        try:
+            if self._latest_frame is not None:
+                self._render_waveform(self._latest_frame)
+            if self._latest_fitted is not None:
+                self._render_mini_chart(self._latest_fitted)
+        except Exception as e:
+            logger.error(f"合并刷新异常: {e}", exc_info=True)
+
+    def _render_waveform(self, frame: RawFrame):
+        """主波形渲染 (time_axis 按采样率缓存复用)。"""
+        t = self._cached_time_axis(frame.sample_rate, frame.n_samples)
+        for ch in range(frame.n_channels):
+            visible = self.waveform.is_channel_visible(ch)
+            color = self.channel_panel.get_channel_color(ch)
+            self.waveform.update_waveform(
+                ch=ch,
+                time_axis=t,
+                data=frame.data[ch],
+                enabled=visible,
+                color=color,
+            )
+        self._update_status_bar(frame)
+
+    def _render_mini_chart(self, fitted_snapshot: FittedSnapshot):
+        """MiniChart 刷新 + 残留曲线清理。"""
+        flat = fitted_snapshot.as_flat_dict()
+        if flat and hasattr(self, 'mini_chart') and hasattr(self, 'measure_panel'):
+            self.mini_chart.set_display_names(self.measure_panel.get_display_name_mapping())
+            self.mini_chart.add_data(flat)
+            self.mini_chart.refresh_now()
+            self._prune_mini_chart_keys()
+
+    def _prune_mini_chart_keys(self):
+        """清理 MiniChart 中已不存在的测量项曲线 (specs 增删后残留)。"""
+        try:
+            current = {s["tag"] for s in self.measure_panel.get_measurement_specs()}
+            for key in list(self.mini_chart._data.keys()):
+                if key not in current:
+                    self.mini_chart.remove_key(key)
+        except Exception as e:
+            logger.debug(f"mini_chart 残留曲线清理跳过: {e}")
+
+    def _cached_time_axis(self, sample_rate: float, n_samples: int) -> np.ndarray:
+        """按 (采样率, 点数) 缓存 time_axis, 避免每帧重建大数组。"""
+        key = (sample_rate, n_samples)
+        if self._time_axis_cache and self._time_axis_cache[0] == key:
+            return self._time_axis_cache[1]
+        axis = np.arange(n_samples, dtype=np.float64) / sample_rate
+        self._time_axis_cache = (key, axis)
+        return axis
 
     def _poll_measurement_remove(self):
         """轮询测量项删除事件并清理 MiniChart"""

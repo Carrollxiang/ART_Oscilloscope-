@@ -19,7 +19,9 @@ from PyQt6.QtGui import QColor
 
 logger = logging.getLogger(__name__)
 
-MAX_POINTS = 3600
+MAX_POINTS = 3600        # 每订阅项环形缓冲容量 (帧数)
+MAX_DISPLAY_POINTS = 600 # 每曲线最大显示点数 (降采样目标)
+REFRESH_DIVIDER = 2      # 刷新节流: 每 N 帧驱动才真正重绘 (趋势图 1Hz 级足够)
 
 TRACE_COLORS = [
     QColor("#FF6B6B"), QColor("#4ECDC4"), QColor("#45B7D1"),
@@ -86,6 +88,7 @@ class MiniChartWidget(QWidget):
         self._visible: dict[str, bool] = {}
         self._display_names: dict[str, str] = {}
         self._dirty = False
+        self._refresh_counter = 0
 
         self.setMinimumWidth(180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -101,8 +104,9 @@ class MiniChartWidget(QWidget):
         self.plot.showGrid(x=True, y=True, alpha=0.15)
         self.plot.setMouseEnabled(x=True, y=True)  # 允许滚轮缩放 + 拖拽
         self.plot.setBackground("#0D0D0D")
+        # 软件渲染 (QPicture): OpenGL 路径每帧 setData 存在内存增长, 默认关闭。
         try:
-            self.plot.useOpenGL(True)
+            self.plot.useOpenGL(False)
         except Exception:
             pass
 
@@ -184,6 +188,13 @@ class MiniChartWidget(QWidget):
             if len(x) < 2:
                 continue
 
+            # 降采样至 MAX_DISPLAY_POINTS (趋势图无需全量 3600 点)
+            n = len(y)
+            stride = max(1, n // MAX_DISPLAY_POINTS)
+            if stride > 1:
+                x = x[::stride]
+                y = y[::stride]
+
             if key not in self._curves:
                 color = self._data.color(key)
                 pen = pg.mkPen(color=color, width=1.0)
@@ -211,8 +222,14 @@ class MiniChartWidget(QWidget):
                 self.plot.setXRange(n - win, n)
 
     def refresh_now(self):
-        """触发驱动刷新：由主显示在每帧数据到达时调用。"""
-        self._refresh()
+        """触发驱动刷新：由主显示在每帧数据到达时调用。
+
+        节流: 每 REFRESH_DIVIDER 次调用才真正重绘, 降低 setData
+        频率 (趋势图显示更新无需逐帧)。
+        """
+        self._refresh_counter += 1
+        if self._refresh_counter % REFRESH_DIVIDER == 0:
+            self._refresh()
 
     def remove_key(self, key: str):
         """删除单个测量项的曲线"""
@@ -226,7 +243,10 @@ class MiniChartWidget(QWidget):
         
         if key in self._visible:
             del self._visible[key]
-        
+
+        if key in self._display_names:
+            del self._display_names[key]
+
         self._dirty = True
 
     def clear_all(self):

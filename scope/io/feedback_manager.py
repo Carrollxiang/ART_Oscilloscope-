@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import time
 from typing import Optional
 
 from scope.model.enums import SlotStatus
@@ -29,6 +30,10 @@ from .feedback_worker import (
 
 logger = logging.getLogger(__name__)
 
+# 反馈状态发布节流: 分发循环每帧触发, 全量快照最多 10Hz 发布,
+# 避免高频 feedback.status 快照在 UI 主线程产生不必要的刷新压力。
+STATUS_PUBLISH_INTERVAL_S: float = 0.1
+
 
 class FeedbackManager:
     """反馈管理器 — 数据分发 + 生命周期管理"""
@@ -40,6 +45,7 @@ class FeedbackManager:
         self._lock = asyncio.Lock()
         self._running = False
         self._dispatch_task = None
+        self._last_status_ts: float = 0.0
 
     # ── 生命周期 ───────────────────────────────────────────────
 
@@ -49,7 +55,7 @@ class FeedbackManager:
             return
 
         self._running = True
-        if self._event_bus:
+        if self._event_bus and self._queue is None:
             self._queue = self._event_bus.subscribe("frame.fitted")
         self._dispatch_task = asyncio.create_task(self._dispatch_loop())
         logger.info("FeedbackManager started")
@@ -61,6 +67,9 @@ class FeedbackManager:
         if self._dispatch_task:
             self._dispatch_task.cancel()
             self._dispatch_task = None
+        if self._event_bus and self._queue is not None:
+            self._event_bus.unsubscribe("frame.fitted", self._queue)
+            self._queue = None
         logger.info("FeedbackManager stopped")
 
     # ── Worker 管理 ───────────────────────────────────────────
@@ -130,7 +139,12 @@ class FeedbackManager:
             raise KeyError(f'worker_id "{worker_id}" not found')
 
     async def update_worker_target(self, worker_id: str, target):
-        """更新指定 worker 的目标设备（停止→更新→重启 sender）"""
+        """更新指定 worker 的目标设备（停止→更新→重建 sender）。
+
+        注意: 不调用 worker.start() —— start() 内部会再次 _create_sender()
+        覆盖此处新建的 sender, 导致旧 sender 及其连接池引用泄漏。
+        此处仅创建一次 sender 并恢复 RUNNING (保留 PID 状态)。
+        """
         async with self._lock:
             worker = self._workers.get(worker_id)
         if not worker:
@@ -139,14 +153,20 @@ class FeedbackManager:
         await worker.stop()
         worker._target = target
         worker._sender = worker._create_sender()
+        worker._sender_error = ""
+        worker._first_send_logged = False
+        # 对齐 resume(): 清除自动暂停原因/趋势窗口/失败冷却, 换目标后全新开始
+        worker._stop_reason = ""
+        worker._trend_errors.clear()
+        worker._next_retry_ts = 0.0
         worker._status = SlotStatus.RUNNING
-        await worker.start()
-        self._publish_status()
         logger.info(
-            'FeedbackWorker "%s" target updated to %s',
+            'FeedbackWorker "%s" target updated to %s (sender %s)',
             worker_id,
             type(target).__name__ if target else "none",
+            "OK" if worker._sender or target is None else "FAILED",
         )
+        self._publish_status()
 
     # ── 配置管理 ───────────────────────────────────────────────
 
@@ -218,7 +238,12 @@ class FeedbackManager:
                         # 堆积由 FeedbackWorker 的 in-flight 标志防重叠。
                         await asyncio.gather(*tasks, return_exceptions=True)
 
-                    self._publish_status()
+                    # 状态发布节流 (最多 10Hz): 状态快照是给 UI 的,
+                    # 帧级频率发布徒增主线程压力, 且 UIBridge 本身丢旧留新。
+                    now = time.monotonic()
+                    if now - self._last_status_ts >= STATUS_PUBLISH_INTERVAL_S:
+                        self._publish_status()
+                        self._last_status_ts = now
                     await asyncio.sleep(0)  # 有数据 → 让出控制权，不延后批处理
                 else:
                     await asyncio.sleep(0.01)  # 空队列 → 休眠 10ms 避免忙等

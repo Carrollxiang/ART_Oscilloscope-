@@ -321,3 +321,29 @@ class TestDispatch:
         assert w2.frames_processed >= 1, "RUNNING worker 照常执行 PID 计算"
 
         await mgr.stop()
+
+
+# ── 订阅生命周期 (v0.8.2 内存修复) ─────────────────────────────
+
+class TestManagerSubscription:
+    async def test_start_stop_unsubscribes(self, event_bus, mgr):
+        """stop() 后订阅队列被移除, 不再收到数据 (防止重复订阅累积)"""
+        await mgr.start()
+        assert len(event_bus.metrics()["frame.fitted"]) == 1
+        await mgr.stop()
+        assert len(event_bus.metrics()["frame.fitted"]) == 0
+
+    async def test_start_twice_subscribes_once(self, event_bus, mgr):
+        """重复 start 只保留一个订阅队列"""
+        await mgr.start()
+        await mgr.start()
+        assert len(event_bus.metrics()["frame.fitted"]) == 1
+        await mgr.stop()
+
+    async def test_restart_reuses_subscription(self, event_bus, mgr):
+        """stop 后再次 start 恢复单个订阅 (幂等)"""
+        await mgr.start()
+        await mgr.stop()
+        await mgr.start()
+        assert len(event_bus.metrics()["frame.fitted"]) == 1
+        await mgr.stop()

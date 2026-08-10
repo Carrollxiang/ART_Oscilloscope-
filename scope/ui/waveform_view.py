@@ -21,6 +21,9 @@ from PyQt6.QtGui import QColor, QPen
 
 logger = logging.getLogger(__name__)
 
+# 每通道最大显示点数 (降采样目标, 屏幕分辨率内足够清晰)
+MAX_PLOT_POINTS = 2000
+
 # 通道颜色 (最多支持 32 通道)
 CHANNEL_COLORS = [
     QColor("#FFFF00"),  # CH1:  黄
@@ -60,8 +63,10 @@ class WaveformView:
         self.plot_widget.setLabel("left", "电压", units="V")
         self.plot_widget.setLabel("bottom", "时间", units="s")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        # 软件渲染 (QPicture): OpenGL 路径在每帧 setData 时存在
+        # GL 缓冲/纹理未释放导致的内存增长 (实测 ~500MB/h), 故默认关闭。
         try:
-            self.plot_widget.useOpenGL(True)
+            self.plot_widget.useOpenGL(False)
         except Exception:
             pass
         self.plot_widget.setMouseEnabled(x=True, y=False)
@@ -132,7 +137,7 @@ class WaveformView:
 
     def update_waveform(self, ch: int, time_axis: np.ndarray, data: np.ndarray,
                         enabled: bool = True, color: Optional[QColor] = None):
-        """更新通道波形数据 (自动降采样至 ~1k 点以提升性能)。"""
+        """更新通道波形数据 (自动降采样至 ~MAX_PLOT_POINTS 点以提升性能)。"""
         curve = self._curves.get(ch)
         if curve is None:
             return
@@ -140,9 +145,12 @@ class WaveformView:
             curve.hide()
             return
 
-        # 降采样: 每隔一个点画一个 (性能优化)
-        data = data[::2]
-        time_axis = time_axis[::2]
+        # 降采样: 均匀抽取至 MAX_PLOT_POINTS 点 (屏幕分辨率内, 降低 setData 数据量)
+        n = len(data)
+        stride = max(1, n // MAX_PLOT_POINTS)
+        if stride > 1:
+            data = data[::stride]
+            time_axis = time_axis[::stride]
 
         curve.setData(time_axis, data)
         curve.show()
