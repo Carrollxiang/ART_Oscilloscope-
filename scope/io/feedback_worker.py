@@ -203,6 +203,8 @@ class FeedbackWorker:
         处理单个测量值。
 
         由 FeedbackManager 调用，传入已提取的测量值。
+        先无条件刷新订阅值 (last_value/last_error); 非 RUNNING 状态
+        (PAUSED/IDLE) 仅刷新值, 不执行 PID 计算与发送。
         """
         self._last_value = value
         self._last_error = self._config.pid_config.preset_value - value

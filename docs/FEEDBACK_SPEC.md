@@ -229,7 +229,11 @@ class FeedbackWorker:
         处理单个测量值
         
         由 FeedbackManager 调用，传入已提取的测量值。
+        先无条件刷新订阅值 (last_value/last_error); 非 RUNNING 状态
+        (PAUSED/IDLE) 仅刷新值, 不执行 PID 计算与发送。
         """
+        self._last_value = value
+        self._last_error = self._config.pid_config.preset_value - value
         if self._status != SlotStatus.RUNNING:
             return
         
@@ -254,6 +258,7 @@ class FeedbackWorker:
 - ✅ **被动接收**: 不主动订阅 EventBus，由 Manager 调用
 - ✅ **无队列管理**: Manager 统一管理订阅和分发
 - ✅ **状态管理**: IDLE / RUNNING / PAUSED / ERROR
+- ✅ **暂停语义**: 暂停 = 停止 PID 计算与设备发送, 但订阅值 (`last_value`/`last_error`) 仍持续刷新 —— Manager 分发循环对 RUNNING 与 PAUSED 的 worker 都分发帧, 仅 IDLE (已停止) 跳过
 - ✅ **目标设备发送**: v0.7 已实现（Ad9910Sender / RtmqSender，经全局 rpyc 连接池）
 
 ---

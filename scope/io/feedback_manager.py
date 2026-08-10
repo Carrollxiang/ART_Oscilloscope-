@@ -201,7 +201,10 @@ class FeedbackManager:
                     tasks = []
                     async with self._lock:
                         for worker in self._workers.values():
-                            if worker.status == SlotStatus.RUNNING:
+                            # RUNNING/PAUSED 都接收帧: PAUSED 在 process() 内
+                            # 只刷新订阅值 (last_value/last_error), 不执行
+                            # PID 计算与发送; IDLE (已停止) 不接收, 停止即停订阅。
+                            if worker.status != SlotStatus.IDLE:
                                 value = flat.get(worker.measurement_key)
                                 if value is not None:
                                     tasks.append(worker.process(value))

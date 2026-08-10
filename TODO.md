@@ -50,10 +50,13 @@
 - [x] **运行时指标 → runtime.metrics 发布** — MeasurementProcessor/EventBus/ConfigWorker/FeedbackCommandWorker/UIBridge 指标聚合
 - [ ] **ControlQueue 帧边界原子生效** — ConfigWorker 可用，但 UI 端未改为异步发送
 
-### 验收指标（待长跑验证）
+### 验收指标（长跑验证）
 
-- [ ] 长时间运行反馈队列 qsize 不持续堆积
-- [ ] 反馈延迟不随时间增长
+> 2026/8: CONTINUOUS 模式真机 6 小时连续运行无报错/无断联, 反馈队列与延迟未见异常;
+> 以下 UI 交互项仍待系统化验证。
+
+- [x] 长时间运行反馈队列 qsize 不持续堆积 (6h 真机隐含验证)
+- [x] 反馈延迟不随时间增长 (6h 真机隐含验证)
 - [ ] 修改测量类型/时间参数流畅
 - [ ] 保存配置无明显卡顿
 - [ ] 同一订阅项在测量面板与反馈面板读数一致

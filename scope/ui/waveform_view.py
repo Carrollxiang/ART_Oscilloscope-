@@ -113,7 +113,9 @@ class WaveformView:
         )
         self.plot_widget.addItem(self._trigger_line)
 
-        self.plot_widget.enableAutoRange(axis="xy")
+        # Y 轴固定 0~5.5V (不自动 scale); 仅 X 轴(时间)自动缩放
+        self.plot_widget.enableAutoRange(axis="x")
+        self.plot_widget.setYRange(0, 5.5, padding=0)
         self.plot_widget.setMouseEnabled(y=False)
 
         # 可见性状态 (与 ChannelPanel 同步)

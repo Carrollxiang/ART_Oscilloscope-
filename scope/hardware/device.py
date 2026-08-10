@@ -16,17 +16,17 @@ import numpy as np
 
 @dataclass
 class DeviceConfig:
-    """采集设备配置参数"""
-    sample_rate: float = 1_000_000       # 采样率 (Sa/s)
-    channels_enabled: list[int] = field(default_factory=lambda: [0, 1, 2, 3])
-    vertical_ranges: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 5.0])
-    channel_min_vals: list[float] = field(default_factory=lambda: [-10, -10, -10, -10])
-    channel_max_vals: list[float] = field(default_factory=lambda: [10, 10, 10, 10])
+    """采集设备配置参数 (默认值与 ScopeApp 运行时一致: 16ch/15k/30kSa/s)"""
+    sample_rate: float = 30_000           # 采样率 (Sa/s)
+    channels_enabled: list[int] = field(default_factory=lambda: list(range(16)))
+    vertical_ranges: list[float] = field(default_factory=lambda: [5.0] * 16)
+    channel_min_vals: list[float] = field(default_factory=lambda: [-10.0] * 16)
+    channel_max_vals: list[float] = field(default_factory=lambda: [10.0] * 16)
     trigger_source: int = 0
     trigger_level: float = 0.0
     trigger_slope: str = "rising"
-    record_length: int = 10_000          # 每帧采样点
-    acquisition_mode: str = "continuous" # "continuous"(默认, 软件触发帧化) | "finite"(硬件触发每帧重建)
+    record_length: int = 15_000           # 每帧采样点
+    acquisition_mode: str = "continuous"  # "continuous"(默认, 软件触发帧化) | "finite"(硬件触发每帧重建)
 
 
 @dataclass

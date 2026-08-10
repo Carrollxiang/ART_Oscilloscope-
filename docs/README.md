@@ -74,12 +74,12 @@
 - `rpyc_pool` 的 `min_size`/`idle_timeout` 配置项尚未生效（无保底连接与空闲回收，预留后续实现）。
 - `DevicePanel` 通讯测试路径在 Qt 主线程直接 `ctypes` 加载 `Art_DAQ.dll` 并操作 `ArtDevice`（绕过 EventBus，属诊断功能刻意设计，未文档化）。
 - `MeasurementSpec.feature` 仅支持 Vpp/Vmax/Vmin/Mean；Vrms/Freq/Period 等特征未实现（默认 feature 已修正为 `Vpp`）。
-- 触发源（ai12/1V/上升沿）仍硬编码，UI 配置未实现。
-- `DeviceConfig` 默认值为 4 通道/10k 点，与 ScopeApp 运行时的 16 通道/15k 点配置不同（运行时显式覆盖，无实际影响）。
+- 触发源默认值硬编码（ai12/1V/上升沿），UI 已可配置（DevicePanel 硬件触发组）。
+- `DeviceConfig` 默认值已统一为 16 通道/15k 点/30k Sa/s（与 ScopeApp 运行时一致, 2026/8）。
 - Phase 0 规划的 `acquisition/ring_buffer.py`、`watchdog.py` 未实现（目录为空）。
 - Mock 模式的完整 UI 操作长跑验证尚未形成自动化测试。
 - ✅ AD9910 反馈端到端已实测通过（连接池自死锁修复后, 2026/6）；RTMQ 端到端验证仍待服务就绪。
-- ArtDevice rearm 失败自动恢复机制（退避重试 3 次 → 设备 reset → 最终停摆并上报健康事件）, 瞬时 -50103 不再中断采集。
+- ArtDevice 读取失败自动恢复机制（CONTINUOUS 重建 Task; 退避重试 → 设备 reset → 停摆上报健康事件; 驱动卡死自动重启程序）, 瞬时 -50103/读取超时不再中断采集。
 - ✅ 反馈链路长期稳定性已通过真机长跑验证（CONTINUOUS 模式, 2026/8）；FINITE 模式（每帧重建 Task）已降为可选, 默认使用 CONTINUOUS。
 - 驱动会话卡死（ArtDAQ_ResetDevice 连续失败）时自动保存配置并重启程序（v0.7.6），进程内无法恢复的场景不再需要手动重启。
 

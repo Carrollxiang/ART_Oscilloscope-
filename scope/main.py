@@ -201,7 +201,7 @@ class ScopeApp:
         )
         # 驱动卡死 → 自动重启 (信号跨线程队列到 Qt 主线程执行)
         self.main_win.app_restart_requested.connect(self._schedule_app_restart)
-        self.main_win.show()
+        self.main_win.showMaximized()
 
         # 3. 创建 UIBridge 并连接信号
         self._ui_bridge = UIBridge(self._event_bus)

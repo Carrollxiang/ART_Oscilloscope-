@@ -478,7 +478,7 @@ class TestContinuousMode:
         args, kwargs = mock_task.timing.cfg_samp_clk_timing.call_args
         assert kwargs.get("sample_mode") is device._AcquisitionType.CONTINUOUS
         # ART 驱动要求 samps_per_chan >= 2; 连续模式用作缓冲大小 (2 倍帧长)
-        assert kwargs.get("samps_per_chan") == max(config.record_length * 2, 1024)
+        assert kwargs.get("samps_per_chan") == max(config.record_length * 4, 4096)
         device.stop_acquisition()
 
     def test_continuous_worker_produces_triggered_frames(self, device, mock_artdaq):
@@ -488,7 +488,7 @@ class TestContinuousMode:
         _, mock_task = mock_artdaq
 
         frame_len = 2000
-        block = max(frame_len // 4, 512)       # 512 (与 _continuous_worker 一致)
+        block = max(frame_len // 8, 1024)      # 1024 (与 _continuous_worker 一致)
         n_ch = 16
         total = 9000
         # ch12 方波: 0→1 上升沿在 0 和 4000 (电平 0.5)

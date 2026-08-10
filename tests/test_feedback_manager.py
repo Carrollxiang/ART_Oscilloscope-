@@ -262,3 +262,62 @@ class TestWorkerTarget:
         # 更新到 None
         await mgr.update_worker_target("tgt-test", None)
         assert mgr.get_worker_target("tgt-test") is None
+
+
+# ── 数据分发 ─────────────────────────────────────────────────
+
+class TestDispatch:
+    async def test_paused_worker_still_refreshes_subscribed_value(self, mgr, sample_config):
+        """暂停的 worker 仍刷新订阅值, 但不执行 PID 计算/发送"""
+        await mgr.add_worker(sample_config)
+        await mgr.pause_worker("test-w1")
+        worker = mgr._workers["test-w1"]
+        assert worker.status == SlotStatus.PAUSED
+
+        await mgr.start()
+        mgr._event_bus.publish("frame.fitted", make_snapshot(CH1_vpp=2.5))
+
+        # 等待分发循环处理该帧
+        for _ in range(100):
+            if worker.last_value == 2.5:
+                break
+            await asyncio.sleep(0.01)
+
+        assert worker.last_value == 2.5, "暂停期间订阅值仍应刷新"
+        assert worker.last_error == pytest.approx(3.3 - 2.5)
+        assert worker.status == SlotStatus.PAUSED
+        assert worker.frames_processed == 0, "暂停期间不执行 PID 计算"
+
+        await mgr.stop()
+
+    async def test_running_worker_unchanged_while_other_paused(self, mgr):
+        """一个 worker 暂停不影响其他 RUNNING worker 的分发"""
+        cfg1 = FeedbackConfig(
+            worker_id="w1", measurement_key="k1",
+            pid_config=PidConfig(preset_value=1.0, kp=0.1),
+        )
+        cfg2 = FeedbackConfig(
+            worker_id="w2", measurement_key="k2",
+            pid_config=PidConfig(preset_value=2.0, kp=0.1),
+        )
+        await mgr.add_worker(cfg1)
+        await mgr.add_worker(cfg2)
+        await mgr.pause_worker("w1")
+        w1, w2 = mgr._workers["w1"], mgr._workers["w2"]
+        assert w1.status == SlotStatus.PAUSED
+        assert w2.status == SlotStatus.RUNNING
+
+        await mgr.start()
+        mgr._event_bus.publish("frame.fitted", make_snapshot(k1=0.5, k2=1.5))
+
+        for _ in range(100):
+            if w2.last_value == 1.5:
+                break
+            await asyncio.sleep(0.01)
+
+        assert w1.last_value == 0.5, "暂停 worker 订阅值仍刷新"
+        assert w1.frames_processed == 0
+        assert w2.last_value == 1.5
+        assert w2.frames_processed >= 1, "RUNNING worker 照常执行 PID 计算"
+
+        await mgr.stop()

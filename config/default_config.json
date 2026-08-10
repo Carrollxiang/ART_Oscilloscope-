@@ -341,7 +341,7 @@
       },
       "target": {
         "ip": "192.168.1.20",
-        "port": 3251,
+        "port": 18868,
         "device_id": 2113,
         "profile": 0,
         "type": "Ad9910Target"

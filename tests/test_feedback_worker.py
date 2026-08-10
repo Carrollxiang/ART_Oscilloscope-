@@ -101,15 +101,38 @@ class TestWorkerProcess:
         await worker.process(3.0)
 
     async def test_process_paused(self, worker):
-        """PAUSED 状态不处理"""
-        await worker.start()
-        await worker.pause()
-        # 不抛异常即可
-        await worker.process(3.0)
+        """PAUSED 状态: 刷新订阅值, 但不执行 PID 计算与发送"""
+        from scope.io.feedback_worker import Ad9910Target
+        calls = []
+        w = FeedbackWorker(FeedbackConfig(
+            worker_id="paused-w", measurement_key="m1",
+            pid_config=PidConfig(preset_value=3.3, kp=0.1, ki=0.0, kd=0.0),
+            target=Ad9910Target(ip="127.0.0.1", port=1),
+        ))
+        async def ok_send(delta):
+            calls.append(delta)
+            return True
+        s = type("S", (), {})()
+        s.adjust_delta = ok_send
+        w._sender = s
+
+        await w.start()
+        await w.pause()
+        await w.process(3.0)
+
+        assert w.status == SlotStatus.PAUSED
+        assert w.last_value == 3.0, "暂停期间订阅值仍应刷新"
+        assert w.last_error == pytest.approx(3.3 - 3.0)
+        assert len(calls) == 0, "暂停不应发送反馈信号"
+        assert w.frames_processed == 0, "暂停不应触发 PID 计算"
+
+        await w.stop()
 
     async def test_process_idle(self, worker):
-        """IDLE 状态不处理"""
+        """IDLE 状态: 刷新订阅值, 但不执行 PID 计算/发送"""
         await worker.process(3.0)
+        assert worker.last_value == 3.0
+        assert worker.frames_processed == 0
 
     async def test_process_error_isolation(self, worker):
         """异常处理不崩溃"""

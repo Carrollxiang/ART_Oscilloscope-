@@ -111,7 +111,7 @@ class AcquisitionDevice(ABC):
 - `rearm()` 每帧读取后重建整个 Task (调用 `_close_task()` + `start_acquisition()`), 重新等待触发
 - 采集模式 (v0.8): `DeviceConfig.acquisition_mode` — **continuous**(默认): 一次性 Task 连续采集, `TriggerDetector` 软件触发帧化(帧起点=检测到的沿, 帧长=record_length), 消除每帧重建 Task 的 USB 配置风暴, 长期稳定; **finite**(可选): 原 FINITE + 硬件触发逐帧重建 (每帧触发对齐)
 - `read_timeout` 超时抛 `TimeoutError` → 上层捕获后跳过此帧继续下一帧
-- **运行配置** (ScopeApp): 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V (由 `main.py` 显式构造；`DeviceConfig` dataclass 默认值为 4 通道/10k 点)
+- **运行配置** (ScopeApp): 16 通道 (ai0:15), 30k Sa/s, 触发源 ai12 上升沿 1V；`DeviceConfig` dataclass 默认值已统一为 16 通道/15k 点/30k Sa/s (v0.8.1)
 - **DLL 路径**: `C:\Program Files (x86)\ART Technology\ArtDAQ\Lib\x64\Art_DAQ.dll`
 
 **SimulatorDevice v0.5 新设计**:
@@ -497,12 +497,12 @@ EventBus (frame.fitted topic)
 - 被动接收测量值（不订阅 EventBus）
 - 内部持有 `PidController`
 - 状态管理: `IDLE → RUNNING ↔ PAUSED`
-- `process(value)` 由 Manager 调用
+- `process(value)` 由 Manager 调用；先无条件刷新订阅值 (`last_value`/`last_error`)，非 RUNNING 状态（PAUSED/IDLE）仅刷新值，不执行 PID 计算与发送
 - v0.6 阶段 `_send_to_target()` 只记录日志；**v0.7 已实现真实发送**（按 target 类型调用 Ad9910Sender / RtmqSender）
 
 **FeedbackManager** (`scope/io/feedback_manager.py`):
 - 持有唯一 `frame.fitted` 订阅
-- `_dispatch_loop()` — asyncio 协程，提取数据后并发分发
+- `_dispatch_loop()` — asyncio 协程，提取数据后并发分发；对 RUNNING 与 PAUSED 的 worker 都分发帧（PAUSED 仅刷新订阅值），仅 IDLE（已停止）跳过
 - Worker 管理: `add_worker / remove_worker / pause_worker / resume_worker`
 - 配置管理: `get_config() / load_config()` 支持 JSON 导入导出
 

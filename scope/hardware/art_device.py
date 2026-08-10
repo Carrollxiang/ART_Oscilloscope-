@@ -191,12 +191,13 @@ class ArtDevice(AcquisitionDevice):
 
             # 2. 采样时钟 — 按采集模式配置
             #    continuous: 连续采集 + 软件触发帧化 (长期稳定, 不重建 Task);
-            #                samps_per_chan 作为缓冲大小 (ART 驱动要求 >= 2)
+            #                samps_per_chan 作为缓冲大小 (ART 驱动要求 >= 2;
+            #                4 帧余量抗瞬时过载 -200279)
             #    finite:     有限点采集 + 硬件触发 (每帧重建 Task, 逐帧对齐)
             mode = getattr(cfg, "acquisition_mode", "continuous")
             if mode == "continuous":
                 sample_mode = self._AcquisitionType.CONTINUOUS
-                samps_per_chan = max(cfg.record_length * 2, 1024)
+                samps_per_chan = max(cfg.record_length * 4, 4096)
             else:
                 sample_mode = self._AcquisitionType.FINITE
                 samps_per_chan = cfg.record_length
@@ -524,7 +525,8 @@ class ArtDevice(AcquisitionDevice):
         if cfg is None:
             return
         frame_len = cfg.record_length
-        block = max(frame_len // 4, 512)
+        # 读取块 = 帧长的 1/8 (更频繁读取, 及时清空驱动缓冲, 防 -200279)
+        block = max(frame_len // 8, 1024)
         detector = TriggerDetector(
             trigger_channel=self._trigger_channel_index(),
             level=self._trigger_level,
