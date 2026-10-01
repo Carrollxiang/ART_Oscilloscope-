@@ -489,6 +489,16 @@ class ConnectionPoolManager:
 - 发送器通过 `ConnectionPoolManager.acquire_pool(ip, port, pool_config)` 获取共享池，不再每 worker 私有持有
 - 已知限制: `min_size` / `idle_timeout` 配置项尚未生效（无保底连接与空闲回收）
 
+### 4.3 反馈方向（极性，v0.9.1）
+
+方向由整条链路的符号决定：`sign(ΔV / Δe) = sign(Kp × scale)`（纯 P 时严格成立）。
+
+- **反向**：翻 `Kp`（连同 `Ki`/`Kd`）的符号，或对 DAC 翻 `scale` 的符号 —— **两者只能翻一个**，同时翻等于没翻
+- ⚠️ `Kp`/`Ki`/`Kd` **必须同号**：只翻 `Kp` 会让 P 项反向而 I/D 项仍为正向，控制律自相矛盾
+- 面板已放开输入范围以允许负值：`Kp`/`Ki`/`Kd` ∈ ±10000，DAC `scale` ∈ ±1000；`output_limit` / `i_limit` / `deadband` 保持非负（负值无物理意义）
+- 死区、单帧误差保护、`output_limit` / `i_limit` 均基于 `|error|` 或对称限幅，**与方向无关**
+- 极性接错时误差不降反增，`trend_window` 误差趋势检测会在 N 次成功反馈后自动暂停该 worker —— 可作为极性自检信号
+
 ---
 
 ## 5. 配置持久化

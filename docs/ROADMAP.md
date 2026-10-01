@@ -513,6 +513,7 @@ python -m scope.main
 | **v0.8.1** | **2026/8** | **DeviceConfig 默认值统一 16ch/15k/30k; CONTINUOUS 缓冲/读取块调优防 -200279; 反馈暂停语义 (PAUSED 仍刷新订阅值) + 测试基线 173** |
 | **v0.8.2** | **2026/8** | **内存泄漏修复: pyqtgraph useOpenGL 默认关闭 (GL 缓存每帧 setData 泄漏 ~500MB/h); UIBridge 丢旧留新; 主线程 20Hz 合并刷新 + time_axis 缓存; MiniChart 节流/降采样; EventBus.unsubscribe; 修复 update_worker_target 连接泄漏; feedback.status 节流 10Hz + 测试基线 184** |
 | **v0.9** | **2026/10** | **DAC 目标设备发送 (B 通道电压 0~5V): DACTarget/DACSender, 每帧 read→clamp→set_ab(0, v), 反馈面板新增 DAC 链路 + 测试基线 217** |
+| **v0.9.1** | **2026/10** | **反馈方向支持: 面板放开增益 (Kp/Ki/Kd ±10000) 与 DAC scale (±1000) 输入范围, 可用负值反转反馈极性 + 测试基线 217** |
 
 ---
 

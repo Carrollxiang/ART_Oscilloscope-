@@ -74,6 +74,7 @@
 - [x] 反馈面板『反馈链路』新增 DAC 项（IP 留空由操作者填写、端口 18863、scale 可编辑；IP 为空时拦截）
 - [x] `feedback_manager._extract_target_info` → `("dac", "ip:port")`，卡片显示 `[DAC]`
 - [x] `tests/test_dac_sender.py` (25 tests) + worker/manager 补 DAC 用例，测试基线 184 → 217
+- [x] **(v0.9.1)** 反馈面板放开增益与 DAC scale 输入范围（`Kp/Ki/Kd` ±10000、`scale` ±1000），可用负值反转反馈极性（见 FEEDBACK_SPEC 4.3）
 
 ---
 
