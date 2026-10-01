@@ -1,6 +1,6 @@
 # 反馈系统架构规范 (v0.6/v0.7)
 
-> 状态: ✅ 已实现 (v0.6 Worker 架构; v0.7 目标设备发送 + rpyc 连接池)  
+> 状态: ✅ 已实现 (v0.6 Worker 架构; v0.7 目标设备发送 + rpyc 连接池; v0.9 DAC 电压反馈)  
 > 最后更新: 2026/6
 
 ---
@@ -458,15 +458,23 @@ class RtmqTarget:
     card_index: int       # RWG 板卡号
     sbg_channel: int      # 边带通道
 
-TargetConfig = Ad9910Target | RtmqTarget
+@dataclass
+class DACTarget:
+    """DAC 设备定位（B 通道电压反馈, 允许范围 0~5V）"""
+    ip: str
+    port: int = 18863
+    scale: float = 1.0    # PID delta → 电压(V) 缩放系数
+
+TargetConfig = Ad9910Target | RtmqTarget | DACTarget
 ```
 
 ### 4.2 发送器与连接池（v0.7 已实现）
 
-**发送器** (`scope/io/ad9910_sender.py` / `scope/io/rtmq_sender.py`):
+**发送器** (`scope/io/ad9910_sender.py` / `scope/io/rtmq_sender.py` / `scope/io/dac_sender.py`):
 
 - `Ad9910Sender`: 按 `Ad9910Mapping.mode` 将 PID delta 映射为频率/幅度调整，经 rpyc 调用 `get_ad9910_service()` 下发
 - `RtmqSender`: delta 直接作为目标值，经 rpyc 调用 `set_sideband(card_index, sbg_channel, value)`（远端接口为假设，参考 `feedback_example/RTMQ_rpyc_server.py`）
+- `DACSender` (v0.9): 每帧"读-改-写" —— `conn.root.read()` 取设备当前 `b_voltage`(单位 V) → `new = clamp(cur + delta * scale, 0.0, 5.0)` → `conn.root.set_ab(0, new)`（第一参数为 A 通道电压, 固定传 0；`use_set_ab=False` 时回退 `set_b(new)`）。`scale` 默认 `1.0`，即 delta 直接作为电压增量；电压上限由 `DACMapping(min_volt, max_volt)` 保证，最终写给 DAC 的值恒在 0~5V。read 失败 / `status != "success"` / 缺 `b_voltage` / rpyc 异常 → 返回 `False`，交由 worker 的 `RETRY_COOLDOWN_S=5s` 冷却
 
 **连接池** (`scope/io/rpyc_pool.py`):
 
@@ -590,12 +598,13 @@ def load_from_file(main_window, filepath: str) -> bool:
 | 测试文件 | 测试内容 |
 |----------|----------|
 | `test_pid_controller.py` (✅ 11 tests) | PID 计算正确性、窗口限制、限幅、死区 |
-| `test_feedback_worker.py` (✅ 29 tests) | Worker 生命周期、状态切换、process()、目标发送分发、失败冷却/in-flight |
-| `test_feedback_manager.py` (✅ 19 tests) | Manager 生命周期、配置导入导出、并发分发、批量状态发布 |
+| `test_feedback_worker.py` (✅ 43 tests) | Worker 生命周期、状态切换、process()、目标发送分发、失败冷却/in-flight |
+| `test_feedback_manager.py` (✅ 26 tests) | Manager 生命周期、配置导入导出、并发分发、批量状态发布、target 获取/链路类型 |
 | `test_feedback_command_worker.py` (✅ 5 tests) | feedback.worker.command 应用、批量加载清空 |
 | `test_ad9910_sender.py` (✅ 16 tests) | AD9910 发送器: 频率/幅度映射、delta 调整、限幅 |
 | `test_rpyc_pool.py` (✅ 17 tests) | 连接池: 借还/复用/超时/健康检查/引用计数/取消安全/自死锁回归 |
 | `test_rtmq_sender.py` (✅ 6 tests) | RTMQ 发送器: set_sideband 目标值下发 |
+| `test_dac_sender.py` (✅ 25 tests) | DAC 发送器: read→clamp(0~5V)→set_ab(0,v)、双向限幅、scale 缩放、read 异常/rpc 异常、set_b 回退、池共享/释放 |
 
 ### 7.2 集成测试
 
@@ -626,6 +635,7 @@ def load_from_file(main_window, filepath: str) -> bool:
 | **v0.6** | **✅ 已实现** | **独立 worker + 共享订阅 + PID 封装** |
 | **v0.7** | **✅ 已实现** | **目标设备发送（AD9910 / RTMQ）+ rpyc 连接池** |
 | **v0.7.1** | **✅ 已修复** | **连接池自死锁修复 (AD9910 反馈实测可用) + 失败冷却/in-flight** |
+| **v0.9** | **✅ 已实现** | **DAC 目标发送（B 通道电压 0~5V）: read → clamp → set_ab(0, v) + 25 测试** |
 | **v0.8** | 🔲 未来 | 批量发送 + Web 界面监控 + 多级 PID |
 
 ### 8.1 修复记录 (v0.7.1)

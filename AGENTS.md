@@ -66,13 +66,13 @@ Planned status topics:
 Use the project conda environment, not the global Python installation:
 
 ```powershell
-& .\.venv\python.exe -m pytest -q
+& .\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Current expected result:
 
 ```text
-171 passed
+217 passed
 ```
 
 ## Documentation Rules

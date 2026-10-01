@@ -238,6 +238,30 @@ class TestWorkerTarget:
         assert isinstance(target, Ad9910Target)
         assert target.ip == "10.0.0.1"
 
+    async def test_get_worker_target_dac(self, mgr):
+        """获取 DAC target (含 ip/port/scale)"""
+        from scope.io.feedback_worker import DACTarget
+        cfg = FeedbackConfig(
+            worker_id="dac-w", measurement_key="CH1_vpp",
+            pid_config=PidConfig(preset_value=3.3),
+            target=DACTarget(ip="192.168.1.58", port=18863, scale=2.0),
+        )
+        await mgr.add_worker(cfg)
+        target = mgr.get_worker_target("dac-w")
+        assert isinstance(target, DACTarget)
+        assert target.ip == "192.168.1.58"
+        assert target.port == 18863
+        assert target.scale == 2.0
+
+    def test_extract_target_info_dac(self):
+        """_extract_target_info 对 DAC target 返回 ("dac", "ip:port")"""
+        from scope.io.feedback_manager import _extract_target_info
+        from scope.io.feedback_worker import DACTarget
+
+        assert _extract_target_info(
+            DACTarget(ip="192.168.1.58", port=18863)
+        ) == ("dac", "192.168.1.58:18863")
+
     async def test_update_worker_target(self, mgr):
         """更新 target：无→AD9910→RTMQ"""
         from scope.io.feedback_worker import Ad9910Target, RtmqTarget

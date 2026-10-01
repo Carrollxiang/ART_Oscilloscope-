@@ -66,6 +66,17 @@
 
 ---
 
+## ✅ 已完成 — 反馈系统 DAC 电压目标 (v0.9)
+
+- [x] `scope/io/dac_sender.py` — `DACSender` / `DACMapping`（`scope/io/rtmq_sender.py` 复制改写）
+- [x] 每帧"读-改-写": `conn.root.read()` 取 `b_voltage`(V) → `new = clamp(cur + delta*scale, 0.0, 5.0)` → `conn.root.set_ab(0, new)`（A 通道固定 0V，`use_set_ab=False` 回退 `set_b`）
+- [x] `DACTarget(ip, port=18863, scale=1.0)` 接入 `TargetConfig` 并集 + JSON 序列化 + `FeedbackWorker` 分派
+- [x] 反馈面板『反馈链路』新增 DAC 项（IP 留空由操作者填写、端口 18863、scale 可编辑；IP 为空时拦截）
+- [x] `feedback_manager._extract_target_info` → `("dac", "ip:port")`，卡片显示 `[DAC]`
+- [x] `tests/test_dac_sender.py` (25 tests) + worker/manager 补 DAC 用例，测试基线 184 → 217
+
+---
+
 ## ✅ 已完成 — 反馈系统 v0.6 重构
 
 ### 核心变更

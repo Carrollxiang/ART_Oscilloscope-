@@ -1,7 +1,7 @@
 # 数字示波器 — 系统架构文档 (v0.7)
 
 > 最后更新: 2026/6  
-> 重构里程碑: 简化数据模型 + 统一事件驱动架构 + 反馈 Worker 架构 (v0.6) + 目标设备发送 (v0.7)
+> 重构里程碑: 简化数据模型 + 统一事件驱动架构 + 反馈 Worker 架构 (v0.6) + 目标设备发送 (v0.7) + DAC 电压反馈 (v0.9)
 
 ## 1. 概述
 
@@ -498,7 +498,7 @@ EventBus (frame.fitted topic)
 - 内部持有 `PidController`
 - 状态管理: `IDLE → RUNNING ↔ PAUSED`
 - `process(value)` 由 Manager 调用；先无条件刷新订阅值 (`last_value`/`last_error`)，非 RUNNING 状态（PAUSED/IDLE）仅刷新值，不执行 PID 计算与发送
-- v0.6 阶段 `_send_to_target()` 只记录日志；**v0.7 已实现真实发送**（按 target 类型调用 Ad9910Sender / RtmqSender）
+- v0.6 阶段 `_send_to_target()` 只记录日志；**v0.7 已实现真实发送**（按 target 类型调用 Ad9910Sender / RtmqSender）；**v0.9 新增 DACSender**（B 通道电压 0~5V）
 
 **FeedbackManager** (`scope/io/feedback_manager.py`):
 - 持有唯一 `frame.fitted` 订阅
@@ -541,7 +541,7 @@ class FeedbackManager:
 | EventBus 订阅数 | N 个 | **1 个** |
 | `as_flat_dict` 调用/帧 | N 次 | **1 次** |
 | Worker 隔离性 | ✅ | ✅ |
-| 目标设备接口 | 未统一 | **已实现 AD9910/RTMQ** (v0.7) |
+| 目标设备接口 | 未统一 | **已实现 AD9910/RTMQ** (v0.7) / **DAC 电压** (v0.9) |
 
 ---
 
@@ -714,8 +714,8 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 
 | 测试文件 | 测试数 | 通过率 |
 |----------|--------|--------|
-| `test_feedback_worker.py` | 29 | ✅ 100% |
-| `test_feedback_manager.py` | 19 | ✅ 100% |
+| `test_feedback_worker.py` | 43 | ✅ 100% |
+| `test_feedback_manager.py` | 26 | ✅ 100% |
 | `test_art_device.py` | 29 | ✅ 100% (mock artdaq, 无需硬件) |
 | `test_ad9910_sender.py` | 16 | ✅ 100% |
 | `test_phase0.py` | 16 | ✅ 100% |
@@ -723,11 +723,13 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `test_trigger_detector.py` | 8 | ✅ 100% |
 | `test_pid_controller.py` | 11 | ✅ 100% |
 | `test_rtmq_sender.py` | 6 | ✅ 100% |
+| `test_dac_sender.py` | 25 | ✅ 100% |
 | `test_feedback_command_worker.py` | 5 | ✅ 100% |
 | `test_config_manager.py` | 4 | ✅ 100% |
 | `test_measurement_config_worker.py` | 2 | ✅ 100% |
 | `test_channel_panel_source.py` | 1 | ✅ 100% |
-| **总计** | **184** | **✅ 100%** |
+| `test_event_bus.py` | 8 | ✅ 100% |
+| **总计** | **217** | **✅ 100%** |
 
 ---
 

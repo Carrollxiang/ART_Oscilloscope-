@@ -44,7 +44,15 @@ class RtmqTarget:
     sbg_channel: int = 0     # 边带通道
 
 
-TargetConfig = Ad9910Target | RtmqTarget
+@dataclass
+class DACTarget:
+    """DAC 设备定位（B 通道电压反馈, 允许范围 0~5V）"""
+    ip: str
+    port: int = 18863
+    scale: float = 1.0       # PID delta → 电压(V) 缩放系数
+
+
+TargetConfig = Ad9910Target | RtmqTarget | DACTarget
 
 
 def target_to_dict(target: Optional[TargetConfig]) -> Optional[dict[str, Any]]:
@@ -52,7 +60,7 @@ def target_to_dict(target: Optional[TargetConfig]) -> Optional[dict[str, Any]]:
     if target is None:
         return None
     d = dataclasses.asdict(target)
-    d["type"] = type(target).__name__  # "Ad9910Target" | "RtmqTarget"
+    d["type"] = type(target).__name__  # "Ad9910Target" | "RtmqTarget" | "DACTarget"
     return d
 
 
@@ -70,6 +78,10 @@ def target_from_dict(d: Optional[dict[str, Any]]) -> Optional[TargetConfig]:
         return RtmqTarget(
             ip=d["ip"], port=d["port"],
             card_index=d.get("card_index", 0), sbg_channel=d.get("sbg_channel", 0),
+        )
+    elif t == "DACTarget":
+        return DACTarget(
+            ip=d["ip"], port=d.get("port", 18863), scale=d.get("scale", 1.0),
         )
     else:
         logger.warning("unknown target type: %s", t)
@@ -93,7 +105,7 @@ class FeedbackWorker:
         self._pid = PidController(config.pid_config)
         self._status = SlotStatus.IDLE
         self._target = config.target
-        self._sender: Optional[Ad9910Sender] = None
+        self._sender: Optional[Any] = None       # Ad9910Sender | RtmqSender | DACSender
         self._sender_error: str = ""
         self._last_value: Optional[float] = None
         self._last_error: Optional[float] = None
@@ -318,6 +330,26 @@ class FeedbackWorker:
                         self.worker_id, delta,
                     )
                 return ok
+            elif isinstance(self._target, DACTarget):
+                ok = await self._sender.adjust_delta(delta)
+                if ok:
+                    if not self._first_send_logged:
+                        self._first_send_logged = True
+                        logger.info(
+                            'Worker "%s" 首次反馈成功 → DAC %s:%d delta=%+.6f',
+                            self.worker_id, self._target.ip, self._target.port, delta,
+                        )
+                    else:
+                        logger.debug(
+                            'Worker "%s" delta=%+.6f → DAC %s:%d',
+                            self.worker_id, delta, self._target.ip, self._target.port,
+                        )
+                else:
+                    logger.warning(
+                        'Worker "%s" DAC 发送失败 delta=%+.6f',
+                        self.worker_id, delta,
+                    )
+                return ok
         except Exception as e:
             logger.error(
                 'Worker "%s" 发送异常: %s', self.worker_id, e, exc_info=True,
@@ -351,7 +383,7 @@ class FeedbackWorker:
                 self.worker_id, self._stop_reason,
             )
 
-    def _create_sender(self) -> Optional[Ad9910Sender]:
+    def _create_sender(self) -> Optional[Any]:
         """
         根据目标配置创建发送器实例。
 
@@ -378,6 +410,14 @@ class FeedbackWorker:
                     port=self._target.port,
                     card_index=self._target.card_index,
                     sbg_channel=self._target.sbg_channel,
+                )
+
+            if isinstance(self._target, DACTarget):
+                from scope.io.dac_sender import DACMapping, DACSender
+                return DACSender(
+                    ip=self._target.ip,
+                    port=self._target.port,
+                    mapping=DACMapping(scale=self._target.scale),
                 )
         except Exception as e:
             self._sender_error = str(e)

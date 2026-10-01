@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from scope.runtime.pid_controller import PidConfig
 from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.io.feedback_command import FeedbackCommand
-from scope.io.feedback_worker import Ad9910Target, FeedbackConfig, RtmqTarget
+from scope.io.feedback_worker import Ad9910Target, DACTarget, FeedbackConfig, RtmqTarget
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,8 @@ class WorkerCard(QFrame):
             self._chain_label.setText(f"[AD9910]")
         elif ct == "rtmq":
             self._chain_label.setText(f"[RTMQ]")
+        elif ct == "dac":
+            self._chain_label.setText(f"[DAC]")
         else:
             self._chain_label.setText("")
 
@@ -370,6 +372,7 @@ class FeedbackDialog(QDialog):
         self._chain_combo.addItem("无 (仅测试)", "none")
         self._chain_combo.addItem("AD9910", "ad9910")
         self._chain_combo.addItem("RTMQ", "rtmq")
+        self._chain_combo.addItem("DAC", "dac")
         self._chain_combo.currentIndexChanged.connect(self._on_chain_changed)
         form.addRow("反馈链路:", self._chain_combo)
 
@@ -437,6 +440,7 @@ class FeedbackDialog(QDialog):
         self._target_stack.addWidget(self._make_none_page())
         self._target_stack.addWidget(self._make_ad9910_page())
         self._target_stack.addWidget(self._make_rtmq_page())
+        self._target_stack.addWidget(self._make_dac_page())
         glayout.addWidget(self._target_stack)
         return group
 
@@ -470,12 +474,26 @@ class FeedbackDialog(QDialog):
         form.addRow("边带通道:", self._rtmq_channel)
         return w
 
+    def _make_dac_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._dac_ip = QLineEdit(); self._dac_ip.setPlaceholderText("192.168.1.58")
+        form.addRow("IP:", self._dac_ip)
+        self._dac_port = QSpinBox(); self._dac_port.setRange(1,65535); self._dac_port.setValue(18863)
+        form.addRow("端口:", self._dac_port)
+        self._dac_scale = QDoubleSpinBox(); self._dac_scale.setRange(0.0,1000.0); self._dac_scale.setDecimals(4); self._dac_scale.setValue(1.0); self._dac_scale.setSingleStep(0.1)
+        form.addRow("Scale:", self._dac_scale)
+        lbl = QLabel("B 通道电压反馈，输出自动限幅 0~5V")
+        lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;"); form.addRow(lbl)
+        return w
+
     def _on_chain_changed(self):
         chain = self._chain_combo.currentData()
         if chain == "ad9910":
             self._target_stack.setCurrentIndex(1); self._target_group.setVisible(True)
         elif chain == "rtmq":
             self._target_stack.setCurrentIndex(2); self._target_group.setVisible(True)
+        elif chain == "dac":
+            self._target_stack.setCurrentIndex(3); self._target_group.setVisible(True)
         else:
             self._target_stack.setCurrentIndex(0); self._target_group.setVisible(False)
 
@@ -492,6 +510,9 @@ class FeedbackDialog(QDialog):
         elif chain == "rtmq":
             return RtmqTarget(ip=self._rtmq_ip.text().strip(), port=self._rtmq_port.value(),
                               card_index=self._rtmq_card.value(), sbg_channel=self._rtmq_channel.value())
+        elif chain == "dac":
+            return DACTarget(ip=self._dac_ip.text().strip(), port=self._dac_port.value(),
+                             scale=self._dac_scale.value())
         return None
 
     def _on_accept(self):
@@ -503,6 +524,10 @@ class FeedbackDialog(QDialog):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "重复订阅",
                                 f"测量项 \"{meas_key}\" 已被其他 Worker 订阅。\n请选择不同的测量项。"); return
+        if self._chain_combo.currentData() == "dac" and not self._dac_ip.text().strip():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "IP 未填写",
+                                "DAC 反馈需要填写目标 IP 地址。"); return
         pid_config = PidConfig(
             preset_value=self._preset.value(), kp=self._kp.value(), ki=self._ki.value(),
             kd=self._kd.value(), i_limit=self._i_limit.value(),
@@ -543,6 +568,7 @@ class PidEditDialog(QDialog):
         self._chain_combo.addItem("无 (仅测试)", "none")
         self._chain_combo.addItem("AD9910", "ad9910")
         self._chain_combo.addItem("RTMQ", "rtmq")
+        self._chain_combo.addItem("DAC", "dac")
         self._chain_combo.currentIndexChanged.connect(self._on_chain_changed)
         form.addRow("反馈链路:", self._chain_combo)
         layout.addLayout(form)
@@ -597,6 +623,7 @@ class PidEditDialog(QDialog):
         self._target_stack.addWidget(self._make_none_page())
         self._target_stack.addWidget(self._make_ad9910_page())
         self._target_stack.addWidget(self._make_rtmq_page())
+        self._target_stack.addWidget(self._make_dac_page())
         glayout.addWidget(self._target_stack)
         return group
 
@@ -630,6 +657,18 @@ class PidEditDialog(QDialog):
         form.addRow("边带通道:", self._rtmq_channel)
         return w
 
+    def _make_dac_page(self):
+        w = QWidget(); form = QFormLayout(w); form.setSpacing(4)
+        self._dac_ip = QLineEdit(); self._dac_ip.setPlaceholderText("192.168.1.58")
+        form.addRow("IP:", self._dac_ip)
+        self._dac_port = QSpinBox(); self._dac_port.setRange(1,65535); self._dac_port.setValue(18863)
+        form.addRow("端口:", self._dac_port)
+        self._dac_scale = QDoubleSpinBox(); self._dac_scale.setRange(0.0,1000.0); self._dac_scale.setDecimals(4); self._dac_scale.setValue(1.0); self._dac_scale.setSingleStep(0.1)
+        form.addRow("Scale:", self._dac_scale)
+        lbl = QLabel("B 通道电压反馈，输出自动限幅 0~5V")
+        lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;"); form.addRow(lbl)
+        return w
+
     def _prefill_target(self, target):
         if isinstance(target, Ad9910Target):
             self._chain_combo.setCurrentIndex(1)
@@ -639,6 +678,10 @@ class PidEditDialog(QDialog):
             self._chain_combo.setCurrentIndex(2)
             self._rtmq_ip.setText(target.ip); self._rtmq_port.setValue(target.port)
             self._rtmq_card.setValue(target.card_index); self._rtmq_channel.setValue(target.sbg_channel)
+        elif isinstance(target, DACTarget):
+            self._chain_combo.setCurrentIndex(3)
+            self._dac_ip.setText(target.ip); self._dac_port.setValue(target.port)
+            self._dac_scale.setValue(target.scale)
 
     def _on_chain_changed(self):
         chain = self._chain_combo.currentData()
@@ -646,6 +689,8 @@ class PidEditDialog(QDialog):
             self._target_stack.setCurrentIndex(1); self._target_group.setVisible(True)
         elif chain == "rtmq":
             self._target_stack.setCurrentIndex(2); self._target_group.setVisible(True)
+        elif chain == "dac":
+            self._target_stack.setCurrentIndex(3); self._target_group.setVisible(True)
         else:
             self._target_stack.setCurrentIndex(0); self._target_group.setVisible(False)
 
@@ -660,9 +705,16 @@ class PidEditDialog(QDialog):
         elif chain == "rtmq":
             return RtmqTarget(ip=self._rtmq_ip.text().strip(), port=self._rtmq_port.value(),
                               card_index=self._rtmq_card.value(), sbg_channel=self._rtmq_channel.value())
+        elif chain == "dac":
+            return DACTarget(ip=self._dac_ip.text().strip(), port=self._dac_port.value(),
+                             scale=self._dac_scale.value())
         return None
 
     def _on_accept(self):
+        if self._chain_combo.currentData() == "dac" and not self._dac_ip.text().strip():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "IP 未填写",
+                                "DAC 反馈需要填写目标 IP 地址。"); return
         self._result_config = PidConfig(
             preset_value=self._preset.value(), kp=self._kp.value(), ki=self._ki.value(),
             kd=self._kd.value(), i_limit=self._i_limit.value(),

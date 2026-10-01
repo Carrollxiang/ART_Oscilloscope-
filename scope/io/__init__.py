@@ -5,11 +5,13 @@ IO 模块 — 反馈管理
 """
 
 from .ad9910_sender import Ad9910Sender
+from .dac_sender import DACSender
 from .feedback_command import FeedbackCommand
 from .feedback_command_worker import FeedbackCommandWorker
 from .feedback_manager import FeedbackManager
 from .feedback_worker import (
     Ad9910Target,
+    DACTarget,
     FeedbackConfig,
     FeedbackWorker,
     RtmqTarget,
@@ -25,6 +27,8 @@ __all__ = [
     "Ad9910Sender",
     "Ad9910Target",
     "ConnectionPoolManager",
+    "DACSender",
+    "DACTarget",
     "FeedbackCommand",
     "FeedbackCommandWorker",
     "FeedbackConfig",

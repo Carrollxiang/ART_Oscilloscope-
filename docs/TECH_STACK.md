@@ -272,7 +272,7 @@ start_mock.bat
 python -m pytest tests/ -v
 
 # 期望结果
-# 184 passed, 1 warning
+# 217 passed, 1 warning
 ```
 
 ### 测试覆盖率

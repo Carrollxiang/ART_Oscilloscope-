@@ -21,6 +21,7 @@ from scope.runtime import FeedbackStatusSnapshot, FeedbackWorkerStatus
 from scope.runtime.pid_controller import PidConfig
 from .feedback_worker import (
     Ad9910Target,
+    DACTarget,
     FeedbackConfig,
     FeedbackWorker,
     RtmqTarget,
@@ -353,4 +354,6 @@ def _extract_target_info(target) -> tuple[str, str]:
         return ("ad9910", f"{target.ip}:{target.port}")
     if isinstance(target, RtmqTarget):
         return ("rtmq", f"{target.ip}:{target.port}")
+    if isinstance(target, DACTarget):
+        return ("dac", f"{target.ip}:{target.port}")
     return ("unknown", "")

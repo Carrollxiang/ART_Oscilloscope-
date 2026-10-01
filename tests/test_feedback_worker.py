@@ -244,6 +244,56 @@ class TestWorkerTarget:
             mock_instance.adjust_delta.assert_called_once()
             await w.stop()
 
+    async def test_start_with_dac_creates_sender(self):
+        """配置 DAC target 时 start 创建 DACSender（不误用 AD9910/RTMQ），并透传 ip/port/scale"""
+        from scope.io.feedback_worker import DACTarget
+
+        cfg = FeedbackConfig(
+            worker_id="dac-worker",
+            measurement_key="CH1_vpp",
+            pid_config=PidConfig(preset_value=3.3, kp=0.1),
+            target=DACTarget(ip="192.168.1.58", port=18863, scale=2.0),
+        )
+        with patch("scope.io.dac_sender.DACSender") as MockDac, \
+             patch("scope.io.ad9910_sender.Ad9910Sender") as MockAd9910, \
+             patch("scope.io.rtmq_sender.RtmqSender") as MockRtmq:
+            mock_instance = MagicMock()
+            mock_instance.close = AsyncMock()
+            MockDac.return_value = mock_instance
+
+            w = FeedbackWorker(cfg)
+            await w.start()
+            kwargs = MockDac.call_args.kwargs
+            assert kwargs["ip"] == "192.168.1.58"
+            assert kwargs["port"] == 18863
+            assert kwargs["mapping"].scale == 2.0
+            assert w._sender is mock_instance
+            MockAd9910.assert_not_called()
+            MockRtmq.assert_not_called()
+            await w.stop()
+
+    async def test_process_with_dac_calls_adjust_delta(self):
+        """RUNNING + DAC target 时 process 调用 DACSender.adjust_delta"""
+        from scope.io.feedback_worker import DACTarget
+
+        cfg = FeedbackConfig(
+            worker_id="dac-worker",
+            measurement_key="CH1_vpp",
+            pid_config=PidConfig(preset_value=3.3, kp=0.1),
+            target=DACTarget(ip="10.0.0.1", port=18863),
+        )
+        with patch("scope.io.dac_sender.DACSender") as MockDac:
+            mock_instance = MagicMock()
+            mock_instance.adjust_delta = AsyncMock(return_value=True)
+            mock_instance.close = AsyncMock()
+            MockDac.return_value = mock_instance
+
+            w = FeedbackWorker(cfg)
+            await w.start()
+            await w.process(3.0)          # preset=3.3 → error>0 → delta>0
+            mock_instance.adjust_delta.assert_called_once()
+            await w.stop()
+
     async def test_process_without_target_no_send(self, worker):
         """无 target 时 process 不调用发送"""
         await worker.start()
@@ -282,6 +332,30 @@ class TestTargetSerialization:
         assert t.port == 3251
         assert t.device_id == 0x0D11
 
+    def test_target_to_dict_dac(self):
+        from scope.io.feedback_worker import DACTarget, target_to_dict
+
+        t = DACTarget(ip="192.168.1.58", port=18863, scale=1.5)
+        d = target_to_dict(t)
+        assert d == {
+            "ip": "192.168.1.58", "port": 18863, "scale": 1.5, "type": "DACTarget",
+        }
+
+    def test_target_from_dict_dac(self):
+        from scope.io.feedback_worker import DACTarget, target_from_dict
+
+        t = target_from_dict(
+            {"type": "DACTarget", "ip": "10.0.0.1", "port": 18863, "scale": 2.0}
+        )
+        assert t == DACTarget(ip="10.0.0.1", port=18863, scale=2.0)
+
+    def test_target_from_dict_dac_defaults(self):
+        from scope.io.feedback_worker import DACTarget, target_from_dict
+
+        assert target_from_dict({"type": "DACTarget", "ip": "10.0.0.1"}) == DACTarget(
+            ip="10.0.0.1", port=18863, scale=1.0,
+        )
+
     def test_target_from_dict_none(self):
         from scope.io.feedback_worker import target_from_dict
         assert target_from_dict(None) is None
@@ -302,6 +376,16 @@ class TestTargetSerialization:
         d = target_to_dict(t)
         t2 = target_from_dict(d)
         assert t == t2
+
+    def test_target_roundtrip_dac(self):
+        from scope.io.feedback_worker import (
+            DACTarget,
+            target_from_dict,
+            target_to_dict,
+        )
+
+        t = DACTarget(ip="192.168.1.58", port=18863, scale=3.5)
+        assert target_from_dict(target_to_dict(t)) == t
 
 
 # ── 发送失败冷却 / in-flight 防重叠 ─────────────────────────────
