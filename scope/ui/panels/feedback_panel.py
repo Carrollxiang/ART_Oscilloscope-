@@ -830,7 +830,12 @@ class FeedbackPanel(QWidget):
             logger.warning("没有可用测量项，请先在测量面板添加测量行")
             return
 
-        # 自动生成 Worker ID
+        # 加载配置后计数器可能落后于已有 ID；跳过已占用的编号。
+        existing_ids = set(self._card_widgets)
+        if self._last_status:
+            existing_ids.update(ws.worker_id for ws in self._last_status.workers)
+        while f"w{self._worker_counter}" in existing_ids:
+            self._worker_counter += 1
         worker_id = f"w{self._worker_counter}"
         self._worker_counter += 1
 
