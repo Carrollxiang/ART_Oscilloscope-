@@ -1,8 +1,22 @@
+---
+kind: record
+status: archived
+scope: history.baseline.eventbus-spec
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from docs/EVENTBUS_SPEC.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # EventBus 数据路由架构 (v0.5)
 
 > v0.5 重构核心 — 数据面/控制面分离，简化数据流，降低延迟
 >
-> **当前状态**: EventBus 数据面/控制面仍有效；反馈系统已升级到 v0.6 Worker 架构，反馈细节以 [FEEDBACK_SPEC.md](./FEEDBACK_SPEC.md) 为准。当前文档入口见 [README.md](./README.md)。
+> **当前状态**: EventBus 数据面/控制面仍有效；反馈系统已升级到 v0.6 Worker 架构，反馈细节以 [FEEDBACK_SPEC.md](2026-10-05_FEEDBACK_SPEC.md) 为准。当前文档入口见 [README.md](2026-10-05_README.md)。
 
 ---
 
@@ -56,18 +70,6 @@ MeasurementProcessor UIBridge         FeedbackManager
 | `measurement.remove` | `str` | 8 | block | MeasurementPanel | MainWindow / MiniChart |
 | `feedback.status` | `FeedbackStatusSnapshot` | 2 | drop_oldest | FeedbackManager | UIBridge -> MainWindow / FeedbackPanel |
 | `runtime.metrics` | `RuntimeMetricsSnapshot` | 2 | drop_oldest | ScopeApp metrics task | 诊断面板预留 |
-
-**`FittedSnapshot` 字段**（v0.9.2 起）:
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `sequence_num` | `int` | 帧序号 |
-| `event_measurements` | `dict[str, float]` | 有效测量值 (tag → value)，含标量测量与比值测量 |
-| `invalid_reasons` | `dict[str, str]` | 本帧算不出有效值的测量项 (tag → 原因)，如比值分母接近 0；这些 tag 不会出现在 `event_measurements` |
-| `timestamp` / `pipeline_latency_ms` | `float` | 元信息 |
-
-`as_flat_dict()` 只返回 `event_measurements`（反馈分发用），`get_invalid(tag)` 读取无效原因。
-`FeedbackManager` 分发时先查 `invalid_reasons`：命中即让对应 worker 自动暂停（`stop_reason`），该帧不进 PID。
 
 **对比 v0.3**:
 - ✅ 删除 `frame.measured` topic

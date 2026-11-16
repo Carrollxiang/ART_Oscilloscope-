@@ -1,6 +1,20 @@
+---
+kind: record
+status: archived
+scope: history.baseline.feedback-design-v0-5
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from docs/FEEDBACK_DESIGN_v0.5.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # 反馈系统落地方案 (v0.5) — ⚠️ 已废弃
 
-> ⚠️ **此文档已被 [FEEDBACK_SPEC.md](./FEEDBACK_SPEC.md) (v0.6) 取代。**  
+> ⚠️ **此文档已被 [FEEDBACK_SPEC.md](2026-10-05_FEEDBACK_SPEC.md) (v0.6) 取代。**
 > 保留此文件仅为历史参考。当前反馈系统使用独立 Worker 架构，不再使用 Slot 模型。
 >
 > 状态: ⛔ 已废弃 (v0.5, 被 v0.6 取代) — 保留历史
@@ -73,12 +87,12 @@ async def dispatch(self, result: AnalysisResult):
 async def dispatch_raw(self, measurements: dict[str, float]):
     """
     将扁平测量字典分发给所有活跃 slot。
-    
+
     measurements 来自 FittedSnapshot.as_flat_dict()，例如：
         {"CH1_vpp": 3.3, "CH1_mean": 1.5, "CH2_vpp": 2.8}
     """
     active_slots = [s for s in self._slots.values() if s.status == SlotStatus.RUNNING]
-    
+
     for slot in active_slots:
         payload = self._build_payload_from_dict(measurements, slot._config.subscriptions)
         if payload:
@@ -141,41 +155,41 @@ class PidFeedbackSlot(FeedbackSlot):
 ```python
 class PidController:
     """PID 控制器 — 状态封装"""
-    
+
     def __init__(self, config: PidConfig):
         self._config = config
         self._errors = deque(maxlen=config.error_history_size)
         self._last_error = 0.0
-    
+
     def step(self, measured_value: float) -> Optional[float]:
         """
         单步 PID 计算
-        
+
         Returns:
             float: 调整量 (delta), 死区内返回 None (不发送)
         """
         error = self._config.preset_value - measured_value
-        
+
         # 死区检查
         if abs(error) < self._config.deadband:
             return None
-        
+
         # P
         pout = error * self._config.kp
-        
+
         # D
         dout = (error - self._last_error) * self._config.kd
         self._last_error = error
-        
+
         # I (窗口累积, 抗饱和)
         self._errors.append(error)
         iout = sum(self._errors) * self._config.ki
         iout = max(-self._config.i_limit, min(self._config.i_limit, iout))
-        
+
         # 总输出
         out = pout + iout + dout
         out = max(-self._config.output_limit, min(self._config.output_limit, out))
-        
+
         return out
 ```
 

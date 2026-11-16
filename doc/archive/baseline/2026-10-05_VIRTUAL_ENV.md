@@ -1,3 +1,17 @@
+---
+kind: record
+status: archived
+scope: history.baseline.virtual-env
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from VIRTUAL_ENV.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # 虚拟环境使用说明
 
 ## 环境信息

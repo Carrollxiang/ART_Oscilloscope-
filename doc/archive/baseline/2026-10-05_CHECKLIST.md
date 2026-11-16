@@ -1,9 +1,23 @@
+---
+kind: record
+status: archived
+scope: history.baseline.checklist
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from docs/CHECKLIST.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # 实施清单 — EventBus + 数据模型重构 (v0.5)
 
 > 状态: ✅ **全部完成** (2026/6/5)  
 > 测试结果: **45/45 通过**
 >
-> **归档说明**: 本文是 v0.5 重构验收记录，不代表当前测试基线。当前文档入口见 [README.md](./README.md)，当前测试基线为 `282 passed`。
+> **归档说明**: 本文是 v0.5 重构验收记录，不代表当前测试基线。当前文档入口见 [README.md](2026-10-05_README.md)，当前测试基线为 `217 passed`。
 
 ---
 

@@ -1,3 +1,17 @@
+---
+kind: record
+status: archived
+scope: history.baseline.feedback-todo
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from docs/FEEDBACK_TODO.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # 反馈系统重构 TODO
 
 > 创建时间: 2026/6/5  

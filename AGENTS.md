@@ -43,8 +43,7 @@ Current required topics:
 - `feedback.status`
 - `runtime.metrics`
 
-`frame.fitted` 载荷 `FittedSnapshot` 含 `invalid_reasons` (tag → 原因)；比值测量
-分母接近 0 时不产出值而登记原因，`FeedbackManager` 据此让该 worker 自动暂停。
+`frame.fitted` 载荷 `FittedSnapshot` 含 `invalid_reasons`（tag → 原因）；比值测量分母接近 0 或源无效时不产出值而登记原因，`FeedbackManager` 据此让对应 worker 自动暂停。
 
 Planned status topics:
 
@@ -69,21 +68,31 @@ Planned status topics:
 Use the project conda environment, not the global Python installation:
 
 ```powershell
-& .\.venv\Scripts\python.exe -m pytest -q
+& .\.venv\python.exe -m pytest -q
 ```
 
-Current expected result:
+Current test baseline and evidence: [`doc/current/NOW.md`](doc/current/NOW.md).
 
-```text
-282 passed
-```
+If the local conda cache/temp directories deny access, use the dedicated temporary-directory command in [`doc/guides/ENVIRONMENT.md`](doc/guides/ENVIRONMENT.md).
 
 ## Documentation Rules
 
-- If architecture changes, update `docs/ARCHITECTURE.md`.
-- If topics change, update `docs/EVENTBUS_SPEC.md`.
-- If project status changes, update `docs/ROADMAP.md` and root `TODO.md`.
-- Keep test counts and file structure examples in docs synchronized with the actual repo.
+- Documentation navigation: [`doc/README.md`](doc/README.md).
+- Current committed project state and test evidence: [`doc/current/NOW.md`](doc/current/NOW.md), the single current-state authority.
+- Metadata, classification, lifecycle and authority: [`doc/governance/DOCUMENT_METADATA.md`](doc/governance/DOCUMENT_METADATA.md).
+- If architecture changes, update `doc/project/ARCHITECTURE.md`.
+- If topics change, update `doc/specs/EVENTBUS_SPEC.md` and the topic list above.
+- If feedback behavior changes, update `doc/specs/FEEDBACK_SPEC.md`.
+- If project status changes, update `doc/current/NOW.md`; maintain outstanding work only in `doc/status/ACTIVE_TODO.md`. Update `doc/status/ROADMAP.md` when development direction changes.
+- New documents must have governance front matter and an index entry. Root documentation is limited to README.md, AGENTS.md and optional CONTEXT.md; dependency manifests remain runtime assets.
+- Keep archived/superseded/deprecated material out of current authority. Preserve history under `doc/archive/`; dated records belong under `doc/status/`.
+- Do not refresh `last_verified` merely because a file moved; separate offline evidence and hardware observations.
+- Pure documentation changes require governance validation and `git diff --check`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate_doc_governance.ps1
+git diff --check
+```
 
 ## Forbidden Patterns
 

@@ -1,9 +1,23 @@
+---
+kind: record
+status: archived
+scope: history.baseline.tech-stack
+authority: evidence
+owner: ART Oscilloscope maintainers
+last_verified: null
+applies_to: master@a3c2e33ee3640c5d23b2782756c68735ad8ee824, migration input from docs/TECH_STACK.md
+source: project-maintained
+source_commit: a3c2e33ee3640c5d23b2782756c68735ad8ee824
+---
+
+> 历史快照：迁移前的原文，仅修正 Markdown 相对链接；其中版本、测试数、已完成项和接口示例不代表当前实现。当前状态见 [NOW](../../current/NOW.md)。
+
 # 技术栈与技术决策 (v0.7)
 
 > 最后更新: 2026/6  
 > Python 版本: 3.10.20
 >
-> **整理状态**: 本文已按当前代码同步（v0.6/v0.7 反馈架构、目录结构、测试基线 136）。当前文档入口见 [README.md](./README.md)。
+> **整理状态**: 本文已按当前代码同步（v0.6/v0.7 反馈架构、目录结构、测试基线 136）。当前文档入口见 [README.md](2026-10-05_README.md)。
 
 ## 1. 语言与运行时
 
