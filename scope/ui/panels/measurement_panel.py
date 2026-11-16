@@ -40,13 +40,26 @@ logger = logging.getLogger(__name__)
 CHANNELS = ["CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8",
              "CH9", "CH10", "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
 
-# (key, label, unit) - 只保留 4 个基本测量量
+# (key, label, unit) - 4 个基本测量量 + 比值 (两个测量项相除)
 MEASUREMENT_TYPES: list[tuple[str, str, str]] = [
     ("Vpp",  "峰峰值", "V"),
     ("Vmax", "最大值", "V"),
     ("Vmin", "最小值", "V"),
     ("Mean", "平均值", "V"),
+    ("Ratio", "比值", ""),
 ]
+
+# 比值测量项的 feature key (与 MeasurementSpec 一致)
+RATIO_MEAS_KEY = "Ratio"
+
+# 下拉框统一外观
+_COMBO_STYLE = (
+    "NoWheelComboBox { background: #F5F5F5; color: #111; border: 1px solid #999;"
+    " border-radius: 3px; padding: 2px 4px; }"
+    "NoWheelComboBox:hover { border-color: #777; }"
+    "NoWheelComboBox QAbstractItemView { background: #FFFFFF; color: #111;"
+    "  selection-background-color: #DDDDDD; }"
+)
 
 
 class NoWheelComboBox(QComboBox):
@@ -78,13 +91,19 @@ class MeasurementRow(QFrame):
                  end_time: float = 500.0,
                  frame_duration: float = 500.0,
                  on_remove=None,
-                 stable_tag: str | None = None):
+                 stable_tag: str | None = None,
+                 numerator_tag: str = "",
+                 denominator_tag: str = ""):
         super().__init__(parent)
         self._row_id = self._allocate_row_id(stable_tag)
         self._stable_tag = stable_tag or f"m{self._row_id}"
         self._meas_key = meas_key
         self._on_remove = on_remove
         self._frame_duration = frame_duration
+        self._numerator_tag = numerator_tag
+        self._denominator_tag = denominator_tag
+        self._ratio_labels: dict[str, str] = {}   # 源测量项 tag → 显示名
+        self._invalid_reason = ""
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet("""
@@ -178,6 +197,19 @@ class MeasurementRow(QFrame):
 
         layout.addStretch()
 
+        # 比值分子 / 分母 (仅测量项 = 比值 时显示, 取代通道与时间窗)
+        self.ratio_num_combo = NoWheelComboBox()
+        self.ratio_den_combo = NoWheelComboBox()
+        for combo in (self.ratio_num_combo, self.ratio_den_combo):
+            combo.setStyleSheet(_COMBO_STYLE)
+            combo.setToolTip("比值测量项的源测量项 (同帧相除)")
+            combo.setFixedWidth(120)
+        self.ratio_slash = QLabel("/")
+        self.ratio_slash.setStyleSheet("color: #666;")
+        layout.addWidget(self.ratio_num_combo)
+        layout.addWidget(self.ratio_slash)
+        layout.addWidget(self.ratio_den_combo)
+
         # 值 + 单位 (右侧视觉重心)
         self.value_label = QLabel("—")
         self.value_label.setStyleSheet(
@@ -202,13 +234,81 @@ class MeasurementRow(QFrame):
         self.channel_combo.currentIndexChanged.connect(self._emit_config_changed)
         self.meas_combo.currentIndexChanged.connect(self._emit_config_changed)
         self.meas_combo.currentIndexChanged.connect(self._update_value_unit)
+        self.meas_combo.currentIndexChanged.connect(self._apply_meas_mode)
         self.start_spin.valueChanged.connect(self._emit_config_changed)
         self.end_spin.valueChanged.connect(self._emit_config_changed)
+        self.ratio_num_combo.currentIndexChanged.connect(self._emit_config_changed)
+        self.ratio_den_combo.currentIndexChanged.connect(self._emit_config_changed)
 
+        self._apply_meas_mode()
         self._update_value_unit()
 
     def _emit_config_changed(self, *args):
         self.config_changed.emit(self._row_id)
+
+    def _apply_meas_mode(self):
+        """切换标量/比值模式: 比值时禁用通道与时间窗, 显示分子/分母。"""
+        is_ratio = self.get_meas_key() == RATIO_MEAS_KEY
+        # 比值行没有"自身通道"概念: 禁用并隐藏, 避免与分子/分母的源通道混淆
+        self.channel_combo.setEnabled(not is_ratio)
+        self.channel_combo.setVisible(not is_ratio)
+        self.start_spin.setVisible(not is_ratio)
+        self.end_spin.setVisible(not is_ratio)
+        self.ratio_num_combo.setVisible(is_ratio)
+        self.ratio_slash.setVisible(is_ratio)
+        self.ratio_den_combo.setVisible(is_ratio)
+
+    def set_ratio_candidates(self, candidates: list[tuple[str, str]]):
+        """
+        注入可选源测量项到分子/分母下拉。
+
+        关键点: 已填充过的下拉一律以**当前选择**为准, 不能用
+        `_numerator_tag` / `_denominator_tag` 恢复 —— 否则用户刚改完选择,
+        刷新候选时会被旧字段回滚 (表现为"选了不变")。
+
+        Args:
+            candidates: [(显示名, tag)] — 只应包含标量测量项(排除本行)
+        """
+        self._ratio_labels = {tag: label for label, tag in candidates}
+        candidate_tags = [tag for _, tag in candidates]
+        first_fill = self.ratio_num_combo.count() == 0 and self.ratio_den_combo.count() == 0
+
+        for combo, configured in (
+            (self.ratio_num_combo, self._numerator_tag),
+            (self.ratio_den_combo, self._denominator_tag),
+        ):
+            # 已填充 → 保留用户当前选择; 首次填充 → 用配置值/默认值
+            current = (combo.currentData() if combo.count() else None) or configured
+
+            combo.blockSignals(True)
+            if [combo.itemData(i) for i in range(combo.count())] != candidate_tags:
+                combo.clear()
+                for label, tag in candidates:
+                    combo.addItem(f"{label} ({tag})", tag)
+            else:
+                # 候选集合未变: 只刷新显示名, 不动当前选择
+                for i, (label, tag) in enumerate(candidates):
+                    combo.setItemText(i, f"{label} ({tag})")
+
+            idx = combo.findData(current) if current else -1
+            if current and idx < 0:
+                # 源测量项已被删除: 保留原选择, 标记为缺失, 避免静默改配置
+                combo.addItem(f"{current} (缺失)", current)
+                idx = combo.count() - 1
+            elif idx < 0 and combo.count() > 0:
+                idx = 0
+            combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+        if first_fill and len(candidate_tags) >= 2:
+            # 默认分母与分子相同会算出 1.0, 且 spec 校验会判为非法 → 换成第二个候选
+            if self.get_numerator_tag() == self.get_denominator_tag():
+                self.ratio_den_combo.blockSignals(True)
+                self.ratio_den_combo.setCurrentIndex(1)
+                self.ratio_den_combo.blockSignals(False)
+
+        self._numerator_tag = self.get_numerator_tag()
+        self._denominator_tag = self.get_denominator_tag()
 
     @classmethod
     def _allocate_row_id(cls, stable_tag: str | None) -> int:
@@ -245,7 +345,30 @@ class MeasurementRow(QFrame):
         return self._stable_tag
 
     def get_name(self) -> str:
-        return self.name_edit.text() or f"M{self._row_id}"
+        if self.name_edit.text():
+            return self.name_edit.text()
+        if self.get_meas_key() == RATIO_MEAS_KEY:
+            num = self._ratio_label(self.get_numerator_tag())
+            den = self._ratio_label(self.get_denominator_tag())
+            if num or den:
+                return f"{num or '?'}/{den or '?'}"
+        return f"M{self._row_id}"
+
+    def _ratio_label(self, tag: str) -> str:
+        """源测量项 tag → 显示名 (无候选时回退 tag 本身)。"""
+        if not tag:
+            return ""
+        return self._ratio_labels.get(tag, tag)
+
+    def is_ratio(self) -> bool:
+        """本行是否为比值测量项。"""
+        return self.get_meas_key() == RATIO_MEAS_KEY
+
+    def get_numerator_tag(self) -> str:
+        return self.ratio_num_combo.currentData() or ""
+
+    def get_denominator_tag(self) -> str:
+        return self.ratio_den_combo.currentData() or ""
 
     def get_channel(self) -> str:
         return self.channel_combo.currentText()
@@ -270,11 +393,25 @@ class MeasurementRow(QFrame):
     def set_value(self, value: Optional[float]):
         """用已算好的值直接更新显示。从 FittedSnapshot 获取。"""
         self._last_value = value
+        self._invalid_reason = ""
+        self.value_label.setToolTip("")
         unit = self._unit_of(self.get_meas_key())
+        suffix = f" {unit}" if unit else ""
         if value is not None and not np.isnan(value):
-            self.value_label.setText(f"{self._fmt(value)} {unit}")
+            self.value_label.setText(f"{self._fmt(value)}{suffix}")
         else:
-            self.value_label.setText(f"— {unit}")
+            self.value_label.setText(f"—{suffix}")
+
+    def set_invalid_reason(self, reason: str):
+        """本帧无效 (比值分母接近 0 等) → 值显示「— (无效)」并挂原因 tooltip。"""
+        self._invalid_reason = reason
+        if reason:
+            unit = self._unit_of(self.get_meas_key())
+            suffix = f" {unit}" if unit else ""
+            self.value_label.setText(f"— (无效){suffix}")
+            self.value_label.setToolTip(f"无效: {reason}")
+        else:
+            self.value_label.setToolTip("")
 
     @staticmethod
     def _fmt(v: float) -> str:
@@ -334,7 +471,7 @@ class MeasurementPanel:
                     item.widget().deleteLater()
 
         # 标题
-        title = QLabel("测量项 (名称 / 通道 / 测量 / 起始~结束 ms)")
+        title = QLabel("测量项 (名称 / 通道 / 测量 / 起始~结束 ms；测量=比值 时改选分子/分母)")
         title.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(title)
 
@@ -396,13 +533,17 @@ class MeasurementPanel:
                 meas_key: str = "Vpp",
                 start_time: float = 0.0, end_time: float = 500.0,
                 stable_tag: str | None = None,
-                publish: bool = True):
+                publish: bool = True,
+                numerator_tag: str = "",
+                denominator_tag: str = ""):
         row = MeasurementRow(
             name=name, channel=channel, meas_key=meas_key,
             start_time=start_time, end_time=end_time,
             frame_duration=500.0,
             on_remove=self._on_remove,
             stable_tag=stable_tag,
+            numerator_tag=numerator_tag,
+            denominator_tag=denominator_tag,
         )
         row.name_changed.connect(self._on_row_name_changed)
         row.config_changed.connect(self._on_row_config_changed)
@@ -410,17 +551,31 @@ class MeasurementPanel:
         self._container_layout.insertWidget(
             self._container_layout.count() - 1, row
         )
+        self._refresh_ratio_candidates()
         if publish and not self._suspend_spec_publish:
             self._publish_specs_changed()
         return row
 
+    def _refresh_ratio_candidates(self):
+        """把全部标量测量项注入所有比值行的分子/分母下拉。"""
+        candidates = [
+            (row.get_name(), row.stable_tag)
+            for row in self._rows
+            if not row.is_ratio()
+        ]
+        for row in self._rows:
+            if row.is_ratio():
+                row.set_ratio_candidates(candidates)
+
     def _on_row_name_changed(self, row_id: int):
-        """行名称变更 → 通知回调"""
+        """行名称变更 → 刷新比值候选显示名 → 通知回调"""
+        self._refresh_ratio_candidates()
         if self._name_change_callback:
             self._name_change_callback()
 
     def _on_row_config_changed(self, row_id: int):
-        """行配置变更 → 发布完整测量规格快照"""
+        """行配置变更 → 刷新比值候选 → 发布完整测量规格快照"""
+        self._refresh_ratio_candidates()
         self._publish_specs_changed()
 
     def _on_add(self):
@@ -433,6 +588,7 @@ class MeasurementPanel:
             self._container_layout.removeWidget(row)
             row.deleteLater()
 
+            self._refresh_ratio_candidates()
             if self._event_bus:
                 self._event_bus.publish("measurement.remove", tag)
             if not self._suspend_spec_publish:
@@ -449,6 +605,8 @@ class MeasurementPanel:
                 "feature": row.get_meas_key(),
                 "start_ms": row.get_start_time(),
                 "end_ms": row.get_end_time(),
+                "numerator_tag": row.get_numerator_tag(),
+                "denominator_tag": row.get_denominator_tag(),
             }
             for row in self._rows
         ]
@@ -458,10 +616,15 @@ class MeasurementPanel:
         return {row.stable_tag: row.get_name() for row in self._rows}
 
     def update_from_fitted(self, snap: FittedSnapshot):
-        """用 FittedSnapshot 更新所有行的显示值。"""
+        """用 FittedSnapshot 更新所有行的显示值 (无效项显示原因)。"""
+        get_invalid = getattr(snap, "get_invalid", None)
         for row in self._rows:
             value = snap.get(row.stable_tag)
-            row.set_value(value)
+            reason = get_invalid(row.stable_tag) if get_invalid else None
+            if value is None and reason:
+                row.set_invalid_reason(reason)
+            else:
+                row.set_value(value)
 
     def get_subscriptions(self) -> list[dict]:
         """返回订阅信息, 供 FeedbackPanel 使用"""
@@ -487,6 +650,8 @@ class MeasurementPanel:
                     start_time=item.get("start_ms", 0.0),
                     end_time=item.get("end_ms", 500.0),
                     stable_tag=item.get("tag"),
+                    numerator_tag=item.get("numerator_tag", ""),
+                    denominator_tag=item.get("denominator_tag", ""),
                     publish=False,
                 )
         finally:
@@ -497,6 +662,11 @@ class MeasurementPanel:
     @staticmethod
     def _runtime_spec_from_item(item: dict) -> MeasurementSpec | None:
         """把 UI 行快照转成运行时规格；非法项保留 UI 行但不发布。"""
+        if (str(item.get("feature", "")).lower() == "ratio"
+                and item.get("numerator_tag") == item.get("denominator_tag")):
+            # 用户配置中间态 (分子/分母暂相同): 静默跳过, 不打告警
+            logger.debug("比值项 %s 分子与分母相同, 暂不发布", item.get("tag"))
+            return None
         try:
             return MeasurementSpec(
                 tag=item["tag"],
@@ -504,6 +674,8 @@ class MeasurementPanel:
                 feature=item["feature"],
                 start_ms=item["start_ms"],
                 end_ms=item["end_ms"],
+                numerator_tag=item.get("numerator_tag", ""),
+                denominator_tag=item.get("denominator_tag", ""),
             )
         except Exception as e:
             logger.warning(

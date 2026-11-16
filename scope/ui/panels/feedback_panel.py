@@ -341,7 +341,8 @@ class FeedbackDialog(QDialog):
     def __init__(self, parent=None, measurement_keys: list[str] | None = None,
                  measurement_display_map: dict[str, str] | None = None,
                  existing_measurement_keys: set[str] | None = None,
-                 target=None):
+                 target=None,
+                 ratio_tags: set[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("添加反馈 Worker")
         self.setMinimumWidth(440)
@@ -349,6 +350,7 @@ class FeedbackDialog(QDialog):
         self._measurement_keys = measurement_keys or []
         self._meas_display_map = measurement_display_map or {}
         self._existing_meas_keys: set[str] = existing_measurement_keys or set()
+        self._ratio_tags: set[str] = ratio_tags or set()
         self._result_config: Optional[FeedbackConfig] = None
         self._worker_id_internal: str = "w0"
         self._result_target = target
@@ -484,6 +486,9 @@ class FeedbackDialog(QDialog):
         form.addRow("Scale:", self._dac_scale)
         lbl = QLabel("B 通道电压反馈，输出自动限幅 0~5V")
         lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;"); form.addRow(lbl)
+        ratio_lbl = QLabel("选「比值」测量项即可把两通道比值锁到目标值")
+        ratio_lbl.setStyleSheet("color: #666; font-style: italic; font-size: 11px;")
+        form.addRow(ratio_lbl)
         return w
 
     def _on_chain_changed(self):
@@ -528,6 +533,14 @@ class FeedbackDialog(QDialog):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "IP 未填写",
                                 "DAC 反馈需要填写目标 IP 地址。"); return
+        if meas_key in self._ratio_tags and self._chain_combo.currentData() != "dac":
+            # 比值反馈目前只在 DAC 链路上验证过: 仅提示, 不阻断
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "比值反馈",
+                "比值反馈目前只在 DAC 链路 (B 通道电压) 上使用，"
+                "当前链路可能无法收敛。",
+            )
         pid_config = PidConfig(
             preset_value=self._preset.value(), kp=self._kp.value(), ki=self._ki.value(),
             kd=self._kd.value(), i_limit=self._i_limit.value(),
@@ -817,12 +830,17 @@ class FeedbackPanel(QWidget):
         # 获取可用测量项列表
         meas_tags: list[str] = []
         display_map: dict[str, str] = {}  # stable_tag → display_name
+        ratio_tags: set[str] = set()
         if self._measurement_panel:
             try:
                 if hasattr(self._measurement_panel, "get_display_name_mapping"):
                     display_map = dict(self._measurement_panel.get_display_name_mapping())
                 specs = self._measurement_panel.get_measurement_specs()
                 meas_tags = [s["tag"] for s in specs if s.get("tag")]
+                ratio_tags = {
+                    s["tag"] for s in specs
+                    if str(s.get("feature", "")).lower() == "ratio" and s.get("tag")
+                }
             except Exception as e:
                 logger.warning("获取测量项列表失败: %s", e)
 
@@ -847,7 +865,8 @@ class FeedbackPanel(QWidget):
 
         dlg = FeedbackDialog(self, measurement_keys=meas_tags,
                              measurement_display_map=display_map,
-                             existing_measurement_keys=existing_keys)
+                             existing_measurement_keys=existing_keys,
+                             ratio_tags=ratio_tags)
         dlg._worker_id_internal = worker_id
         if dlg.exec() == QDialog.DialogCode.Accepted:
             config = dlg.result_config
