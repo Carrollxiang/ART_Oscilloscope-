@@ -200,3 +200,64 @@ class TestSenderClose:
         assert ConnectionPoolManager._refcount[("10.9.9.9", 18863)] == 2
         await s1.close()
         await s2.close()
+
+
+class TestParseReadFallback:
+    """DAC_Server 精简版不回填 b_voltage 时的串口回显回退解析。"""
+
+    RESP_NO_VOLT = {
+        "status": "success",
+        "command": "READ",
+        "a_voltage": None,
+        "b_voltage": None,
+        "device_response": ["A=0mV B=540mV ZEROA=-32 ZEROB=-32"],
+        "command_count": 19,
+        "timestamp": "2026-10-28T18:12:57.989",
+    }
+
+    def test_fallback_parses_mv(self, sender):
+        assert sender._parse_read(self.RESP_NO_VOLT) == pytest.approx(0.54)
+
+    def test_b_voltage_preferred_when_present(self, sender):
+        resp = {"status": "success", "b_voltage": 2.5,
+                "device_response": ["B=1000mV"]}
+        assert sender._parse_read(resp) == pytest.approx(2.5)
+
+    def test_zero_b_voltage_is_not_treated_as_missing(self, sender):
+        resp = {"status": "success", "b_voltage": 0.0,
+                "device_response": ["B=1000mV"]}
+        assert sender._parse_read(resp) == pytest.approx(0.0)
+
+    def test_fallback_parses_volt_unit(self, sender):
+        resp = {"status": "success", "b_voltage": None,
+                "device_response": ["A=0mV B=1.200V ZEROA=-32 ZEROB=-32"]}
+        assert sender._parse_read(resp) == pytest.approx(1.2)
+
+    def test_zerob_not_matched(self, sender):
+        resp = {"status": "success", "b_voltage": None,
+                "device_response": ["ZEROA=-32 ZEROB=-32"]}
+        assert sender._parse_read(resp) is None
+
+    def test_device_response_as_string(self, sender):
+        resp = {"status": "success", "b_voltage": None,
+                "device_response": "A=0mV B=750mV ZEROA=-32 ZEROB=-32"}
+        assert sender._parse_read(resp) == pytest.approx(0.75)
+
+    def test_last_line_wins(self, sender):
+        resp = {"status": "success", "b_voltage": None,
+                "device_response": ["B=100mV", "B=2500mV"]}
+        assert sender._parse_read(resp) == pytest.approx(2.5)
+
+    def test_no_device_response_returns_none(self, sender):
+        assert sender._parse_read({"status": "success", "b_voltage": None}) is None
+
+    def test_full_scale_mv(self, sender):
+        resp = {"status": "success", "b_voltage": None,
+                "device_response": ["B=5000mV"]}
+        assert sender._parse_read(resp) == pytest.approx(5.0)
+
+    async def test_adjust_delta_uses_fallback_voltage(self, sender):
+        sender._mock_conn.root.read.return_value = dict(self.RESP_NO_VOLT)
+        assert await sender.adjust_delta(0.5)          # 0.54 + 0.5 = 1.04
+        sender._mock_conn.root.set_ab.assert_called_once_with(0, pytest.approx(1.04))
+        assert sender.last_volt == pytest.approx(1.04)

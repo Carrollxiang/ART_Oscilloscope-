@@ -12,12 +12,21 @@ DacSender — DAC 目标发送器。
   - conn.root.read()          -> {'status': 'success', 'b_voltage': 1.0, ...}
   - conn.root.set_b(v)        单通道设置 (use_set_ab=False 时的回退路径)
   - conn.root.set_ab(a, b)    一次设置 A/B 两个通道电压
+
+读取回退 (v0.9.3):
+  DAC_Server 精简版不回填 read() 的 a_voltage/b_voltage 字段, 真实电压只在
+  串口回显里:
+      {'b_voltage': None,
+       'device_response': ['A=0mV B=540mV ZEROA=-32 ZEROB=-32']}
+  因此 b_voltage 为空时从 device_response 解析 "B=540mV" (支持 mV/V),
+  否则首次 read 永远失败, 反馈根本无法启动 (不 set 服务端就永远没有 b_voltage)。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -32,6 +41,15 @@ DEFAULT_VOLT_RANGE = (0.0, 5.0)
 
 # A 通道电压: 本项目只用 B 通道做反馈, A 每次固定写 0V
 A_VOLTAGE = 0.0
+
+# 串口回显中的 B 通道电压: "B=540mV" / "B=1.200V"
+# 前置负向断言排除 "ZEROB=-32"; 正则刻意不使用反斜杠转义字符类, 只用字符类写法
+_B_VOLT_RE = re.compile(
+    r"(?<![A-Za-z0-9])B *="
+    r" *([-+]?[0-9]+(?:[.][0-9]+)?)"
+    r" *(mV|V)(?![A-Za-z])",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -90,6 +108,7 @@ class DACSender:
             ip, port, pool_config,
         )
         self._last_volt: Optional[float] = None
+        self._fallback_logged = False        # 回退解析成功时只提示一次
 
     # ── 属性 ────────────────────────────────────────────────────
 
@@ -226,9 +245,12 @@ class DACSender:
 
     def _parse_read(self, resp) -> Optional[float]:
         """
-        从 read() 响应中提取 b_voltage (单位 V)。
+        从 read() 响应中提取 B 通道电压 (单位 V)。
 
-        异常响应 (非 dict / status != "success" / 缺字段 / 非数值) 返回 None。
+        优先取 b_voltage; 该字段为空时回退解析 device_response 的串口回显
+        (DAC_Server 精简版不回填 a_voltage/b_voltage)。
+
+        异常响应 (非 dict / status != "success" / 无法得到数值) 返回 None。
         """
         try:
             status = resp.get("status")
@@ -247,18 +269,62 @@ class DACSender:
             )
             return None
 
-        if volt is None:
+        if volt is not None:
+            try:
+                return float(volt)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "DAC read b_voltage 非法 %s:%d: %r",
+                    self._ip, self._port, volt,
+                )
+                return None
+
+        # b_voltage 为空 → 从串口回显解析 (否则反馈永远无法启动)
+        try:
+            device_response = resp.get("device_response")
+        except Exception:
+            device_response = None
+        parsed = self._parse_device_response(device_response)
+        if parsed is None:
             logger.warning(
-                "DAC read 响应缺少 b_voltage %s:%d: %r",
+                "DAC read 缺少 b_voltage 且 device_response 无法解析 %s:%d: %r",
                 self._ip, self._port, resp,
             )
             return None
 
-        try:
-            return float(volt)
-        except (TypeError, ValueError):
-            logger.warning(
-                "DAC read b_voltage 非法 %s:%d: %r",
-                self._ip, self._port, volt,
+        if not self._fallback_logged:
+            self._fallback_logged = True
+            logger.info(
+                "DAC %s:%d 未回填 b_voltage, 改用串口回显解析: %r → %.4f V",
+                self._ip, self._port, device_response, parsed,
             )
+        return parsed
+
+    @staticmethod
+    def _parse_device_response(device_response) -> Optional[float]:
+        """
+        从 STM32 串口回显中解析 B 通道电压 (V)。
+
+        回显形如 "A=0mV B=540mV ZEROA=-32 ZEROB=-32":
+          - 只认 "B=" 后带单位的数值, "ZEROB=-32" 不会被误匹配
+          - 单位 mV → 除以 1000; V → 原值
+          - 多条回显时取最后一条可解析的
+        """
+        if device_response is None:
             return None
+        if isinstance(device_response, str):
+            lines = [device_response]
+        else:
+            try:
+                lines = list(device_response)
+            except TypeError:
+                return None
+
+        for line in reversed(lines):
+            match = _B_VOLT_RE.search(str(line))
+            if not match:
+                continue
+            value = float(match.group(1))
+            unit = match.group(2).lower()
+            return value / 1000.0 if unit == "mv" else value
+        return None
