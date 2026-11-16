@@ -4,7 +4,7 @@
 >
 > **当前阅读入口**: 先看 [README.md](./README.md)。本文包含历史阶段记录，历史阶段的测试数量与结构示例为当时实测值，不代表当前基线。
 >
-> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；v0.9 DAC（B 通道电压 0~5V）目标发送已实现；测试基线为 `217 passed`。
+> **当前基线**: v0.6 反馈 Worker 架构已实现；设备配置、测量规格、反馈 worker 命令已走 EventBus 控制面；`feedback.status` 与 `runtime.metrics` 状态面已接入；v0.7 AD9910/RTMQ 目标设备发送与 rpyc 连接池已实现（AD9910 实测可用）；v0.9 DAC（B 通道电压 0~5V）目标发送已实现；v0.9.2 比值反馈（测量面板新增「比值」行，两通道同帧相除作为 DAC 反馈被控量）已实现；测试基线为 `282 passed`。
 
 ---
 
@@ -514,6 +514,7 @@ python -m scope.main
 | **v0.8.2** | **2026/8** | **内存泄漏修复: pyqtgraph useOpenGL 默认关闭 (GL 缓存每帧 setData 泄漏 ~500MB/h); UIBridge 丢旧留新; 主线程 20Hz 合并刷新 + time_axis 缓存; MiniChart 节流/降采样; EventBus.unsubscribe; 修复 update_worker_target 连接泄漏; feedback.status 节流 10Hz + 测试基线 184** |
 | **v0.9** | **2026/10** | **DAC 目标设备发送 (B 通道电压 0~5V): DACTarget/DACSender, 每帧 read→clamp→set_ab(0, v), 反馈面板新增 DAC 链路 + 测试基线 217** |
 | **v0.9.1** | **2026/10** | **反馈方向支持: 面板放开增益 (Kp/Ki/Kd ±10000) 与 DAC scale (±1000) 输入范围, 可用负值反转反馈极性 + 测试基线 217** |
+| **v0.9.2** | **2026/10** | **比值反馈: MeasurementSpec 新增 Ratio (引用两个标量测量项同帧相除), 测量面板新增「比值」行, 分母接近 0 → FittedSnapshot.invalid_reasons → worker 自动暂停 (stop_reason); DAC 链路可直接锁定两通道比值 + 测试基线 282** |
 
 ---
 
@@ -527,4 +528,4 @@ python -m scope.main
 - ✅ 反馈控制 UI 已发布 `feedback.worker.command`，由 FeedbackCommandWorker 应用
 - ✅ 反馈状态已发布 `feedback.status`，由 UIBridge 桥接到 FeedbackPanel / 状态栏
 - ✅ 运行时指标已发布 `runtime.metrics`，供后续诊断面板消费
-- ✅ 当前测试基线: 217/217 通过
+- ✅ 当前测试基线: 282/282 通过

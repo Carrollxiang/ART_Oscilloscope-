@@ -179,11 +179,13 @@ class MeasurementSpec:
     定义如何在 RawFrame 上切片并计算单个测量值。
     """
     tag: str                        # 语义名，如 "CH1_vpp"
-    channel: int                    # 通道索引 (0-based)
+    channel: int = 0                # 通道索引 (0-based)，比值规格不用
     start_ms: float = 0.0           # 时间窗起始 (毫秒)
     end_ms: float = 0.0             # 时间窗结束 (0 表示帧结尾)
-    feature: str = "Vpp"            # 特征类型: Vpp, Vmax, Vmin, Mean
+    feature: str = "Vpp"            # 特征类型: Vpp, Vmax, Vmin, Mean, Ratio
     semantic: str = ""              # 可选说明
+    numerator_tag: str = ""         # 比值分子 (feature="Ratio" 时必填)
+    denominator_tag: str = ""       # 比值分母 (feature="Ratio" 时必填)
 ```
 
 **特性**:
@@ -200,6 +202,13 @@ class MeasurementSpec:
 | `Vmax` | 最大值 | `np.max(segment)` |
 | `Vmin` | 最小值 | `np.min(segment)` |
 | `Mean` | 平均值 | `np.mean(segment)` |
+| `Ratio` (v0.9.2) | 两个标量测量项的同帧比值 | `numerator_tag` / `denominator_tag` 相除 |
+
+**比值规格** (v0.9.2):
+- 只引用标量规格（禁止 ratio 引用 ratio），两个源取自**同一帧**第一遍计算结果
+- `_process_frame` 因此分两遍：标量遍 → 比值遍
+- 分母保护: `|分母| < RATIO_MIN_DENOM_ABS (1e-9)` 或源缺失 → 本帧不产出，原因写入 `FittedSnapshot.invalid_reasons[tag]`
+- 消费侧（`FeedbackManager`）据此让对应 worker 自动暂停并写 `stop_reason`
 
 **已删除** (v0.3):
 - ❌ `Vrms` (有效值)
@@ -723,13 +732,15 @@ def _on_ui_fitted(self, fitted_snapshot: FittedSnapshot):
 | `test_trigger_detector.py` | 8 | ✅ 100% |
 | `test_pid_controller.py` | 11 | ✅ 100% |
 | `test_rtmq_sender.py` | 6 | ✅ 100% |
-| `test_dac_sender.py` | 25 | ✅ 100% |
+| `test_dac_sender.py` | 35 | ✅ 100% |
 | `test_feedback_command_worker.py` | 5 | ✅ 100% |
 | `test_config_manager.py` | 4 | ✅ 100% |
 | `test_measurement_config_worker.py` | 2 | ✅ 100% |
+| `test_ratio_measurement.py` | 29 | ✅ 100% |
+| `test_measurement_panel.py` | 22 | ✅ 100% |
 | `test_channel_panel_source.py` | 1 | ✅ 100% |
 | `test_event_bus.py` | 8 | ✅ 100% |
-| **总计** | **217** | **✅ 100%** |
+| **总计** | **282** | **✅ 100%** |
 
 ---
 

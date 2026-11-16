@@ -57,6 +57,18 @@ MeasurementProcessor UIBridge         FeedbackManager
 | `feedback.status` | `FeedbackStatusSnapshot` | 2 | drop_oldest | FeedbackManager | UIBridge -> MainWindow / FeedbackPanel |
 | `runtime.metrics` | `RuntimeMetricsSnapshot` | 2 | drop_oldest | ScopeApp metrics task | 诊断面板预留 |
 
+**`FittedSnapshot` 字段**（v0.9.2 起）:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `sequence_num` | `int` | 帧序号 |
+| `event_measurements` | `dict[str, float]` | 有效测量值 (tag → value)，含标量测量与比值测量 |
+| `invalid_reasons` | `dict[str, str]` | 本帧算不出有效值的测量项 (tag → 原因)，如比值分母接近 0；这些 tag 不会出现在 `event_measurements` |
+| `timestamp` / `pipeline_latency_ms` | `float` | 元信息 |
+
+`as_flat_dict()` 只返回 `event_measurements`（反馈分发用），`get_invalid(tag)` 读取无效原因。
+`FeedbackManager` 分发时先查 `invalid_reasons`：命中即让对应 worker 自动暂停（`stop_reason`），该帧不进 PID。
+
 **对比 v0.3**:
 - ✅ 删除 `frame.measured` topic
 - ✅ `AnalysisResult` → `RawFrame` (简化为 4 个字段)

@@ -78,6 +78,20 @@
 
 ---
 
+## ✅ 已完成 — 比值反馈 (v0.9.2)
+
+- [x] `MeasurementSpec` 新增 `numerator_tag` / `denominator_tag` + `is_ratio()`，Ratio 校验（分子/分母必填、互不相同、不自引用）
+- [x] `MeasurementProcessor` 同帧两遍计算（标量遍 → 比值遍），比值只引用标量结果，禁止 ratio 引用 ratio
+- [x] 分母保护 `RATIO_MIN_DENOM_ABS = 1e-9`：无效帧不产出值，原因写入 `FittedSnapshot.invalid_reasons`（告警按 tag 节流 1s）
+- [x] `FeedbackWorker.report_invalid()` + `FeedbackManager._dispatch_snapshot()`：无效输入自动暂停并写 `stop_reason`，UI 卡片直接显示原因
+- [x] 测量面板「测量」列新增「比值」，行内分子/分母下拉（只列标量行、源被删保留并标缺失、留空名称自动生成 `A/B`）
+- [x] 反馈对话框 DAC 页说明 + 非 DAC 链路选比值项时非阻断提示（目前只在 DAC loop 验证）
+- [x] **(v0.9.3)** 修复 DAC 反馈无法启动: DAC_Server 精简版 `read()` 不回填 `b_voltage`（恒 `None`），改为回退解析 `device_response` 的 `B=540mV`
+- [x] 修复比值行选择被回滚（刷新候选时用旧字段恢复选择）+ 分母默认不再与分子相同；比值行隐藏无意义的「通道」列
+- [x] `tests/test_ratio_measurement.py` (29) + `tests/test_measurement_panel.py` (22) + `test_dac_sender.py` (+10)，测试基线 221 → 282
+
+---
+
 ## ✅ 已完成 — 反馈系统 v0.6 重构
 
 ### 核心变更

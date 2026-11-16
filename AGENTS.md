@@ -43,6 +43,9 @@ Current required topics:
 - `feedback.status`
 - `runtime.metrics`
 
+`frame.fitted` 载荷 `FittedSnapshot` 含 `invalid_reasons` (tag → 原因)；比值测量
+分母接近 0 时不产出值而登记原因，`FeedbackManager` 据此让该 worker 自动暂停。
+
 Planned status topics:
 
 - `device.status`
@@ -72,7 +75,7 @@ Use the project conda environment, not the global Python installation:
 Current expected result:
 
 ```text
-217 passed
+282 passed
 ```
 
 ## Documentation Rules

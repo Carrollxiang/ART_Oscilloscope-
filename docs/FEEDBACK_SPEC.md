@@ -1,6 +1,6 @@
 # 反馈系统架构规范 (v0.6/v0.7)
 
-> 状态: ✅ 已实现 (v0.6 Worker 架构; v0.7 目标设备发送 + rpyc 连接池; v0.9 DAC 电压反馈)  
+> 状态: ✅ 已实现 (v0.6 Worker 架构; v0.7 目标设备发送 + rpyc 连接池; v0.9 DAC 电压反馈; v0.9.2 比值反馈)  
 > 最后更新: 2026/6
 
 ---
@@ -474,7 +474,8 @@ TargetConfig = Ad9910Target | RtmqTarget | DACTarget
 
 - `Ad9910Sender`: 按 `Ad9910Mapping.mode` 将 PID delta 映射为频率/幅度调整，经 rpyc 调用 `get_ad9910_service()` 下发
 - `RtmqSender`: delta 直接作为目标值，经 rpyc 调用 `set_sideband(card_index, sbg_channel, value)`（远端接口为假设，参考 `feedback_example/RTMQ_rpyc_server.py`）
-- `DACSender` (v0.9): 每帧"读-改-写" —— `conn.root.read()` 取设备当前 `b_voltage`(单位 V) → `new = clamp(cur + delta * scale, 0.0, 5.0)` → `conn.root.set_ab(0, new)`（第一参数为 A 通道电压, 固定传 0；`use_set_ab=False` 时回退 `set_b(new)`）。`scale` 默认 `1.0`，即 delta 直接作为电压增量；电压上限由 `DACMapping(min_volt, max_volt)` 保证，最终写给 DAC 的值恒在 0~5V。read 失败 / `status != "success"` / 缺 `b_voltage` / rpyc 异常 → 返回 `False`，交由 worker 的 `RETRY_COOLDOWN_S=5s` 冷却
+- `DACSender` (v0.9): 每帧"读-改-写" —— `conn.root.read()` 取设备当前 `b_voltage`(单位 V) → `new = clamp(cur + delta * scale, 0.0, 5.0)` → `conn.root.set_ab(0, new)`（第一参数为 A 通道电压, 固定传 0；`use_set_ab=False` 时回退 `set_b(new)`）。`scale` 默认 `1.0`，即 delta 直接作为电压增量；电压上限由 `DACMapping(min_volt, max_volt)` 保证，最终写给 DAC 的值恒在 0~5V。read 失败 / `status != "success"` / 无法得到电压 / rpyc 异常 → 返回 `False`，交由 worker 的 `RETRY_COOLDOWN_S=5s` 冷却
+- **读取回退 (v0.9.3)**: DAC_Server 精简版的 `read()` 不回填 `a_voltage`/`b_voltage`（恒为 `None`），真实电压只在串口回显里。`_parse_read` 优先取 `b_voltage`，为空时回退解析 `device_response` 的 `B=540mV`（支持 mV/V，`ZEROB=-32` 不会误匹配）；否则首帧读不到值 → 永远不发送，反馈根本无法启动
 
 **连接池** (`scope/io/rpyc_pool.py`):
 
@@ -498,6 +499,42 @@ class ConnectionPoolManager:
 - 面板已放开输入范围以允许负值：`Kp`/`Ki`/`Kd` ∈ ±10000，DAC `scale` ∈ ±1000；`output_limit` / `i_limit` / `deadband` 保持非负（负值无物理意义）
 - 死区、单帧误差保护、`output_limit` / `i_limit` 均基于 `|error|` 或对称限幅，**与方向无关**
 - 极性接错时误差不降反增，`trend_window` 误差趋势检测会在 N 次成功反馈后自动暂停该 worker —— 可作为极性自检信号
+
+### 4.4 比值反馈（Ratio，v0.9.2）
+
+把两个测量项的**同帧比值**作为被控量锁到目标值（`preset_value`），目前只在 DAC 链路上使用。
+
+**测量项定义**（`scope/runtime/measurement_spec.py`）:
+
+```python
+MeasurementSpec(
+    tag="m19",                 # UI 行的稳定 tag，反馈侧直接订阅
+    feature="Ratio",
+    numerator_tag="m1",        # 分子: 另一个标量测量项的 tag
+    denominator_tag="m2",      # 分母: 另一个标量测量项的 tag
+)
+```
+
+- 比值规格**只能引用标量规格**（Vpp / Vmax / Vmin / Mean），不允许 ratio 引用 ratio
+- 分子/分母不得相同，也不得引用自身（`__post_init__` 抛 `ValueError`）
+- UI 入口: 测量面板「测量」列选「比值」，行内出现分子/分母下拉（候选只列标量行，行改名后自动刷新；源行被删时保留原选择并标注「缺失」）
+- 比值行没有"自身通道"概念，面板隐藏其「通道」列（源通道已显示在下拉文本里）；新行默认分母自动取与分子不同的项
+
+**计算**（`MeasurementProcessor._process_frame`，同帧两遍）:
+
+1. 第一遍算全部标量规格 → `event_measurements`
+2. 第二遍算比值规格: `value = numerator / denominator`，两个源只取第一遍结果（同一帧内相除，无跨帧配对）
+3. 分母保护: `|分母| < RATIO_MIN_DENOM_ABS (1e-9)` 或源缺失/源无效 → 本帧不产出该比值，原因写入 `FittedSnapshot.invalid_reasons[tag]`；告警按 tag 节流 1s
+
+**反馈侧联动**（`FeedbackManager._dispatch_snapshot` → `FeedbackWorker.report_invalid`）:
+
+- 命中 `invalid_reasons` → worker **自动暂停**（RUNNING → PAUSED），`stop_reason = "输入无效: <原因>"`，UI 卡片显示 `⛔ 原因`；该帧不执行 PID、不发送
+- 用户 `resume()` 后清空原因与趋势窗口；若分母仍接近 0 会再次自动暂停（把分母拉回正常范围即可）
+- 有效帧照常走 PID → `DACSender.adjust_delta(delta)`，其余保护（死区、单帧误差保护、趋势检测、失败冷却）语义不变
+
+**配套 DAC 用法**: 目标值填期望比值（无量纲）。极性仍按 4.3 —— 翻 `Kp` 或翻 `scale` 之一；若"比值变大反而电压变小"，翻其中一个符号，或对调分子/分母。
+
+**调试提示**: `max_error_ratio` 默认 `0.30`，比值离目标较远时（如初始 0.5、目标 2.0）会被单帧误差保护连续跳帧，表现为"加了 worker 但 DAC 不动"。首次整定建议把「误差保护」设为 `0`（禁用）或调大，收敛后再收紧到 0.1~0.3。
 
 ---
 
@@ -614,7 +651,9 @@ def load_from_file(main_window, filepath: str) -> bool:
 | `test_ad9910_sender.py` (✅ 16 tests) | AD9910 发送器: 频率/幅度映射、delta 调整、限幅 |
 | `test_rpyc_pool.py` (✅ 17 tests) | 连接池: 借还/复用/超时/健康检查/引用计数/取消安全/自死锁回归 |
 | `test_rtmq_sender.py` (✅ 6 tests) | RTMQ 发送器: set_sideband 目标值下发 |
-| `test_dac_sender.py` (✅ 25 tests) | DAC 发送器: read→clamp(0~5V)→set_ab(0,v)、双向限幅、scale 缩放、read 异常/rpc 异常、set_b 回退、池共享/释放 |
+| `test_dac_sender.py` (✅ 35 tests) | DAC 发送器: read→clamp(0~5V)→set_ab(0,v)、双向限幅、scale 缩放、read 异常/rpc 异常、set_b 回退、池共享/释放 |
+| `test_ratio_measurement.py` (✅ 29 tests) | 比值规格校验、同帧相除、分母保护(除零/近零)、源缺失、禁止 ratio 引用 ratio、`invalid_reasons` 语义、`report_invalid` 自动暂停、manager 分发隔离 |
+| `test_measurement_panel.py` (✅ 22 tests) | 比值行控件切换、候选注入/源缺失保留、配置往返与旧配置兼容、自动命名、运行时 spec 转换与发布、无效值显示、非 DAC 链路提示 |
 
 ### 7.2 集成测试
 
@@ -646,6 +685,8 @@ def load_from_file(main_window, filepath: str) -> bool:
 | **v0.7** | **✅ 已实现** | **目标设备发送（AD9910 / RTMQ）+ rpyc 连接池** |
 | **v0.7.1** | **✅ 已修复** | **连接池自死锁修复 (AD9910 反馈实测可用) + 失败冷却/in-flight** |
 | **v0.9** | **✅ 已实现** | **DAC 目标发送（B 通道电压 0~5V）: read → clamp → set_ab(0, v) + 25 测试** |
+| **v0.9.1** | **✅ 已实现** | **反馈方向支持: 面板放开 Kp/Ki/Kd 与 DAC scale 输入范围（可用负值反转极性）** |
+| **v0.9.2** | **✅ 已实现** | **比值反馈: MeasurementSpec Ratio（引用两个标量测量项同帧相除）+ 测量面板「比值」行 + 分母异常自动暂停 + 61 测试** |
 | **v0.8** | 🔲 未来 | 批量发送 + Web 界面监控 + 多级 PID |
 
 ### 8.1 修复记录 (v0.7.1)
