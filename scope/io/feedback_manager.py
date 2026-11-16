@@ -205,6 +205,41 @@ class FeedbackManager:
 
     # ── 数据分发 ───────────────────────────────────────────────
 
+    async def _dispatch_snapshot(self, snapshot):
+        """把一帧测量快照分发给所有非 IDLE worker。
+
+        无效测量项 (如比值分母接近 0) 不走 PID: 直接让对应 worker
+        自动暂停并记录原因, 避免用无效值计算 delta。
+        """
+        flat = snapshot.as_flat_dict()
+        invalid_reasons = getattr(snapshot, "invalid_reasons", None) or {}
+
+        tasks = []
+        async with self._lock:
+            for worker in self._workers.values():
+                # RUNNING/PAUSED 都接收帧: PAUSED 在 process() 内
+                # 只刷新订阅值 (last_value/last_error), 不执行
+                # PID 计算与发送; IDLE (已停止) 不接收, 停止即停订阅。
+                if worker.status == SlotStatus.IDLE:
+                    continue
+                key = worker.measurement_key
+                reason = invalid_reasons.get(key)
+                if reason:
+                    worker.report_invalid(reason)
+                    continue
+                value = flat.get(key)
+                if value is not None:
+                    tasks.append(worker.process(value))
+
+        if tasks:
+            # 注意: 不能对 process 施加帧级 wait_for 超时。
+            # rpyc 建连/调用最坏可达 18s (3s × 6 次退避重试),
+            # 取消无法中断 executor 线程中的同步调用, 只会导致
+            # 连接泄漏与业务调用静默丢失。网络超时由连接池自身
+            # (connect_timeout / acquire_timeout) 兜底, 并发
+            # 堆积由 FeedbackWorker 的 in-flight 标志防重叠。
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _dispatch_loop(self):
         """分发协程：订阅 → 提取 → 并发分发"""
         if not self._queue:
@@ -215,29 +250,7 @@ class FeedbackManager:
             try:
                 snapshot = self._queue.get_nowait()
                 if snapshot is not None:
-                    # 只调用一次 as_flat_dict()
-                    flat = snapshot.as_flat_dict()
-
-                    # 并发分发给所有 worker
-                    tasks = []
-                    async with self._lock:
-                        for worker in self._workers.values():
-                            # RUNNING/PAUSED 都接收帧: PAUSED 在 process() 内
-                            # 只刷新订阅值 (last_value/last_error), 不执行
-                            # PID 计算与发送; IDLE (已停止) 不接收, 停止即停订阅。
-                            if worker.status != SlotStatus.IDLE:
-                                value = flat.get(worker.measurement_key)
-                                if value is not None:
-                                    tasks.append(worker.process(value))
-
-                    if tasks:
-                        # 注意: 不能对 process 施加帧级 wait_for 超时。
-                        # rpyc 建连/调用最坏可达 18s (3s × 6 次退避重试),
-                        # 取消无法中断 executor 线程中的同步调用, 只会导致
-                        # 连接泄漏与业务调用静默丢失。网络超时由连接池自身
-                        # (connect_timeout / acquire_timeout) 兜底, 并发
-                        # 堆积由 FeedbackWorker 的 in-flight 标志防重叠。
-                        await asyncio.gather(*tasks, return_exceptions=True)
+                    await self._dispatch_snapshot(snapshot)
 
                     # 状态发布节流 (最多 10Hz): 状态快照是给 UI 的,
                     # 帧级频率发布徒增主线程压力, 且 UIBridge 本身丢旧留新。

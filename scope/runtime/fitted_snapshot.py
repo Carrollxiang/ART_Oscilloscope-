@@ -8,8 +8,10 @@ MeasurementProcessor 消费 RawFrame 后，产出此轻量快照。
     snap = FittedSnapshot(
         sequence_num=42,
         event_measurements={"CH1_vpp": 3.3, "A_power": 5.3},
+        invalid_reasons={"ratio_12": "分母接近 0 (1e-12)"},
     )
     value = snap.get("CH1_vpp")
+    reason = snap.get_invalid("ratio_12")
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ class FittedSnapshot:
 
     # 测量结果 (MeasurementSpec.tag → value)
     event_measurements: dict[str, float] = field(default_factory=dict)
+
+    # 本帧算不出有效值的测量项 (tag → 原因)，如比值分母接近 0 / 源测量缺失。
+    # 这些 tag 不会出现在 event_measurements 中。
+    invalid_reasons: dict[str, str] = field(default_factory=dict)
 
     # 元信息
     timestamp: float = field(default_factory=time.monotonic)
@@ -50,6 +56,10 @@ class FittedSnapshot:
             return None
         return self.event_measurements.get(key)
 
+    def get_invalid(self, key: str) -> Optional[str]:
+        """获取测量项本帧无效的原因 (有效或未登记时返回 None)。"""
+        return self.invalid_reasons.get(key)
+
     def as_flat_dict(self) -> dict[str, float]:
-        """返回所有测量值（用于反馈 dispatch）"""
+        """返回所有有效测量值（用于反馈 dispatch）"""
         return dict(self.event_measurements)

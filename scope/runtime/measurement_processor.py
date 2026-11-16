@@ -5,8 +5,11 @@ MeasurementProcessor — 测量处理器
 
 职责:
   1. 订阅 frame.raw topic
-  2. 遍历 MeasurementSpec 列表计算每个测量值
+  2. 遍历 MeasurementSpec 列表计算每个测量值（先标量规格，再比值规格）
   3. 发布 FittedSnapshot 到 frame.fitted topic
+
+比值规格 (feature="Ratio") 引用两个标量规格的 tag，同帧内相除；
+分母接近 0 或源缺失时本帧不产出该值，原因写入 FittedSnapshot.invalid_reasons。
 
 运行模型:
   - 独立线程，不阻塞采集线程
@@ -16,6 +19,7 @@ MeasurementProcessor — 测量处理器
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import Optional
@@ -28,6 +32,12 @@ from .fitted_snapshot import FittedSnapshot
 from .measurement_spec import MeasurementSpec
 
 logger = logging.getLogger(__name__)
+
+# 比值规格的分母保护阈值: |分母| 小于该值视为除零风险, 本帧不产出该比值。
+RATIO_MIN_DENOM_ABS: float = 1e-9
+
+# 同一测量项的无效告警节流间隔 (秒): 比值无效是逐帧事件, 不节流会刷爆日志
+INVALID_LOG_INTERVAL_S: float = 1.0
 
 
 class MeasurementProcessor:
@@ -57,6 +67,9 @@ class MeasurementProcessor:
         # 统计
         self._frames_processed = 0
         self._total_latency_ms = 0.0
+
+        # 无效告警节流: tag → 上次告警 monotonic 时间
+        self._invalid_log_ts: dict[str, float] = {}
     
     @property
     def metrics(self) -> dict:
@@ -125,21 +138,41 @@ class MeasurementProcessor:
         t0 = time.monotonic()
         
         measurements = {}
+        invalid_reasons: dict[str, str] = {}
         with self._lock:
             specs = list(self._specs)
-        
-        for spec in specs:
+
+        scalar_specs = [s for s in specs if not s.is_ratio()]
+        ratio_specs = [s for s in specs if s.is_ratio()]
+
+        # ── 第一遍: 标量规格 (单通道切片取特征) ──
+        for spec in scalar_specs:
             try:
                 value = self._compute(frame, spec)
                 if value is not None:
                     measurements[spec.tag] = value
             except Exception as e:
                 logger.warning(f"计算 spec '{spec.tag}' 失败: {e}")
+
+        # ── 第二遍: 比值规格 (只引用本帧已算出的标量值, 同帧相除) ──
+        # scalar_values 取副本, 使比值结果不会回流到源池 — 禁止 ratio 引用 ratio。
+        scalar_values = dict(measurements)
+        for spec in ratio_specs:
+            try:
+                value, reason = self._compute_ratio(spec, scalar_values)
+            except Exception as e:
+                value, reason = None, f"计算异常: {e}"
+            if value is None:
+                invalid_reasons[spec.tag] = reason
+                self._log_invalid_ratio(spec.tag, reason)
+            else:
+                measurements[spec.tag] = value
         
         latency_ms = (time.monotonic() - t0) * 1000
         snap = FittedSnapshot(
             sequence_num=frame.sequence_num,
             event_measurements=measurements,
+            invalid_reasons=invalid_reasons,
             pipeline_latency_ms=latency_ms,
         )
         self._event_bus.publish("frame.fitted", snap)
@@ -154,6 +187,43 @@ class MeasurementProcessor:
                 f"measurements={len(measurements)}"
             )
     
+    @staticmethod
+    def _compute_ratio(
+        spec: MeasurementSpec,
+        values: dict[str, float],
+    ) -> tuple[Optional[float], str]:
+        """
+        计算比值规格: 分子 / 分母, 两个源都取自本帧标量结果。
+
+        Returns:
+            (value, "")   计算成功
+            (None, reason) 源缺失或分母接近 0; reason 为人类可读原因
+        """
+        num = values.get(spec.numerator_tag)
+        if num is None:
+            return None, f"分子测量 '{spec.numerator_tag}' 本帧无有效值"
+
+        den = values.get(spec.denominator_tag)
+        if den is None:
+            return None, f"分母测量 '{spec.denominator_tag}' 本帧无有效值"
+
+        if math.isnan(num) or math.isnan(den):
+            # NaN 会污染 PID 输出并最终写进 DAC, 直接判为无效
+            return None, "源测量值为 NaN"
+
+        if abs(den) < RATIO_MIN_DENOM_ABS:
+            return None, f"分母接近 0 ({den:.6g})"
+
+        return num / den, ""
+
+    def _log_invalid_ratio(self, tag: str, reason: str):
+        """比值无效告警 — 同一 tag 最多每 INVALID_LOG_INTERVAL_S 秒一条。"""
+        now = time.monotonic()
+        if now - self._invalid_log_ts.get(tag, 0.0) < INVALID_LOG_INTERVAL_S:
+            return
+        self._invalid_log_ts[tag] = now
+        logger.warning(f"比值测量 '{tag}' 本帧无效: {reason}")
+
     @staticmethod
     def _compute(frame: RawFrame, spec: MeasurementSpec) -> Optional[float]:
         """

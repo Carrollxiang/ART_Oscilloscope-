@@ -208,6 +208,27 @@ class FeedbackWorker:
             self._trend_errors.clear()
             logger.info(f'FeedbackWorker "{self.worker_id}" resumed')
 
+    def report_invalid(self, reason: str):
+        """
+        输入测量项本帧无效 (比值分母接近 0 / 源测量缺失等)。
+
+        RUNNING → 立即暂停并记录 stop_reason, 等待用户 resume();
+        PAUSED  → 仅刷新原因文本; IDLE(已停止) 忽略。
+        原因不变时不重复告警, 避免逐帧刷日志。
+        """
+        if self._status == SlotStatus.IDLE:
+            return
+
+        if self._status == SlotStatus.RUNNING:
+            self._status = SlotStatus.PAUSED
+
+        text = f"输入无效: {reason}"
+        if text != self._stop_reason:
+            self._stop_reason = text
+            logger.warning(
+                'FeedbackWorker "%s" 已自动暂停: %s', self.worker_id, text,
+            )
+
     # ── 核心处理 ───────────────────────────────────────────────
 
     async def process(self, value: float):
